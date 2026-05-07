@@ -1,5 +1,9 @@
-#!/bin/sh
+#!/usr/bin/env bash
 #
+# docker/entrypoint.sh
+# Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
+#
+
 # CaddyBuddy Container Entrypoint
 # Runs as root to bootstrap directories/permissions, then drops to app user.
 #

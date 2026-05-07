@@ -41,17 +41,17 @@
                     <div>
                         <label class="form-label" for="profile-current-password">Current password</label>
                         <input id="profile-current-password" name="current_password" type="password"
-                            class="form-control" required>
+                            class="form-control" autocomplete="current-password" required>
                     </div>
                     <div>
                         <label class="form-label" for="profile-new-password">New password</label>
                         <input id="profile-new-password" name="new_password" type="password" class="form-control"
-                            minlength="8" required>
+                            minlength="8" autocomplete="new-password" required>
                     </div>
                     <div>
                         <label class="form-label" for="profile-confirm-password">Confirm new password</label>
                         <input id="profile-confirm-password" name="confirm_password" type="password"
-                            class="form-control" minlength="8" required>
+                            class="form-control" minlength="8" autocomplete="new-password" required>
                     </div>
                     <button type="submit" class="btn btn-primary">Update password</button>
                 </form>

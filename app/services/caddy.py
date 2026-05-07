@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 from datetime import UTC, datetime
 from ipaddress import ip_address
 from urllib.parse import urljoin, urlsplit, urlunsplit
@@ -17,6 +18,7 @@ from app.models.entities import CaddyServer
 
 
 _FORBIDDEN_HOSTS = frozenset({"169.254.169.254", "metadata.google.internal"})
+_FORBIDDEN_IPS = frozenset({ip_address("169.254.169.254")})
 
 
 class CaddyService:
@@ -25,23 +27,13 @@ class CaddyService:
 
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None
-        self._client_lock: asyncio.Lock | None = None
 
-    def _get_client_lock(self) -> asyncio.Lock:
-        if self._client_lock is None:
-            self._client_lock = asyncio.Lock()
-        return self._client_lock
-
-    async def _get_client(self) -> httpx.AsyncClient:
-        if self._client is not None:
-            return self._client
-
-        async with self._get_client_lock():
-            if self._client is None:
-                self._client = httpx.AsyncClient(
-                    timeout=self._DEFAULT_TIMEOUT,
-                    limits=self._LIMITS,
-                )
+    def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = httpx.AsyncClient(
+                timeout=self._DEFAULT_TIMEOUT,
+                limits=self._LIMITS,
+            )
         return self._client
 
     async def aclose(self) -> None:
@@ -74,31 +66,66 @@ class CaddyService:
     def _load_endpoint(server: CaddyServer) -> str:
         return urljoin(f"{CaddyService._base_url(server)}/", "load")
 
-    def _validate_target(self, server: CaddyServer) -> None:
+    @staticmethod
+    def _normalize_resolved_ip(target_ip):
+        return getattr(target_ip, "ipv4_mapped", None) or target_ip
+
+    @classmethod
+    def _is_forbidden_resolved_ip(cls, target_ip) -> bool:
+        normalized_ip = cls._normalize_resolved_ip(target_ip)
+        return normalized_ip.is_link_local or normalized_ip in _FORBIDDEN_IPS
+
+    async def _resolve_target_ips(self, host: str, port: int | None) -> set:
+        try:
+            return {ip_address(host)}
+        except ValueError:
+            loop = asyncio.get_running_loop()
+            try:
+                address_info = await loop.getaddrinfo(
+                    host,
+                    port,
+                    family=socket.AF_UNSPEC,
+                    type=socket.SOCK_STREAM,
+                    proto=socket.IPPROTO_TCP,
+                )
+            except OSError as exc:
+                raise ValueError(f"Failed to resolve Caddy admin host: {host!r}") from exc
+
+        resolved_ips = {
+            ip_address(sockaddr[0])
+            for *_prefix, sockaddr in address_info
+            if sockaddr and sockaddr[0]
+        }
+        if not resolved_ips:
+            raise ValueError(f"Failed to resolve Caddy admin host: {host!r}")
+        return resolved_ips
+
+    async def _validate_target(self, server: CaddyServer) -> None:
         parsed = urlsplit(self._base_url(server))
         host = (parsed.hostname or "").lower()
         if host in _FORBIDDEN_HOSTS:
             raise ValueError(f"Blocked Caddy admin target: {host!r}")
-        try:
-            target_ip = ip_address(host)
-        except ValueError:
-            return
-        if target_ip.is_link_local:
-            raise ValueError(f"Link-local Caddy admin targets are not allowed: {host!r}")
+
+        resolved_ips = await self._resolve_target_ips(host, parsed.port)
+        for target_ip in resolved_ips:
+            if self._is_forbidden_resolved_ip(target_ip):
+                raise ValueError(
+                    f"Link-local or metadata Caddy admin targets are not allowed: {target_ip!s}"
+                )
 
     async def test_connection(self, server: CaddyServer) -> dict:
         return await self.fetch_config(server)
 
     async def fetch_config(self, server: CaddyServer) -> dict:
-        self._validate_target(server)
-        client = await self._get_client()
+        await self._validate_target(server)
+        client = self._get_client()
         response = await client.get(self._endpoint(server))
         response.raise_for_status()
         return response.json()
 
     async def deploy_config(self, server: CaddyServer, config_payload: dict) -> dict:
-        self._validate_target(server)
-        client = await self._get_client()
+        await self._validate_target(server)
+        client = self._get_client()
         response = await client.post(self._load_endpoint(server), json=config_payload)
         response.raise_for_status()
         return response.json() if response.content else {"status": "ok"}
@@ -115,13 +142,43 @@ class CaddyService:
 
     @staticmethod
     def extract_sites(config_payload: dict) -> list[str]:
+        apps = config_payload.get("apps")
+        if not isinstance(apps, dict):
+            return []
+
+        http_app = apps.get("http")
+        if not isinstance(http_app, dict):
+            return []
+
+        servers = http_app.get("servers")
+        if not isinstance(servers, dict):
+            return []
+
         sites: list[str] = []
-        servers = config_payload.get("apps", {}).get("http", {}).get("servers", {})
+        seen_sites: set[str] = set()
         for server_body in servers.values():
-            for route in server_body.get("routes", []):
-                for match in route.get("match", []):
+            if not isinstance(server_body, dict):
+                continue
+            routes = server_body.get("routes", [])
+            if not isinstance(routes, list):
+                continue
+            for route in routes:
+                if not isinstance(route, dict):
+                    continue
+                matches = route.get("match", [])
+                if not isinstance(matches, list):
+                    continue
+                for match in matches:
+                    if not isinstance(match, dict):
+                        continue
                     hosts = match.get("host", [])
-                    sites.extend(hosts)
+                    if not isinstance(hosts, list):
+                        continue
+                    for host in hosts:
+                        if not isinstance(host, str) or not host or host in seen_sites:
+                            continue
+                        seen_sites.add(host)
+                        sites.append(host)
         return sites
 
 

@@ -92,6 +92,15 @@
             if (text) return text;
         }
 
+        const labelText = Array.from(el.labels || [])
+            .map((label) => label.textContent?.trim() || '')
+            .join(' ')
+            .trim();
+        if (labelText) return labelText;
+
+        const wrappingLabelText = el.closest('label')?.textContent?.trim() || '';
+        if (wrappingLabelText) return wrappingLabelText;
+
         const title = el.getAttribute('title');
         if (title && title.trim()) return title.trim();
 
@@ -145,16 +154,42 @@
             .filter((img) => !img.hasAttribute('alt'))
             .map((img) => ({ src: img.getAttribute('src') }));
 
-        // Passive focus indicator check - no invasive el.focus() calls
         function hasVisibleFocusIndicator(el) {
-            const style = styleOf(el);
+            const style = window.getComputedStyle(el);
             const outlineWidth = Number.parseFloat(style.outlineWidth || '0');
             const hasOutline = style.outlineStyle && style.outlineStyle !== 'none' && outlineWidth > 0;
             const hasBoxShadow = style.boxShadow && style.boxShadow !== 'none';
             return hasOutline || hasBoxShadow;
         }
 
-        // Query only interactive elements directly
+        function isFocusIndicatorMissing(el) {
+            const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+            try {
+                el.focus({ preventScroll: true });
+            } catch {
+                return true;
+            }
+
+            resetRunCache();
+
+            const focused = document.activeElement === el;
+            const missing = !focused || !hasVisibleFocusIndicator(el);
+
+            if (previousActive && previousActive !== el) {
+                try {
+                    previousActive.focus({ preventScroll: true });
+                } catch {
+                    previousActive.blur?.();
+                }
+            } else if (focused) {
+                el.blur?.();
+            }
+
+            resetRunCache();
+            return missing;
+        }
+
         const interactive = Array.from(document.querySelectorAll('button, a, input, select, textarea'));
 
         const unlabeledControls = interactive
@@ -167,10 +202,9 @@
             .filter((el) => el.hasAttribute('aria-label') && !String(el.getAttribute('aria-label') || '').trim())
             .map((el) => ({ tag: el.tagName }));
 
-        // Passive check without triggering focus events
         const focusIndicatorMissing = interactive
             .filter(isVisible)
-            .filter((el) => !hasVisibleFocusIndicator(el))
+            .filter((el) => isFocusIndicatorMissing(el))
             .slice(0, 20)
             .map((el) => ({ tag: el.tagName }));
 

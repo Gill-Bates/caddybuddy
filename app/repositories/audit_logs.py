@@ -6,9 +6,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import String, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.entities import AuditLog
@@ -16,6 +17,7 @@ from app.models.entities import AuditLog
 
 class AuditLogRepository:
     _MAX_LIMIT = 1000
+    _DEFAULT_PAGE_SIZE = 50
 
     async def count(self, session: AsyncSession) -> int:
         result = await session.execute(select(func.count(AuditLog.id)))
@@ -71,6 +73,72 @@ class AuditLogRepository:
         statement = statement.limit(effective_limit)
         result = await session.execute(statement)
         return list(result.scalars().all())
+
+    async def list_paginated(
+        self,
+        session: AsyncSession,
+        *,
+        offset: int = 0,
+        limit: int = 50,
+        search: str | None = None,
+        username: str | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+    ) -> tuple[list[AuditLog], int]:
+        """
+        Return paginated audit log entries with optional filters.
+
+        Args:
+            offset: Number of entries to skip.
+            limit: Maximum entries to return.
+            search: Substring search across action, username, resource_type, details.
+            username: Filter by exact username.
+            date_from: Filter entries from this datetime (inclusive).
+            date_to: Filter entries up to this datetime (inclusive).
+
+        Returns:
+            Tuple of (entries, total_count).
+        """
+        effective_limit = max(1, min(limit, self._DEFAULT_PAGE_SIZE))
+        effective_offset = max(0, offset)
+
+        base_query = select(AuditLog)
+
+        if search:
+            search_pattern = f"%{search}%"
+            base_query = base_query.where(
+                or_(
+                    AuditLog.action.ilike(search_pattern),
+                    AuditLog.username.ilike(search_pattern),
+                    AuditLog.resource_type.ilike(search_pattern),
+                    func.cast(AuditLog.details_json, String).ilike(search_pattern),
+                )
+            )
+        if username:
+            base_query = base_query.where(AuditLog.username == username)
+        if date_from:
+            base_query = base_query.where(AuditLog.timestamp >= date_from)
+        if date_to:
+            base_query = base_query.where(AuditLog.timestamp <= date_to)
+
+        count_query = select(func.count()).select_from(base_query.subquery())
+        total_count = (await session.execute(count_query)).scalar_one()
+
+        data_query = (
+            base_query.order_by(AuditLog.timestamp.desc())
+            .offset(effective_offset)
+            .limit(effective_limit)
+        )
+        entries = list((await session.execute(data_query)).scalars().all())
+
+        return entries, int(total_count)
+
+    async def get_distinct_usernames(self, session: AsyncSession) -> list[str]:
+        """Return list of distinct usernames in audit logs."""
+        result = await session.execute(
+            select(AuditLog.username).distinct().order_by(AuditLog.username)
+        )
+        return [row[0] for row in result.all() if row[0]]
 
 
 audit_log_repository = AuditLogRepository()

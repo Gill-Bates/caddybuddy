@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy.ext.mutable import MutableDict, MutableList
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
@@ -45,11 +46,13 @@ class CaddyServer(TimestampMixin, Base):
     api_port: Mapped[int] = mapped_column(Integer, default=2019)
     admin_api_path: Mapped[str] = mapped_column(String(120), default="/config/")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
-    tags: Mapped[list[str]] = mapped_column(JSON, default=list)
+    tags: Mapped[list[str]] = mapped_column(MutableList.as_mutable(JSON), default=list)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_pinged: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="unknown")
-    active_config_id: Mapped[int | None] = mapped_column(ForeignKey("caddy_configs.id", ondelete="SET NULL"), nullable=True)
+    active_config_id: Mapped[int | None] = mapped_column(
+        ForeignKey("caddy_configs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     configs: Mapped[list[CaddyConfig]] = relationship(
         secondary="caddy_config_servers",
@@ -64,10 +67,10 @@ class CaddyConfig(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(150), index=True)
     format: Mapped[str] = mapped_column(String(20), default="json")
-    json_config: Mapped[dict] = mapped_column(JSON)
+    json_config: Mapped[dict] = mapped_column(MutableDict.as_mutable(JSON))
     status: Mapped[str] = mapped_column(String(20), default="draft")
-    metadata_json: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
-    history_entries: Mapped[list[dict]] = mapped_column("history", JSON, default=list)
+    metadata_json: Mapped[dict] = mapped_column("metadata", MutableDict.as_mutable(JSON), default=dict)
+    history_entries: Mapped[list[dict]] = mapped_column("history", MutableList.as_mutable(JSON), default=list)
 
     servers: Mapped[list[CaddyServer]] = relationship(
         secondary="caddy_config_servers",
@@ -83,7 +86,7 @@ class ApiKey(TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(120))
     key_prefix: Mapped[str] = mapped_column(String(20), index=True)
     key_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    permissions: Mapped[dict] = mapped_column(JSON, default=dict)
+    permissions: Mapped[dict] = mapped_column(MutableDict.as_mutable(JSON), default=dict)
     last_used: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -92,22 +95,41 @@ class ApiKey(TimestampMixin, Base):
     user: Mapped[User] = relationship(back_populates="api_keys")
 
 
+class Domain(TimestampMixin, Base):
+    """Domain entry representing a site/hostname managed by Caddy."""
+
+    __tablename__ = "domains"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    server_id: Mapped[int | None] = mapped_column(ForeignKey("caddy_servers.id", ondelete="SET NULL"), nullable=True, index=True)
+    upstream: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    caddy_directives: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ssl_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    ssl_provider: Mapped[str] = mapped_column(String(50), default="letsencrypt")
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    server: Mapped[CaddyServer | None] = relationship("CaddyServer", lazy="selectin")
+
+
 class AuditLog(TimestampMixin, Base):
     __tablename__ = "audit_logs"
 
+    __table_args__ = (
+        Index("ix_audit_logs_timestamp", "timestamp"),
+    )
+
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     action: Mapped[str] = mapped_column(String(80), index=True)
-    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     username: Mapped[str] = mapped_column(String(80), index=True)
     resource_type: Mapped[str] = mapped_column(String(80), index=True)
     resource_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    details_json: Mapped[dict] = mapped_column("details", JSON, default=dict)
+    details_json: Mapped[dict] = mapped_column("details", MutableDict.as_mutable(JSON), default=dict)
     status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
     user_agent: Mapped[str | None] = mapped_column(String(255), nullable=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
     user: Mapped[User | None] = relationship(back_populates="audit_logs")
-
-
-Index("ix_audit_logs_timestamp", AuditLog.timestamp)

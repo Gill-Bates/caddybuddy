@@ -7,6 +7,7 @@
 from functools import cache
 import hmac
 import secrets
+import time
 from datetime import datetime
 from hashlib import sha256
 
@@ -48,18 +49,45 @@ def _csrf_hmac(token: str) -> str:
 
 
 async def get_session_user(request: Request, session: AsyncSession) -> User | None:
-    """Return the authenticated user from session, or None if missing or stale."""
+    """
+    Return the authenticated user from session, or None if missing or expired.
+
+    Session expiration rules:
+    - Inactivity timeout: Session expires after 60 min of no activity.
+    - Absolute timeout: Session expires after 24h regardless of activity.
+    - Each request extends the inactivity window by 60 min.
+    """
     user_id = request.session.get("user_id")
     if not user_id:
         return None
+
+    now = time.time()
+    created_at = request.session.get("session_created_at", 0)
+    last_activity = request.session.get("session_last_activity", 0)
+
+    # Check absolute timeout (24h since login)
+    if created_at and (now - created_at) > settings.session_absolute_timeout_seconds:
+        request.session.clear()
+        return None
+
+    # Check inactivity timeout (60 min since last request)
+    if last_activity and (now - last_activity) > settings.session_inactivity_timeout_seconds:
+        request.session.clear()
+        return None
+
     try:
         parsed_user_id = int(user_id)
     except (TypeError, ValueError):
-        request.session.pop("user_id", None)
+        request.session.clear()
         return None
+
     user = await user_repository.get_by_id(session, parsed_user_id)
     if user is None:
-        request.session.pop("user_id", None)
+        request.session.clear()
+        return None
+
+    # Update last activity timestamp (extends session by inactivity timeout)
+    request.session["session_last_activity"] = now
     return user
 
 
@@ -100,6 +128,24 @@ def pop_flashes(request: Request) -> list[dict[str, str]]:
 def redirect_to(path: str) -> RedirectResponse:
     """Return a 303 redirect response for the given path."""
     return RedirectResponse(url=path, status_code=303)
+
+
+def initialize_user_session(request: Request, user_id: int) -> None:
+    """Initialize a fresh authenticated user session."""
+    now = time.time()
+    request.session.clear()
+    request.session.update({
+        "user_id": user_id,
+        "session_created_at": now,
+        "session_last_activity": now,
+    })
+
+
+def refresh_session_timestamps(request: Request) -> None:
+    """Refresh session activity without resetting the absolute session age."""
+    now = time.time()
+    request.session["session_created_at"] = request.session.get("session_created_at", now)
+    request.session["session_last_activity"] = now
 
 
 def render_template(

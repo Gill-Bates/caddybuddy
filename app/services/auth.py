@@ -106,6 +106,10 @@ class AuthService:
         if await user_repository.count(session) > 0:
             return None
         try:
+            get_settings().validate_default_admin_bootstrap_password(password)
+        except ValueError as exc:
+            raise WeakPasswordError(str(exc)) from exc
+        try:
             admin = await user_repository.create(
                 session,
                 username=username,

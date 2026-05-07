@@ -12,10 +12,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         response.headers.setdefault(
             "Content-Security-Policy",
-            "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-            "script-src 'self'; font-src 'self' https://fonts.gstatic.com data:; "
-            "img-src 'self' data: https:; connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com; "
-            "frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+            "default-src 'self'; style-src 'self' 'unsafe-inline'; "
+            "script-src 'self'; font-src 'self' data:; img-src 'self' data: https:; "
+            "connect-src 'self'; object-src 'none'; frame-ancestors 'none'; "
+            "base-uri 'self'; form-action 'self'",
         )
         response.headers.setdefault("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
         response.headers.setdefault("X-Frame-Options", "DENY")

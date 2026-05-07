@@ -5,16 +5,17 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% if page_title %}{{ page_title }} | {% endif %}{{ app_name }}</title>
-    <link
-        href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
-        rel="stylesheet">
+    <meta name="color-scheme" content="light">
+    <meta name="theme-color" content="#0f766e">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
     <link href="{{ request.app.url_path_for('static', path='vendor/bootstrap/bootstrap.min.css') }}" rel="stylesheet">
     <link href="{{ request.app.url_path_for('static', path='css/app.css') }}" rel="stylesheet">
     <link rel="icon" href="{{ request.app.url_path_for('static', path='img/favicon.svg') }}" type="image/svg+xml">
 </head>
 
 <body>
-    <div class="app-shell">
+    <a class="app-skip-link" href="#main-content">Skip to main content</a>
+    <div class="app-shell {% if not current_user %}app-shell--public{% endif %}">
         {% if current_user %}
         <aside class="app-sidebar">
             <div>
@@ -22,28 +23,38 @@
                     <span class="brand-mark__kicker">Control plane</span>
                     <span class="brand-mark__name">{{ app_name }}</span>
                 </a>
-                <nav class="nav flex-column app-nav mt-4 gap-2">
-                    <a class="app-nav__link {% if request.url.path == '/' %}is-active{% endif %}" href="/">Dashboard</a>
+                <nav class="nav flex-column app-nav mt-4 gap-2" aria-label="Primary navigation">
+                    <a class="app-nav__link {% if request.url.path == '/' %}is-active{% endif %}" href="/" {% if
+                        request.url.path=='/' %}aria-current="page" {% endif %}>Dashboard</a>
                     <a class="app-nav__link {% if request.url.path.startswith('/servers') %}is-active{% endif %}"
-                        href="/servers">Servers</a>
+                        href="/servers" {% if request.url.path.startswith('/servers') %}aria-current="page" {% endif
+                        %}>Servers</a>
+                    <a class="app-nav__link {% if request.url.path.startswith('/domains') %}is-active{% endif %}"
+                        href="/domains" {% if request.url.path.startswith('/domains') %}aria-current="page" {% endif
+                        %}>Domains</a>
                     <a class="app-nav__link {% if request.url.path.startswith('/configs') %}is-active{% endif %}"
-                        href="/configs">Configurations</a>
+                        href="/configs" {% if request.url.path.startswith('/configs') %}aria-current="page" {% endif
+                        %}>Configurations</a>
                     <a class="app-nav__link {% if request.url.path.startswith('/api-keys') %}is-active{% endif %}"
-                        href="/api-keys">API Keys</a>
+                        href="/api-keys" {% if request.url.path.startswith('/api-keys') %}aria-current="page" {% endif
+                        %}>API Keys</a>
                     {% if current_user.role == 'admin' %}
                     <a class="app-nav__link {% if request.url.path.startswith('/users') %}is-active{% endif %}"
-                        href="/users">Users</a>
+                        href="/users" {% if request.url.path.startswith('/users') %}aria-current="page" {% endif
+                        %}>Users</a>
                     <a class="app-nav__link {% if request.url.path.startswith('/audit-logs') %}is-active{% endif %}"
-                        href="/audit-logs">Audit Logs</a>
+                        href="/audit-logs" {% if request.url.path.startswith('/audit-logs') %}aria-current="page" {%
+                        endif %}>Audit Logs</a>
                     {% endif %}
                     <a class="app-nav__link {% if request.url.path.startswith('/profile') %}is-active{% endif %}"
-                        href="/profile">Profile</a>
+                        href="/profile" {% if request.url.path.startswith('/profile') %}aria-current="page" {% endif
+                        %}>Profile</a>
                 </nav>
             </div>
 
             <div class="sidebar-footer">
                 <div class="sidebar-user mb-3">
-                    <div class="sidebar-user__avatar">{{ current_user.username[:1].upper() }}</div>
+                    <div class="sidebar-user__avatar" aria-hidden="true">{{ current_user.username[:1].upper() }}</div>
                     <div>
                         <div class="fw-semibold">{{ current_user.username }}</div>
                         <div class="text-body-secondary small text-uppercase">{{ current_user.role }}</div>
@@ -57,14 +68,15 @@
         </aside>
         {% endif %}
 
-        <main class="app-main {% if not current_user %}app-main--public{% endif %}">
+        <main class="app-main {% if not current_user %}app-main--public{% endif %}" id="main-content" tabindex="-1">
             <div class="container-fluid px-0">
                 {% include 'partials/flashes.html' %}
                 {% block content %}{% endblock %}
             </div>
             <footer class="app-footer">
                 <span>{{ build_info.version }}</span>
-                <span>{{ build_info.commit }}</span>
+                <span>{{ build_info.commit[:7] if build_info.commit and build_info.commit != 'working-tree' else
+                    build_info.commit }}</span>
             </footer>
         </main>
     </div>
@@ -90,6 +102,7 @@
 
     <script src="{{ request.app.url_path_for('static', path='vendor/bootstrap/bootstrap.bundle.min.js') }}"></script>
     <script src="{{ request.app.url_path_for('static', path='js/app.js') }}" defer></script>
+    {% block scripts %}{% endblock %}
 </body>
 
 </html>

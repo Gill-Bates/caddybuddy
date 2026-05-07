@@ -14,6 +14,7 @@ const BUNDLE_PATH = path.resolve(
 
 let bundleSourcePromise = null;
 const PAGE_INJECTION = new WeakMap();
+const INSTALLED_PAGES = new WeakSet();
 
 
 function loadBundleSource() {
@@ -28,24 +29,40 @@ function loadBundleSource() {
  * Install the UI-lint analyzer bundle on every page and navigation in a context.
  */
 export async function installAnalyzers(context) {
-    await context.addInitScript({ content: await loadBundleSource() });
+    await context.addInitScript({
+        content: `
+            window.__uiLintInstalled = true;
+            ${await loadBundleSource()}
+        `,
+    });
 }
 
 /**
  * Ensure the UI-lint analyzer bundle is available on the given page.
  */
 export async function injectAnalyzers(page) {
+    if (INSTALLED_PAGES.has(page)) {
+        return;
+    }
+
     if (PAGE_INJECTION.has(page)) {
         return PAGE_INJECTION.get(page);
     }
 
     const injectionPromise = (async () => {
-        const alreadyInjected = await page.evaluate(() => Boolean(window.__uiLint?.runAll));
+        const alreadyInjected = await page.evaluate(() => Boolean(window.__uiLintInstalled && window.__uiLint?.runAll));
         if (alreadyInjected) {
+            INSTALLED_PAGES.add(page);
             return;
         }
 
-        await page.addScriptTag({ content: await loadBundleSource() });
+        await page.addScriptTag({
+            content: `
+                window.__uiLintInstalled = true;
+                ${await loadBundleSource()}
+            `,
+        });
+        INSTALLED_PAGES.add(page);
     })();
 
     PAGE_INJECTION.set(page, injectionPromise);

@@ -16,4 +16,3 @@ class HealthResponse(BaseModel):
 class BuildInfoResponse(BaseModel):
     version: str
     commit: str
-    environment: str

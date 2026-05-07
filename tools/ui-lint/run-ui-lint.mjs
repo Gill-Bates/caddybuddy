@@ -7,63 +7,19 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { injectAnalyzers, installAnalyzers } from './lib/inject-analyzers.mjs';
+import { createDevicePagePool } from './lib/device-page-pool.mjs';
+import { serializeResultForOutput } from './lib/result-serializer.mjs';
 
 import { chromium, devices } from 'playwright';
 
 import {
-    BADGE_FONT_SIZE_TOLERANCE_PX,
-    BADGE_FONT_WEIGHT_TOLERANCE,
-    BADGE_PADDING_TOLERANCE_PX,
-    BADGE_RADIUS_TOLERANCE_PX,
-    CARD_BORDER_RADIUS_EXPECTED_PX,
-    CARD_BORDER_RADIUS_TOLERANCE_PX,
-    CLICK_TARGET_MIN_SIZE_PX,
-    COMPACT_CARD_ACTION_BORDER_TOP_MAX_PX,
-    COMPACT_CARD_ACTION_MARGIN_TOP_MAX_PX,
-    COMPACT_CARD_ACTION_PADDING_TOP_MAX_PX,
-    COMPONENT_LAYOUT_SHIFT_SETTLE_MS,
-    COMPONENT_LAYOUT_SHIFT_THRESHOLD_PX,
-    DASHBOARD_MAIN_GRID_DESKTOP_COLUMNS,
-    DASHBOARD_MAIN_GRID_TABLET_COLUMNS,
-    DETAILS_EXPAND_SETTLE_MS,
-    FLEX_MIN_HEIGHT_ZERO_TOLERANCE_PX,
-    FOOTER_OVERLAP_TOLERANCE_PX,
-    FORM_SWITCH_HEIGHT_TOLERANCE_PX,
-    FORM_SWITCH_MAX_HEIGHT_PX,
     FULL_MOTION_RESET_CSS,
-    GHOST_SCROLL_DELTA_MAX_PX,
-    GHOST_SCROLL_MIN_HEIGHT_PX,
-    INPUT_GROUP_HEIGHT_EXPECTED_PX,
-    INPUT_GROUP_HEIGHT_TOLERANCE_PX,
-    KPI_CARD_PADDING_EXPECTED,
-    KPI_CARD_PADDING_TOLERANCE,
-    KPI_ICON_CENTER_TOLERANCE_PX,
-    KPI_ICON_NEUTRAL_COLOR_DISTANCE_MAX,
-    KPI_ROW_VARIANCE_MAX,
     LOGIN_ERROR_SETTLE_MS,
     LOGIN_LOCKOUT_RESET_MS,
     LOGIN_TEST_STAGGER_MS,
-    LOGS_DELETE_HAIRLINE_TOLERANCE_PX,
-    MODAL_BACKDROP_ALPHA_EXPECTED,
-    MODAL_BACKDROP_ALPHA_TOLERANCE,
-    MODAL_BACKDROP_BLUR_EXPECTED_PX,
-    MODAL_BACKDROP_BLUR_TOLERANCE_PX,
-    MODAL_BACKDROP_SATURATE_EXPECTED,
-    MODAL_BACKDROP_SATURATE_TOLERANCE,
-    MONOSPACE_PADDING_TOLERANCE_PX,
-    MONOSPACE_RADIUS_TOLERANCE_PX,
-    OVERFLOW_TOLERANCE_PX,
-    SCROLL_EDGE_CLEARANCE_MIN,
     SCREENSHOT_SETTLE_MS,
-    STACK_GAP_VARIANCE_TOLERANCE_PX,
     TAB_SWITCH_SETTLE_MS,
-    TOP_BAR_HEIGHT_EXPECTED_PX,
-    TOP_BAR_HEIGHT_TOLERANCE_PX,
     UI_EVAL_CONSTANTS,
-    VERTICAL_GAP_MAX,
-    VERTICAL_GAP_MIN,
-    VISUAL_DRIFT_THRESHOLD,
-    WCAG_CONTRAST,
 } from './lib/constants.mjs';
 import {
     captureKpiCards,
@@ -138,7 +94,12 @@ const UI_LINT_LOCALE = process.env.UI_LINT_LOCALE || 'en-US';
 const UI_LINT_TIMEZONE = process.env.UI_LINT_TIMEZONE || 'UTC';
 const UI_LINT_EXPECTED_CHROMIUM_MAJOR = process.env.UI_LINT_EXPECTED_CHROMIUM_MAJOR || '';
 const UI_LINT_BASELINE_GC = (process.env.UI_LINT_BASELINE_GC || 'warn').toLowerCase();
-const FAIL_THRESHOLD = 65;
+const UI_LINT_DISABLE_RAF = process.env.UI_LINT_DISABLE_RAF === '1';
+const UI_LINT_DISABLE_RESIZE_OBSERVER = process.env.UI_LINT_DISABLE_RESIZE_OBSERVER === '1';
+const UI_LINT_VIEW_RETRIES = Math.max(1, Number.parseInt(process.env.UI_LINT_VIEW_RETRIES || '2', 10) || 2);
+const FAIL_THRESHOLD = Number.isFinite(Number.parseFloat(process.env.UI_LINT_FAIL_THRESHOLD || '65'))
+    ? Number.parseFloat(process.env.UI_LINT_FAIL_THRESHOLD || '65')
+    : 65;
 const REQUIRED_SECURITY_HEADERS = [
     'content-security-policy',
     'strict-transport-security',
@@ -154,8 +115,12 @@ const DEVICE_CONTEXT_OPTIONS = new Map([
 ]);
 
 async function installUiLintInitScript(context) {
-    await context.addInitScript(({ fixedNowIso }) => {
+    await context.addInitScript(({ disableRaf, disableResizeObserver, evalConstants, fixedNowIso, selectors }) => {
         window.__UI_LINT__ = true;
+        window.__uiLintRuntimeConfig = {
+            constants: evalConstants,
+            selectors,
+        };
 
         const fixedNow = new Date(fixedNowIso).valueOf();
         if (Number.isFinite(fixedNow)) {
@@ -178,14 +143,24 @@ async function installUiLintInitScript(context) {
             window.Date = FixedDate;
         }
 
-        window.requestAnimationFrame = (cb) => setTimeout(() => cb(performance.now()), 16);
+        if (!disableRaf) {
+            window.requestAnimationFrame = (cb) => setTimeout(() => cb(performance.now()), 16);
+        }
 
-        window.ResizeObserver = class {
-            observe() { }
-            unobserve() { }
-            disconnect() { }
-        };
-    }, { fixedNowIso: UI_LINT_FIXED_NOW_ISO });
+        if (disableResizeObserver) {
+            window.ResizeObserver = class {
+                observe() { }
+                unobserve() { }
+                disconnect() { }
+            };
+        }
+    }, {
+        disableRaf: UI_LINT_DISABLE_RAF,
+        disableResizeObserver: UI_LINT_DISABLE_RESIZE_OBSERVER,
+        evalConstants: UI_EVAL_CONSTANTS,
+        fixedNowIso: UI_LINT_FIXED_NOW_ISO,
+        selectors: SELECTORS,
+    });
 }
 
 function getNavigationWaitUntil(view) {
@@ -193,7 +168,7 @@ function getNavigationWaitUntil(view) {
     if (view?.live === true) {
         return 'domcontentloaded';
     }
-    return 'networkidle';
+    return 'load';
 }
 
 function buildContextOptions(overrides = {}) {
@@ -214,17 +189,29 @@ async function pathExists(targetPath) {
     }
 }
 
-function getPageForView(devicePages, view) {
-    return devicePages.get(view.device) ?? devicePages.get('desktop');
+function groupViewsByDevice(views) {
+    const groups = new Map();
+    for (const view of views) {
+        const device = DEVICE_CONTEXT_OPTIONS.has(view.device) ? view.device : 'desktop';
+        const group = groups.get(device) || [];
+        group.push(view);
+        groups.set(device, group);
+    }
+    return groups;
 }
 
-function buildErrorResult(view, error) {
+function buildErrorResult(view, error, context = {}) {
     const message = error instanceof Error ? error.message : String(error);
     return {
         name: view.name,
         url: view.url,
         theme: view.theme,
-        error: message,
+        error: {
+            device: context.device ?? view.device ?? null,
+            message,
+            phase: context.phase ?? 'unknown',
+            stack: error instanceof Error ? (error.stack || null) : null,
+        },
         findings: ['auditError'],
         hardFindings: ['auditError'],
         warnings: [],
@@ -291,27 +278,6 @@ async function prepareOutputDirs() {
     }
 }
 
-async function buildDevicePages(browser, storageState) {
-    const entries = await Promise.all(
-        Array.from(DEVICE_CONTEXT_OPTIONS.entries()).map(async ([device, options]) => {
-            const context = await browser.newContext(buildContextOptions({
-                ...options,
-                storageState,
-            }));
-            await installUiLintInitScript(context);
-            await installAnalyzers(context);
-            await installLayoutShiftObserver(context);
-
-            const page = await context.newPage();
-            await page.emulateMedia({ reducedMotion: 'reduce' });
-
-            return [device, page];
-        })
-    );
-
-    return new Map(entries);
-}
-
 async function runBaselineGc(config, expectedSnapshotNames) {
     if (!config.enabled || !(await pathExists(config.baselineDir))) {
         return;
@@ -337,17 +303,14 @@ async function runBaselineGc(config, expectedSnapshotNames) {
 async function collectPageMetrics(page, scope) {
     await injectAnalyzers(page);
 
-    return page.evaluate(async ({ scope, constants, selectors }) => {
+    return page.evaluate(async (currentScope) => {
+        const runtimeConfig = window.__uiLintRuntimeConfig || {};
         return window.__uiLint.runAll({
-            scope,
-            constants,
-            selectors,
+            scope: currentScope,
+            constants: runtimeConfig.constants || {},
+            selectors: runtimeConfig.selectors || {},
         });
-    }, {
-        scope,
-        constants: UI_EVAL_CONSTANTS,
-        selectors: SELECTORS,
-    });
+    }, scope);
 }
 
 function mergeMetricsPatch(metrics, patch) {
@@ -377,12 +340,37 @@ function stripAbortedRequests(network) {
     network.requestFailures = network.requestFailures.filter((entry) => entry.error !== 'net::ERR_ABORTED');
 }
 
-async function collectAuditArtifacts(page, view, metricsPatch = null) {
-    let visualRegression = null;
+function logAuditError(prefix, error) {
+    console.error(prefix);
+    console.error(error);
+}
 
-    await resetLayoutShiftMetric(page);
-    await page.waitForTimeout(SCREENSHOT_SETTLE_MS);
+async function withRetry(action, {
+    attempts = UI_LINT_VIEW_RETRIES,
+    label = 'operation',
+    onRetry,
+    shouldRetry = () => true,
+} = {}) {
+    let lastError = null;
 
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        try {
+            return await action(attempt);
+        } catch (error) {
+            lastError = error;
+            if (attempt >= attempts || !shouldRetry(error)) {
+                break;
+            }
+            if (onRetry) {
+                await onRetry({ attempt, error, label, remaining: attempts - attempt });
+            }
+        }
+    }
+
+    throw lastError;
+}
+
+async function captureArtifacts(page, view) {
     const shots = await captureStablePair(page, {
         motionResetCss: FULL_MOTION_RESET_CSS,
         name: view.name,
@@ -397,22 +385,39 @@ async function collectAuditArtifacts(page, view, metricsPatch = null) {
         screenshotDir: SCREENSHOT_DIR,
     });
 
+    let visualRegression = null;
     if (VISUAL_REGRESSION.enabled) {
         await captureVisualSnapshot(page, view.name, VISUAL_REGRESSION);
         visualRegression = compareVisualSnapshot(view.name, VISUAL_REGRESSION);
     }
 
+    return {
+        diff,
+        kpiShots,
+        screenshots: { ...shots, diffPath: diff.diffPath },
+        visualRegression,
+    };
+}
+
+async function collectViewMetrics(page, view, metricsPatch = null) {
     const metrics = await collectPageMetrics(page, view.scope);
     if (!metrics) {
         throw new Error(`No metrics collected for view: ${view.name}`);
     }
 
+    return mergeMetricsPatch(metrics, metricsPatch);
+}
+
+async function collectAuditArtifacts(page, view, metricsPatch = null) {
+    await resetLayoutShiftMetric(page);
+    await page.waitForTimeout(SCREENSHOT_SETTLE_MS);
+
+    const artifactBundle = await captureArtifacts(page, view);
+    const metrics = await collectViewMetrics(page, view, metricsPatch);
+
     return {
-        diff,
-        kpiShots,
-        metrics: mergeMetricsPatch(metrics, metricsPatch),
-        screenshots: { ...shots, diffPath: diff.diffPath },
-        visualRegression,
+        ...artifactBundle,
+        metrics,
     };
 }
 
@@ -433,7 +438,7 @@ async function auditPageFlow(page, view, {
 
         const prepared = prepare ? await prepare({ page, view, response }) : {};
         if (view.tab) {
-            await page.click(view.tab);
+            await page.locator(view.tab).first().click();
             await page.waitForTimeout(TAB_SWITCH_SETTLE_MS);
         }
         const artifacts = await collectAuditArtifacts(page, view, prepared.metricsPatch || null);
@@ -481,6 +486,24 @@ async function auditPageFlow(page, view, {
     }
 }
 
+async function waitForLoginFailureUi(page) {
+    await page.locator('.alert[role="alert"]').first().waitFor({ state: 'visible', timeout: 30000 });
+    await page.waitForFunction(() => {
+        const alert = document.querySelector('.alert[role="alert"]');
+        const submitButton = document.querySelector('form[action="/login"] button[type="submit"]');
+        if (!alert || !submitButton) {
+            return false;
+        }
+        const style = window.getComputedStyle(alert);
+        const rect = alert.getBoundingClientRect();
+        return style.display !== 'none'
+            && style.visibility !== 'hidden'
+            && rect.width > 0
+            && rect.height > 0
+            && submitButton.disabled === false;
+    }, { timeout: Math.max(LOGIN_ERROR_SETTLE_MS, 3000) });
+}
+
 async function auditView(page, view) {
     return auditPageFlow(page, view, {
         load: async () => {
@@ -514,7 +537,7 @@ async function auditView(page, view) {
 
 async function auditLoginFailureView(page, view) {
     return auditPageFlow(page, view, {
-        load: () => page.goto(`${BASE_URL}${view.url}`, { waitUntil: 'networkidle', timeout: 10000 }),
+        load: () => page.goto(`${BASE_URL}${view.url}`, { waitUntil: 'domcontentloaded', timeout: 10000 }),
         afterLoad: () => applyTheme(page, { baseUrl: BASE_URL, theme: view.theme, label: view.name }),
         prepare: async () => {
             const invalidPassword = `${PASSWORD}__ui_lint_invalid`;
@@ -539,8 +562,7 @@ async function auditLoginFailureView(page, view) {
                     return false;
                 }
             }, { timeout: 30000 }).catch(() => { });
-            await page.locator('.alert[role="alert"]').first().waitFor({ state: 'visible', timeout: 30000 });
-            await page.waitForTimeout(LOGIN_ERROR_SETTLE_MS);
+            await waitForLoginFailureUi(page);
 
             const loginFailure = await page.evaluate(() => {
                 const isVisible = (element) => {
@@ -640,7 +662,7 @@ async function auditLoginRateLimit(browser) {
         let lastResponse = null;
 
         for (; attempts < 6; attempts += 1) {
-            await page.goto(`${BASE_URL}/login`, { waitUntil: 'networkidle', timeout: 10000 });
+            await page.goto(`${BASE_URL}/login`, { waitUntil: 'domcontentloaded', timeout: 10000 });
             await page.fill('#username', USERNAME);
             await page.fill('#password', `${PASSWORD}__ui_lint_rate_limit_${attempts}`);
 
@@ -675,6 +697,116 @@ async function auditLoginRateLimit(browser) {
     }
 }
 
+async function runAuthenticatedViews(pagePool) {
+    const groupedViews = groupViewsByDevice(VIEWS);
+    const settled = await Promise.all(
+        Array.from(groupedViews.entries()).map(async ([device, views]) => {
+            let page;
+            try {
+                page = await pagePool.getPage(device);
+            } catch (error) {
+                logAuditError(`[${device}] Page setup failed`, error);
+                return views.map((view) => buildErrorResult(view, error, { device, phase: 'page-setup' }));
+            }
+
+            const results = [];
+            for (const view of views) {
+                try {
+                    const result = await withRetry(
+                        () => auditView(page, view),
+                        {
+                            label: view.name,
+                            onRetry: ({ attempt, error, remaining }) => {
+                                console.warn(
+                                    `[${view.name}] Audit attempt ${attempt} failed; retrying (${remaining} remaining): ${error instanceof Error ? error.message : String(error)}`,
+                                );
+                            },
+                        },
+                    );
+                    results.push(applySummary(result));
+                } catch (error) {
+                    logAuditError(`[${view.name}] Audit failed`, error);
+                    results.push(buildErrorResult(view, error, { device, phase: 'audit-view' }));
+                }
+            }
+            return results;
+        })
+    );
+
+    return settled.flat();
+}
+
+async function runLoginFailureViews(pagePool) {
+    const groupedViews = groupViewsByDevice(LOGIN_FAILURE_VIEWS);
+    const results = [];
+
+    for (const [device, views] of groupedViews.entries()) {
+        let page;
+        try {
+            page = await pagePool.getPage(device);
+        } catch (error) {
+            logAuditError(`[${device}] Login-failure page setup failed`, error);
+            results.push(...views.map((view) => buildErrorResult(view, error, { device, phase: 'login-page-setup' })));
+            continue;
+        }
+
+        for (const [index, view] of views.entries()) {
+            let result;
+            let attempt = 0;
+            const maxRetries = 3;
+
+            while (attempt < maxRetries) {
+                try {
+                    if (index > 0 && attempt === 0) {
+                        await new Promise((resolve) => setTimeout(resolve, LOGIN_TEST_STAGGER_MS));
+                    }
+
+                    result = await auditLoginFailureView(page, view);
+
+                    const errorText = result?.metrics?.loginFailure?.errorText?.toLowerCase() || '';
+                    if (errorText.includes('too many') || errorText.includes('rate limit') || errorText.includes('locked')) {
+                        if (attempt < maxRetries - 1) {
+                            console.warn(`[${view.name}] Rate limited, waiting ${LOGIN_LOCKOUT_RESET_MS}ms before retry ${attempt + 1}/${maxRetries - 1}`);
+                            await new Promise((resolve) => setTimeout(resolve, LOGIN_LOCKOUT_RESET_MS));
+                            attempt += 1;
+                            continue;
+                        }
+                    }
+
+                    break;
+                } catch (error) {
+                    if (attempt === maxRetries - 1) {
+                        logAuditError(`[${view.name}] Audit failed after ${maxRetries} attempts`, error);
+                        result = buildErrorResult(view, error, { device, phase: 'audit-login-failure' });
+                        break;
+                    }
+                    attempt += 1;
+                }
+            }
+
+            if (result) {
+                results.push(applySummary(result));
+            }
+        }
+    }
+
+    return results;
+}
+
+function emitResults(results, summaryPath) {
+    console.log(`\nResults saved to: ${summaryPath}`);
+    console.log(`Screenshots: ${SCREENSHOT_DIR}\n`);
+
+    console.log('UI_LINT_START');
+    for (const result of results) {
+        console.log(JSON.stringify(serializeResultForOutput(result, {
+            summaryPath,
+            visualRegressionEnabled: VISUAL_REGRESSION.enabled,
+        })));
+    }
+    console.log('UI_LINT_END');
+}
+
 async function main() {
     // Basic environment validation improvements
     if (!BASE_URL.startsWith('http')) {
@@ -685,6 +817,8 @@ async function main() {
 
     const results = [];
     let browser;
+    let authPagePool;
+    let loginFailurePagePool;
 
     try {
         browser = await chromium.launch({ headless: true });
@@ -705,65 +839,26 @@ async function main() {
         const authState = await authContext.storageState();
         await authContext.close();
 
-        const devicePages = await buildDevicePages(browser, authState);
-        const loginFailurePages = await buildDevicePages(browser);
+        authPagePool = createDevicePagePool({
+            browser,
+            buildContextOptions,
+            deviceContextOptions: DEVICE_CONTEXT_OPTIONS,
+            installAnalyzers,
+            installLayoutShiftObserver,
+            installUiLintInitScript,
+            storageState: authState,
+        });
+        loginFailurePagePool = createDevicePagePool({
+            browser,
+            buildContextOptions,
+            deviceContextOptions: DEVICE_CONTEXT_OPTIONS,
+            installAnalyzers,
+            installLayoutShiftObserver,
+            installUiLintInitScript,
+        });
 
-        // Run authenticated view tests
-        for (const view of VIEWS) {
-            const page = getPageForView(devicePages, view);
-            try {
-                results.push(applySummary(await auditView(page, view)));
-            } catch (err) {
-                console.error(`[${view.name}] Audit failed: ${err.message}`);
-                results.push(buildErrorResult(view, err));
-            }
-        }
-
-        // Run login-failure tests LAST to avoid rate limiting blocking the real login
-        for (const [index, view] of LOGIN_FAILURE_VIEWS.entries()) {
-            const page = getPageForView(loginFailurePages, view);
-
-            // Retry logic for rate limiting: detect "too many attempts" and wait before retry
-            let result;
-            let attempt = 0;
-            const maxRetries = 3;
-
-            while (attempt < maxRetries) {
-                try {
-                    // Stagger login attempts to stay under 5/minute rate limit
-                    if (index > 0 && attempt === 0) {
-                        await new Promise((resolve) => setTimeout(resolve, LOGIN_TEST_STAGGER_MS));
-                    }
-
-                    result = await auditLoginFailureView(page, view);
-
-                    // Check if rate limited by examining error text
-                    const errorText = result?.metrics?.loginFailure?.errorText?.toLowerCase() || '';
-                    if (errorText.includes('too many') || errorText.includes('rate limit') || errorText.includes('locked')) {
-                        if (attempt < maxRetries - 1) {
-                            console.warn(`[${view.name}] Rate limited, waiting ${LOGIN_LOCKOUT_RESET_MS}ms before retry ${attempt + 1}/${maxRetries - 1}`);
-                            await new Promise((resolve) => setTimeout(resolve, LOGIN_LOCKOUT_RESET_MS));
-                            attempt++;
-                            continue;
-                        }
-                    }
-
-                    // Success or non-rate-limit error
-                    break;
-                } catch (err) {
-                    if (attempt === maxRetries - 1) {
-                        console.error(`[${view.name}] Audit failed after ${maxRetries} attempts: ${err.message}`);
-                        result = buildErrorResult(view, err);
-                        break;
-                    }
-                    attempt++;
-                }
-            }
-
-            if (result) {
-                results.push(applySummary(result));
-            }
-        }
+        results.push(...await runAuthenticatedViews(authPagePool));
+        results.push(...await runLoginFailureViews(loginFailurePagePool));
 
         results.push(await auditLoginRateLimit(browser));
 
@@ -772,6 +867,12 @@ async function main() {
             [...VIEWS, ...LOGIN_FAILURE_VIEWS].map((view) => view.name)
         );
     } finally {
+        if (authPagePool) {
+            await authPagePool.closeAll();
+        }
+        if (loginFailurePagePool) {
+            await loginFailurePagePool.closeAll();
+        }
         if (browser) {
             await browser.close();
         }
@@ -779,82 +880,7 @@ async function main() {
 
     const summaryPath = path.join(RESULTS_DIR, 'ui-lint-summary.json');
     await fs.writeFile(summaryPath, JSON.stringify(results, null, 2));
-
-    console.log(`\nResults saved to: ${summaryPath}`);
-    console.log(`Screenshots: ${SCREENSHOT_DIR}\n`);
-
-    console.log('UI_LINT_START');
-    for (const result of results) {
-        const metrics = result.metrics || {};
-        const spacing = metrics.spacing || {};
-        const horizontalOverflow = metrics.horizontalOverflow || {};
-        const layoutShiftValue = Number(metrics.layoutShift?.value || 0);
-        console.log(JSON.stringify({
-            name: result.name,
-            url: result.url,
-            theme: result.theme || null,
-            findings: result.findings,
-            hardFindings: result.hardFindings || [],
-            warnings: result.warnings || [],
-            uiScore: metrics.uiScore ?? null,
-            uiScoreLabel: metrics.uiScoreLabel ?? null,
-            visualRegressionEnabled: VISUAL_REGRESSION.enabled,
-            visualRegressionPass: result.visualRegression?.pass ?? null,
-            visualRegressionReason: result.visualRegression?.reason ?? null,
-            visualRegressionDiffPercent: result.visualRegression?.percent ?? null,
-            diffRatio: Number(result.diff.ratio.toFixed(6)),
-            layoutShift: Number(layoutShiftValue.toFixed(6)),
-            overflowOffenders: horizontalOverflow.offenders?.length || 0,
-            clippedButtons: metrics.clippedButtons?.length || 0,
-            clickTargetsTooSmall: metrics.clickTargetsTooSmall?.length || 0,
-            iconButtonsTouchBlocked: metrics.iconButtonsTouchBlocked?.length || 0,
-            hiddenInteractive: metrics.hiddenInteractiveElements?.length || 0,
-            bootstrapGridIssues: metrics.bootstrapGridIssues?.length || 0,
-            bootstrapColumnsOutsideRows: metrics.bootstrapColumnsOutsideRows?.length || 0,
-            breakpointDisplayConflicts: metrics.breakpointDisplayConflicts?.length || 0,
-            navbarCollapseIssues: metrics.navbarCollapseIssues?.length || 0,
-            focusOrderIssues: metrics.focusOrderIssues?.length || 0,
-            focusIndicatorMissing: metrics.focusIndicatorMissing?.length || 0,
-            scrollEdgeCrowding: metrics.scrollEdgeCrowding?.length || 0,
-            scrollBottomCrowding: metrics.scrollBottomCrowding?.length || 0,
-            footerViewportGap: metrics.footerViewportGap?.gapPx ?? null,
-            footerViewportGapPass: metrics.footerViewportGap?.present ? (metrics.footerViewportGap.passesMinimum ? 1 : 0) : null,
-            ghostScrollContainers: metrics.ghostScrollContainers?.length || 0,
-            nestedScrollContainers: metrics.nestedScrollContainers?.length || 0,
-            flexScrollTraps: metrics.flexScrollTraps?.length || 0,
-            badgeStyleMismatches: metrics.badgeStyleMismatches?.length || 0,
-            buttonContrastIssues: metrics.buttonContrastIssues?.length || 0,
-            nonTokenColorUsage: metrics.nonTokenColorUsage?.length || 0,
-            monospaceToneMismatches: metrics.monospaceToneMismatches?.length || 0,
-            modalThemeIssues: metrics.modalThemeIssues?.length || 0,
-            modalBackdropBlur: metrics.modalBackdrop?.blurPx ?? null,
-            modalBackdropSaturate: metrics.modalBackdrop?.saturate ?? null,
-            modalBackdropAlpha: metrics.modalBackdrop?.alpha ?? null,
-            contrastProblems: metrics.contrastProblems?.length || 0,
-            componentLayoutShift: metrics.componentLayoutShift?.length || 0,
-            visualContainmentIssues: metrics.visualContainmentIssues?.length || 0,
-            mobileRowCardStackGapRows: spacing.mobileRowCardStackGaps?.length || 0,
-            mobileRowCardStackGapIssues: spacing.mobileRowCardStackGaps?.filter((entry) => !entry.gapsConsistent)?.length || 0,
-            mobileCardEdgeAlignment: spacing.mobileCardEdgeAlignment ? 1 : 0,
-            mobileCardEdgeAlignmentIssues: spacing.mobileCardEdgeAlignment
-                ? [!spacing.mobileCardEdgeAlignment.matchesLeft, !spacing.mobileCardEdgeAlignment.matchesRight].filter(Boolean).length
-                : 0,
-            duplicateRequests: result.network.duplicateRequests?.length || 0,
-            kpiCards: spacing.kpiCards?.length || 0,
-            kpiMissingClass: spacing.cardsMissingKpiClass?.length || 0,
-            cardBorderRadiusMismatch: spacing.cardBorderRadiusIssues?.length || 0,
-            kpiHeightVariance: spacing.kpiHeightVariance || 0,
-            loginErrorVisible: Boolean(metrics.loginFailure?.alertVisible),
-            loginShakeActive: Boolean(metrics.loginFailure?.cardAnimationActive),
-            loginPasswordInvalid: Boolean(metrics.loginFailure?.passwordInvalidClass),
-            loginRateLimitAttempts: metrics.loginRateLimit?.attempts ?? null,
-            loginRateLimit429: metrics.loginRateLimit?.reached429 ?? null,
-            loginRateLimitStatus: metrics.loginRateLimit?.status ?? null,
-            missingSecurityHeaders: result.securityHeaders?.missing?.length || 0,
-            summaryPath,
-        }));
-    }
-    console.log('UI_LINT_END');
+    emitResults(results, summaryPath);
 
     const hasHardFindings = results.some((result) => (result.hardFindings || []).length > 0);
     const hasVisualRegressionFailures = VISUAL_REGRESSION.enabled &&

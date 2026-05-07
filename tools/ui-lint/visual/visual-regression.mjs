@@ -129,6 +129,7 @@ export function getVisualRegressionConfig() {
     return {
         enabled: asBoolean(process.env.UI_LINT_VISUAL_REGRESSION),
         updateBaselines: asBoolean(process.env.UI_LINT_VISUAL_UPDATE_BASELINES),
+        disableResizeObserver: asBoolean(process.env.UI_LINT_DISABLE_RESIZE_OBSERVER),
         thresholdPercent: Number.parseFloat(process.env.UI_LINT_VISUAL_THRESHOLD_PERCENT || `${DEFAULT_THRESHOLD_PERCENT}`),
         pixelThreshold: Number.parseFloat(process.env.UI_LINT_VISUAL_PIXEL_THRESHOLD || `${DEFAULT_PIXEL_THRESHOLD}`),
         screenshotHeight: asPositiveInt(process.env.UI_LINT_VISUAL_SCREENSHOT_HEIGHT, DEFAULT_SCREENSHOT_HEIGHT),
@@ -188,7 +189,7 @@ export async function stabilizeVisualSnapshot(page, config = getVisualRegression
         `,
     }).catch(() => { });
 
-    await page.evaluate(async ({ fixedNowIso }) => {
+    await page.evaluate(async ({ disableResizeObserver, fixedNowIso }) => {
         window.__UI_LINT__ = true;
 
         const fixedNow = new Date(fixedNowIso).valueOf();
@@ -214,11 +215,13 @@ export async function stabilizeVisualSnapshot(page, config = getVisualRegression
 
         window.requestAnimationFrame = (cb) => setTimeout(() => cb(performance.now()), 16);
 
-        window.ResizeObserver = class {
-            observe() { }
-            unobserve() { }
-            disconnect() { }
-        };
+        if (disableResizeObserver) {
+            window.ResizeObserver = class {
+                observe() { }
+                unobserve() { }
+                disconnect() { }
+            };
+        }
 
         try {
             await document.fonts.ready;
@@ -262,7 +265,10 @@ export async function stabilizeVisualSnapshot(page, config = getVisualRegression
         document.activeElement?.blur?.();
 
         window.scrollTo(0, 0);
-    }, { fixedNowIso: config.fixedNowIso }).catch(() => { });
+    }, {
+        disableResizeObserver: Boolean(config.disableResizeObserver),
+        fixedNowIso: config.fixedNowIso,
+    }).catch(() => { });
 
     await page.mouse.move(0, 0).catch(() => { });
     await page.waitForTimeout(120);

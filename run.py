@@ -31,7 +31,7 @@ def main() -> None:
         log_level=settings.log_level.lower(),
         proxy_headers=True,
         forwarded_allow_ips=settings.forwarded_allow_ips,
-        reload=settings.environment == "development",
+        reload=settings.reload,
     )
 
 

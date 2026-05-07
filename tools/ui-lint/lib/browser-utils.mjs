@@ -61,7 +61,7 @@ export async function resetLayoutShiftMetric(page) {
 }
 
 export async function login(page, { baseUrl, username, password, motionResetCss }) {
-    await page.goto(`${baseUrl}/login`, { waitUntil: 'networkidle', timeout: DEFAULT_NAV_TIMEOUT_MS });
+    await page.goto(`${baseUrl}/login`, { waitUntil: 'domcontentloaded', timeout: DEFAULT_NAV_TIMEOUT_MS });
     await disableMotion(page, motionResetCss, 'login');
 
     await page.fill('#username', username);

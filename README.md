@@ -1,291 +1,204 @@
-# 🚀 CaddyBuddy
+# CaddyBuddy
 
-> Modern web-based administration dashboard for managing [Caddy](https://caddyserver.com/) servers
+> Moderne Verwaltungsoberflaeche fuer Caddy-Instanzen, Domains, Konfigurationen und Zugriffe.
 
-[![Python 3.13+](https://img.shields.io/badge/Python-3.13+-blue.svg)](https://www.python.org/downloads/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.136+-green.svg)](https://fastapi.tiangolo.com/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.13](https://img.shields.io/badge/Python-3.13-blue.svg)](https://www.python.org/downloads/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.136-009688.svg)](https://fastapi.tiangolo.com/)
+[![Docker](https://img.shields.io/badge/Docker-ready-2496ED.svg)](https://www.docker.com/)
+[![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57.svg)](https://www.sqlite.org/)
 
-CaddyBuddy provides a sleek, secure dashboard to manage multiple Caddy server instances, configurations, users, and API keys—all from a single interface.
+CaddyBuddy buendelt die wichtigsten Verwaltungsaufgaben fuer eine moderne Caddy-Umgebung in einer zentralen Weboberflaeche. Das Projekt kombiniert ein serverseitig gerendertes UI mit FastAPI, einer asynchronen SQLite-Anbindung, Echtzeit-Events per SSE und sicheren Standardeinstellungen fuer Sessions, Rate Limits und Security Header.
 
----
+## Inhaltsverzeichnis
 
-## 📑 Table of Contents
+- [Ueberblick](#ueberblick)
+- [Funktionen](#funktionen)
+- [Tech-Stack](#tech-stack)
+- [Schnellstart](#schnellstart)
+- [Konfiguration](#konfiguration)
+- [API und Echtzeit](#api-und-echtzeit)
+- [Projektstruktur](#projektstruktur)
+- [Qualitaet und Tooling](#qualitaet-und-tooling)
+- [Deployment-Hinweise](#deployment-hinweise)
 
-- [Features](#-features)
-- [Screenshots](#-screenshots)
-- [Prerequisites](#-prerequisites)
-- [Quick Start](#-quick-start)
-  - [Docker (Recommended)](#docker-recommended)
-  - [Local Development](#local-development)
-- [Configuration](#-configuration)
-- [Architecture](#-architecture)
-- [API Reference](#-api-reference)
-- [Security](#-security)
-- [Development](#-development)
-- [Contributing](#-contributing)
-- [License](#-license)
+## Ueberblick
 
----
+CaddyBuddy ist fuer Teams gedacht, die mehrere Caddy-Server, deren Konfigurationen und die zugehoerigen Verwaltungsdaten an einer Stelle pflegen wollen. Neben der UI fuer Server, Konfigurationen, Domains, API-Keys, Benutzer und Audit-Logs stellt die Anwendung auch Health- und Build-Informationen ueber eine kleine API bereit.
 
-## ✨ Features
+Die Anwendung startet bei leerer Datenbank automatisch mit einem initialen Admin-Benutzer. In Entwicklungsumgebungen laeuft sie bequem lokal, fuer produktive Szenarien steht ein Docker-Build mit Healthcheck, Build-Metadaten und persistentem Datenverzeichnis bereit.
 
-| Feature | Description |
-|---------|-------------|
-| 🖥️ **Multi-Server Management** | Connect and manage multiple Caddy instances |
-| ⚙️ **Configuration Editor** | View, edit, and deploy Caddy configurations |
-| 👥 **User Management** | Role-based access control (Admin/User) |
-| 🔑 **API Keys** | Generate and manage API keys with expiration |
-| 📋 **Audit Logs** | Track all actions with detailed audit trail |
-| 🔒 **Security First** | CSRF protection, rate limiting, secure sessions |
-| 🐳 **Docker Ready** | Production-ready container with health checks |
-| 🌙 **Modern UI** | Responsive Bootstrap 5 interface |
+## Funktionen
 
----
+- ⚙️ Verwaltung mehrerer Caddy-Server inklusive Metadaten und Statusbezug.
+- 🌐 Domain-Verwaltung mit Upstream, SSL-Provider und Server-Zuordnung.
+- 🧩 Pflege von Caddy-Konfigurationen ueber das Web-UI.
+- 👥 Benutzer- und Rollenverwaltung fuer Admin- und regulaere Benutzerkonten.
+- 🔑 Erstellung und Verwaltung von API-Keys.
+- 🧾 Audit-Logs fuer sicherheitsrelevante und administrative Aktionen.
+- 📡 Echtzeit-Updates ueber Server-Sent Events unter `/api/v1/events`.
+- 🔒 Sicherheitsfunktionen wie Session-Schutz, CSRF-Validierung, Security Header und Rate Limiting.
+- 🐳 Docker-Image mit eingebetteter Versions- und Commit-Information aus `VERSION` und `BUILD_INFO`.
 
-## 📸 Screenshots
+## Tech-Stack
 
-*Coming soon*
+| Bereich | Technologie |
+| --- | --- |
+| Backend | Python 3.13, FastAPI, Uvicorn |
+| Datenbank | SQLite im WAL-Modus, SQLAlchemy 2.x, aiosqlite |
+| Frontend | Jinja2, Bootstrap 5, Vanilla JavaScript |
+| Sicherheit | SlowAPI, SessionMiddleware, Security Headers |
+| Echtzeit | Server-Sent Events |
+| Tooling | Docker, Buildx, Playwright-basierter UI-Lint |
 
----
+## Schnellstart
 
-## 📋 Prerequisites
+### Lokal entwickeln
 
-- **Python 3.13+** (for local development)
-- **Docker & Docker Compose** (for containerized deployment)
-- Access to one or more Caddy server admin APIs
+```bash
+python3.13 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
 
----
+export CADDYBUDDY_SECRET_KEY="$(head -c 32 /dev/urandom | base64)"
+export CADDYBUDDY_ADMIN_PASSWORD="LocalDevAdminPassword-Change-Me"
+export CADDYBUDDY_RELOAD=1
+export CADDYBUDDY_SESSION_HTTPS_ONLY=false
+export LOG_LEVEL=DEBUG
+export TZ=Europe/Berlin
 
-## 🚀 Quick Start
-
-### Docker (Recommended)
-
-1. **Generate a secure secret key:**
-
-   ```bash
-   export CADDYBUDDY_SECRET_KEY="$(head -c 32 /dev/urandom | base64)"
-   ```
-
-2. **Create the data directory:**
-
-   ```bash
-   mkdir -p /opt/caddybuddy/data
-   ```
-
-3. **Create `docker-compose.yml`:**
-
-   ```yaml
-   services:
-     caddybuddy:
-       image: docker.cirrio.de/caddybuddy:latest
-       container_name: caddybuddy
-       restart: always
-       ports:
-         - "8000:8000"
-       environment:
-         CADDYBUDDY_SECRET_KEY: "${CADDYBUDDY_SECRET_KEY}"
-         CADDYBUDDY_ADMIN_PASSWORD: "your-strong-password"
-         LOG_LEVEL: "INFO"
-         TZ: "Europe/Berlin"
-       volumes:
-         - ./data:/app/data
-       healthcheck:
-         test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3)"]
-         interval: 30s
-         timeout: 10s
-         retries: 3
-   ```
-
-4. **Start the container:**
-
-   ```bash
-   docker compose up -d
-   ```
-
-5. **Access the dashboard:** Open `http://localhost:8000` and login with `admin` / your configured password.
-
----
-
-### Local Development
-
-1. **Clone the repository:**
-
-   ```bash
-   git clone https://github.com/Gill-Bates/caddybuddy.git
-   cd caddybuddy
-   ```
-
-2. **Create virtual environment:**
-
-   ```bash
-   python3.13 -m venv .venv
-   source .venv/bin/activate
-   pip install --upgrade pip
-   pip install -r requirements.txt
-   ```
-
-3. **Set environment variables:**
-
-   ```bash
-   export CADDYBUDDY_SECRET_KEY="$(head -c 32 /dev/urandom | base64)"
-   export CADDYBUDDY_ADMIN_PASSWORD="your-dev-password"
-   export LOG_LEVEL="DEBUG"
-   export CADDYBUDDY_ENVIRONMENT="development"
-   ```
-
-4. **Run the server:**
-
-   ```bash
-   python run.py
-   ```
-
-5. **Access at:** `http://localhost:8000`
-
----
-
-## ⚙️ Configuration
-
-All configuration is done via environment variables:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CADDYBUDDY_SECRET_KEY` | — | **Required.** Session encryption key (base64) |
-| `CADDYBUDDY_ADMIN_PASSWORD` | `admin` | Initial admin password |
-| `CADDYBUDDY_ENVIRONMENT` | `production` | `development`, `staging`, or `production` |
-| `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
-| `PORT` | `8000` | HTTP server port |
-| `TZ` | `UTC` | Timezone (e.g., `Europe/Berlin`) |
-| `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Trusted proxy IPs |
-
-> ⚠️ **Security Note:** Always set a strong, unique `CADDYBUDDY_SECRET_KEY` and `CADDYBUDDY_ADMIN_PASSWORD` in production.
-
----
-
-## 🏗️ Architecture
-
+python run.py
 ```
+
+Danach ist die Anwendung standardmaessig unter `http://127.0.0.1:8000` erreichbar.
+
+### Docker lokal bauen und starten
+
+```bash
+mkdir -p data
+printf '%s\n' "dev" > BUILD_INFO
+
+docker build -f docker/Dockerfile -t caddybuddy:local .
+
+docker run --rm \
+  -p 8000:8000 \
+  -e CADDYBUDDY_SECRET_KEY="$(head -c 32 /dev/urandom | base64)" \
+  -e CADDYBUDDY_ADMIN_PASSWORD="LocalDockerAdminPassword-Change-Me" \
+  -e CADDYBUDDY_SESSION_HTTPS_ONLY=false \
+  -e TZ=Europe/Berlin \
+  -v "$PWD/data:/app/data" \
+  caddybuddy:local
+```
+
+Wenn du ein Release-Image bauen willst, sollten `VERSION` und `BUILD_INFO` vor dem Build passend gesetzt sein.
+
+## Konfiguration
+
+Die wichtigsten Einstellungen werden ueber Umgebungsvariablen gesteuert:
+
+| Variable | Beispiel | Beschreibung |
+| --- | --- | --- |
+| `CADDYBUDDY_RELOAD` | `true` | Aktiviert den Uvicorn-Reload-Modus fuer lokale Entwicklung. |
+| `CADDYBUDDY_ALLOW_INSECURE_DEFAULTS` | `true` | Erlaubt unsichere Defaults nur bewusst fuer disposable lokale Setups. |
+| `CADDYBUDDY_SECRET_KEY` | Base64-String | Pflicht; signiert und schuetzt Sessions. |
+| `CADDYBUDDY_ADMIN_PASSWORD` | `replace-me` | Passwort fuer den initialen Admin-Benutzer. |
+| `CADDYBUDDY_SESSION_HTTPS_ONLY` | `false` | Schaltet `Secure`-Cookies fuer lokale HTTP-Tests aus. |
+| `DATABASE_URL` | `sqlite+aiosqlite:///data/app.db` | Verbindungszeichenfolge fuer die Datenbank. |
+| `LOG_LEVEL` | `INFO` | Logging-Level fuer Uvicorn und Anwendung. |
+| `TZ` | `Europe/Berlin` | IANA-Zeitzone. |
+| `CADDYBUDDY_PORT` oder `PORT` | `8000` | HTTP-Port der Anwendung. |
+| `CADDYBUDDY_FORWARDED_ALLOW_IPS` | `127.0.0.1` | Vertrauenswuerdige Proxy-IPs fuer Forwarded Headers. |
+
+Wichtig:
+
+- Die App erzwingt immer ein starkes Secret. Das Default-Admin-Passwort wird erst dann geprueft, wenn bei leerer Datenbank wirklich ein initialer Admin angelegt werden muss.
+- Fuer lokale HTTP-Tests `CADDYBUDDY_SESSION_HTTPS_ONLY=false` setzen, damit Session-Cookies auch ohne HTTPS funktionieren.
+- Fuer Wegwerf-Setups kannst du alternativ explizit `CADDYBUDDY_ALLOW_INSECURE_DEFAULTS=true` setzen, statt ein starkes Initialpasswort zu vergeben.
+- Das persistente SQLite-File liegt standardmaessig unter `data/app.db`.
+
+## API und Echtzeit
+
+Die System-API ist klein, aber praktisch fuer Monitoring und Integrationen:
+
+| Endpoint | Zweck |
+| --- | --- |
+| `GET /api/v1/health` | Healthcheck mit Status, App-Name und Version |
+| `GET /api/v1/build-info` | Version und Commit |
+| `GET /api/v1/events` | SSE-Stream fuer UI- und Ressourcen-Updates |
+
+Beispiel:
+
+```bash
+curl http://127.0.0.1:8000/api/v1/health
+```
+
+Im Browser deckt das UI aktuell unter anderem diese Bereiche ab:
+
+- Dashboard
+- Server
+- Konfigurationen
+- Domains
+- API Keys
+- Benutzer
+- Audit-Logs
+- Profil
+
+## Projektstruktur
+
+```text
 caddybuddy/
 ├── app/
-│   ├── main.py           # FastAPI application factory
-│   ├── config/           # Settings, logging, rate limiting
-│   ├── database/         # SQLAlchemy async session management
-│   ├── models/           # SQLAlchemy ORM entities
-│   ├── repositories/     # Data access layer
-│   ├── services/         # Business logic (auth, caddy, audit)
-│   ├── routers/          # API & UI route handlers
-│   ├── middleware/       # Security headers, CSRF
-│   ├── templates/        # Jinja2 HTML templates
-│   └── static/           # CSS, JS, images
-├── data/                 # SQLite database (WAL mode)
-├── docker/               # Dockerfile & compose files
-└── run.py                # Uvicorn entrypoint
+│   ├── config/            # Settings, Limiter, Logging
+│   ├── database/          # Engine, Session-Handling, Initialisierung
+│   ├── dependencies/      # Web-Helper, Session- und CSRF-Logik
+│   ├── middleware/        # Security Header und Request-Schutz
+│   ├── models/            # SQLAlchemy-Modelle
+│   ├── repositories/      # Datenzugriff
+│   ├── routers/
+│   │   ├── api.py         # System-API
+│   │   └── ui/            # UI-Routen nach Bereich getrennt
+│   ├── services/          # Auth, Build-Info, Caddy, Audit, Events
+│   ├── static/            # CSS, JS, Assets
+│   ├── templates/         # Jinja2-Templates
+│   └── utils/             # Hilfsfunktionen, Banner, Parsing
+├── data/                  # Persistente Laufzeitdaten, inkl. SQLite
+├── docker/                # Dockerfile und Entry-Setup
+├── tools/ui-lint/         # UI-Audit und Browser-basierte Qualitaetschecks
+├── VERSION                # Release-Version
+├── BUILD_INFO             # Commit oder Build-Metadaten
+└── run.py                 # Uvicorn-Einstiegspunkt
 ```
 
-**Tech Stack:**
+## Qualitaet und Tooling
 
-- **Backend:** FastAPI + Uvicorn + Python 3.13
-- **Database:** SQLite (WAL mode) + SQLAlchemy 2.x (async)
-- **Frontend:** Jinja2 + Bootstrap 5 + Vanilla JS
-- **Security:** SlowAPI rate limiting, bcrypt hashing, secure sessions
-
----
-
-## 📡 API Reference
-
-CaddyBuddy provides a RESTful API at `/api/v1/`:
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/v1/health` | `GET` | Health check endpoint |
-| `/api/v1/build-info` | `GET` | Application version info |
-
-**Example:**
-
-```bash
-curl http://localhost:8000/api/v1/health
-# {"status":"ok","app":"CaddyBuddy","version":"0.1"}
-```
-
-> Full API documentation available at `/docs` (Swagger UI) or `/redoc`.
-
----
-
-## 🔒 Security
-
-CaddyBuddy implements multiple layers of security:
-
-- **Authentication:** Session-based with bcrypt password hashing
-- **Authorization:** Role-based access control (Admin/User)
-- **CSRF Protection:** Token validation on all state-changing requests
-- **Rate Limiting:** SlowAPI-based protection against brute force
-- **Security Headers:** HSTS, X-Frame-Options, CSP, X-Content-Type-Options
-- **Session Security:** HttpOnly, Secure (in production), SameSite=Lax cookies
-
-**Recommended Production Setup:**
-
-1. Run behind a reverse proxy (Caddy, nginx, Traefik)
-2. Enable HTTPS termination at the proxy level
-3. Set `FORWARDED_ALLOW_IPS` to your proxy's IP
-4. Use strong, unique passwords and secret keys
-
----
-
-## 🛠️ Development
-
-### Running Tests
-
-```bash
-pytest tests/ -v
-```
-
-### Code Quality
-
-```bash
-# Format
-black app/ tests/
-ruff check app/ tests/ --fix
-
-# Type checking
-mypy app/
-```
-
-### UI Linting
+### UI-Lint ausfuehren
 
 ```bash
 cd tools/ui-lint
 npm install
-UI_LINT_BASE_URL=http://localhost:8000 npm run lint
+
+UI_LINT_BASE_URL=http://127.0.0.1:8000 \
+UI_LINT_USERNAME=admin \
+UI_LINT_PASSWORD=admin \
+npm run audit
 ```
 
----
+Der UI-Lint prueft Layout, Accessibility, Interaktionsflaechen und weitere Frontend-Qualitaetskriterien ueber Playwright und browserseitige Analyzer.
 
-## 🤝 Contributing
+### Python-Syntax schnell pruefen
 
-Contributions are welcome! Please:
+```bash
+python -m py_compile run.py app/main.py
+```
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+## Deployment-Hinweise
 
----
-
-## 📄 License
-
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+- Fuer Produktion sollte CaddyBuddy hinter einem Reverse Proxy mit HTTPS laufen.
+- Das Datenverzeichnis `data/` muss persistent gemountet werden.
+- `docker/docker-compose.yml` im Repo ist eher ein projektspezifisches Infrastrukturbeispiel und sollte vor produktivem Einsatz an Netzwerk, Secrets und Registry angepasst werden.
+- Vor Release-Builds lohnt es sich, `VERSION` und `BUILD_INFO` bewusst zu setzen, damit `/api/v1/build-info` saubere Metadaten liefert.
+- Falls du die Anwendung in einer frischen Umgebung startest, wird automatisch ein Default-Admin erzeugt. Dieses Passwort sollte sofort geaendert werden.
 
 ---
 
-## 👤 Author
-
-**Gill-Bates**
-
-- GitHub: [@Gill-Bates](https://github.com/Gill-Bates)
-
----
-
-<p align="center">
-  Made with ❤️ for the Caddy community
-</p>
+Wenn du Caddy serverseitig zentral verwalten willst, aber trotzdem eine leichte, nachvollziehbare Python-Webanwendung bevorzugst, ist CaddyBuddy bewusst auf einen kleinen, klaren Stack ausgelegt. 🙂
