@@ -1,0 +1,116 @@
+//
+// tools/ui-lint/lib/constants.mjs
+// Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
+//
+
+// Shared constants for the UI lint tool.
+
+export const VERTICAL_GAP_MIN = 22;
+export const VERTICAL_GAP_MAX = 26;
+export const STACK_GAP_VARIANCE_TOLERANCE_PX = 2;
+export const VISUAL_DRIFT_THRESHOLD = 0.0025;
+export const SCREENSHOT_SETTLE_MS = 800;
+export const TAB_SWITCH_SETTLE_MS = 700;
+export const DETAILS_EXPAND_SETTLE_MS = 300;
+export const OVERFLOW_TOLERANCE_PX = 6;
+export const FOOTER_OVERLAP_TOLERANCE_PX = 1;
+export const FOOTER_VIEWPORT_GAP_MIN_PX = 8;
+export const SCROLL_EDGE_CLEARANCE_MIN = 12;
+export const LAYOUT_SHIFT_THRESHOLD = 0.02;
+export const COMPONENT_LAYOUT_SHIFT_THRESHOLD_PX = 2;
+export const COMPONENT_LAYOUT_SHIFT_SETTLE_MS = 800;
+export const CLICK_TARGET_MIN_SIZE_PX = 38;
+export const LOGIN_ERROR_SETTLE_MS = 120;
+export const LOGIN_LOCKOUT_RESET_MS = 16000;
+export const LOGIN_TEST_STAGGER_MS = 13000;
+export const LOGS_DELETE_HAIRLINE_TOLERANCE_PX = 2;
+export const BADGE_FONT_SIZE_TOLERANCE_PX = 0.5;
+export const BADGE_FONT_WEIGHT_TOLERANCE = 50;
+export const BADGE_RADIUS_TOLERANCE_PX = 1;
+export const BADGE_PADDING_TOLERANCE_PX = 1;
+export const MONOSPACE_RADIUS_TOLERANCE_PX = 1;
+export const MONOSPACE_PADDING_TOLERANCE_PX = 1;
+export const TOP_BAR_HEIGHT_EXPECTED_PX = 68;
+export const TOP_BAR_HEIGHT_TOLERANCE_PX = 2;
+export const MODAL_BACKDROP_BLUR_EXPECTED_PX = 8;
+export const MODAL_BACKDROP_BLUR_TOLERANCE_PX = 0.25;
+export const MODAL_BACKDROP_SATURATE_EXPECTED = 0.8;
+export const MODAL_BACKDROP_SATURATE_TOLERANCE = 0.05;
+export const MODAL_BACKDROP_ALPHA_EXPECTED = 0.6;
+export const MODAL_BACKDROP_ALPHA_TOLERANCE = 0.05;
+export const MODAL_DARK_DIALOG_MAX_LUMA = 0.3;
+export const MODAL_CONTROL_LIGHT_BG_MIN_LUMA = 0.72;
+export const MODAL_CONTROL_DARK_TEXT_MAX_LUMA = 0.3;
+export const FORM_SWITCH_MAX_HEIGHT_PX = 22;
+export const FORM_SWITCH_HEIGHT_TOLERANCE_PX = 1;
+export const FLEX_MIN_HEIGHT_ZERO_TOLERANCE_PX = 0.5;
+export const INPUT_GROUP_HEIGHT_EXPECTED_PX = 44;
+export const INPUT_GROUP_HEIGHT_TOLERANCE_PX = 2;
+export const COMPACT_CARD_ACTION_MARGIN_TOP_MAX_PX = 10;
+export const COMPACT_CARD_ACTION_PADDING_TOP_MAX_PX = 2;
+export const COMPACT_CARD_ACTION_BORDER_TOP_MAX_PX = 0.5;
+export const GHOST_SCROLL_DELTA_MAX_PX = 8;
+export const GHOST_SCROLL_MIN_HEIGHT_PX = 120;
+export const KPI_CARD_PADDING_EXPECTED = 16;
+export const KPI_CARD_PADDING_TOLERANCE = 1;
+export const KPI_ICON_MIN = 32;
+export const KPI_ICON_MAX = 40;
+export const KPI_VISUAL_DRIFT_THRESHOLD = 0.01;
+export const KPI_HEIGHT_TOLERANCE_PX = 2;
+export const KPI_ROW_VARIANCE_MAX = 3;
+export const KPI_ICON_CENTER_TOLERANCE_PX = 4;
+export const KPI_ICON_NEUTRAL_COLOR_DISTANCE_MAX = 12;
+export const KPI_CARD_REQUIRED_SCOPES = Object.freeze(['dashboard']);
+export const CARD_BORDER_RADIUS_EXPECTED_PX = 12;
+export const CARD_BORDER_RADIUS_TOLERANCE_PX = 1;
+export const DESKTOP_TABLE_HEAD_MIN_FONT_SIZE_PX = 12;
+export const DESKTOP_TABLE_CELL_MIN_FONT_SIZE_PX = 14;
+export const THEMES = Object.freeze(['light', 'dark']);
+export const CONSOLE_LIGHT_BG_MIN_LUMA = 0.75;
+export const CONSOLE_IP_MAX_LINES = 1;
+export const CONSOLE_IP_HEIGHT_SLACK_PX = 2;
+export const DASHBOARD_HEADER_HEIGHT_TOLERANCE_PX = 2;
+export const CARD_HEADER_TOOLBAR_WRAP_TOLERANCE_PX = 2;
+export const DASHBOARD_MAIN_GRID_DESKTOP_COLUMNS = 3;
+export const DASHBOARD_MAIN_GRID_TABLET_COLUMNS = 2;
+export const LG_BREAKPOINT_PX = 992;
+export const XL_BREAKPOINT_PX = 1200;
+
+export const WCAG_CONTRAST = Object.freeze({
+  NORMAL_AA: 4.5,
+  LARGE_AA: 3.0,
+  LARGE_TEXT_SIZE_PX: 24,
+  LARGE_TEXT_SIZE_BOLD_PX: 18.66,
+  BOLD_WEIGHT: 700,
+});
+
+export const MOTION_RESET_CSS = `
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+    caret-color: transparent !important;
+  }
+`;
+
+export const FULL_MOTION_RESET_CSS = MOTION_RESET_CSS;
+
+// Only pass browser-consumed constants through CDP; Node-side findings import directly.
+export const UI_EVAL_CONSTANTS = Object.freeze({
+  OVERFLOW_TOLERANCE_PX,
+  FOOTER_VIEWPORT_GAP_MIN_PX,
+  CLICK_TARGET_MIN_SIZE_PX,
+  CONSOLE_LIGHT_BG_MIN_LUMA,
+  CONSOLE_IP_MAX_LINES,
+  CONSOLE_IP_HEIGHT_SLACK_PX,
+  LG_BREAKPOINT_PX,
+  XL_BREAKPOINT_PX,
+  DASHBOARD_HEADER_HEIGHT_TOLERANCE_PX,
+  CARD_HEADER_TOOLBAR_WRAP_TOLERANCE_PX,
+  DASHBOARD_MAIN_GRID_DESKTOP_COLUMNS,
+  DASHBOARD_MAIN_GRID_TABLET_COLUMNS,
+  MODAL_DARK_DIALOG_MAX_LUMA,
+  MODAL_CONTROL_LIGHT_BG_MIN_LUMA,
+  MODAL_CONTROL_DARK_TEXT_MAX_LUMA,
+  WCAG_NORMAL_AA: WCAG_CONTRAST.NORMAL_AA,
+});

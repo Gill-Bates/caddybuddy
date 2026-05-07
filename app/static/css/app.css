@@ -1,0 +1,330 @@
+:root {
+    --cb-bg: #f3efe6;
+    --cb-surface: rgba(255, 255, 255, 0.82);
+    --cb-surface-strong: rgba(21, 34, 46, 0.88);
+    --cb-text: #15222e;
+    --cb-muted: #5c6773;
+    --cb-accent: #0f766e;
+    --cb-accent-strong: #115e59;
+    --cb-border: rgba(21, 34, 46, 0.08);
+    --cb-shadow: 0 24px 60px rgba(21, 34, 46, 0.12);
+}
+
+body {
+    min-height: 100vh;
+    margin: 0;
+    font-family: "Space Grotesk", "Segoe UI", sans-serif;
+    color: var(--cb-text);
+    background:
+        radial-gradient(circle at top left, rgba(15, 118, 110, 0.12), transparent 30%),
+        radial-gradient(circle at right center, rgba(250, 204, 21, 0.16), transparent 22%),
+        linear-gradient(180deg, #f8f5ee 0%, #ece7dc 100%);
+}
+
+.app-shell {
+    display: grid;
+    min-height: 100vh;
+    grid-template-columns: 290px minmax(0, 1fr);
+}
+
+.app-sidebar {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 2rem 1.5rem;
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.95), rgba(15, 118, 110, 0.92));
+    color: #f8fafc;
+    position: sticky;
+    top: 0;
+    min-height: 100vh;
+}
+
+.brand-mark {
+    display: inline-flex;
+    flex-direction: column;
+    color: inherit;
+}
+
+.brand-mark__kicker,
+.eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-size: 0.72rem;
+    color: rgba(15, 23, 42, 0.55);
+}
+
+.app-sidebar .brand-mark__kicker {
+    color: rgba(248, 250, 252, 0.6);
+}
+
+.brand-mark__name {
+    font-size: 1.7rem;
+    font-weight: 700;
+}
+
+.app-nav__link {
+    border-radius: 1rem;
+    padding: 0.85rem 1rem;
+    color: rgba(248, 250, 252, 0.78);
+    text-decoration: none;
+    transition: transform 160ms ease, background-color 160ms ease, color 160ms ease;
+}
+
+.app-nav__link:hover,
+.app-nav__link.is-active {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.12);
+    transform: translateX(4px);
+}
+
+/* Global focus states using :where() for low specificity and maintainability */
+:where(.brand-mark, .app-nav__link, .btn, .btn-close, a, button):focus-visible {
+    outline: 3px solid color-mix(in srgb, var(--cb-accent) 72%, white 28%);
+    outline-offset: 3px;
+    box-shadow: 0 0 0 0.25rem color-mix(in srgb, var(--cb-accent) 24%, transparent);
+}
+
+.sidebar-user {
+    display: flex;
+    gap: 0.9rem;
+    align-items: center;
+}
+
+.sidebar-user__avatar {
+    width: 2.75rem;
+    height: 2.75rem;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.2);
+    font-weight: 700;
+}
+
+.app-main {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+    padding: 2rem;
+}
+
+.app-main--public {
+    padding: 0;
+}
+
+.app-footer {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-top: auto;
+    padding-top: 1rem;
+    font-size: 0.8rem;
+    color: var(--cb-muted);
+}
+
+.auth-shell {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 2rem;
+}
+
+.auth-panel {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(340px, 0.9fr);
+    gap: 2rem;
+    width: min(1120px, 100%);
+    align-items: center;
+}
+
+.auth-panel__intro h1 {
+    font-size: clamp(2.4rem, 5vw, 4.8rem);
+    line-height: 0.95;
+    margin-bottom: 1rem;
+}
+
+.panel-card,
+.metric-card {
+    background: var(--cb-surface);
+    border: 1px solid var(--cb-border);
+    border-radius: 1.5rem;
+    box-shadow: var(--cb-shadow);
+    padding: 1.4rem;
+}
+
+/* Conditional backdrop-filter for performance */
+@supports (backdrop-filter: blur(16px)) {
+
+    .panel-card,
+    .metric-card {
+        backdrop-filter: blur(16px);
+    }
+}
+
+/* Solid fallback for reduced transparency preference */
+@media (prefers-reduced-transparency: reduce) {
+
+    .panel-card,
+    .metric-card {
+        backdrop-filter: none;
+        background: rgba(255, 255, 255, 0.95);
+    }
+}
+
+.panel-card__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.metric-card__label {
+    display: block;
+    color: var(--cb-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.78rem;
+}
+
+.metric-card__value {
+    display: block;
+    margin-top: 0.5rem;
+    font-size: clamp(2rem, 5vw, 3rem);
+    line-height: 1;
+}
+
+.page-title {
+    font-size: clamp(2rem, 3.4vw, 3rem);
+}
+
+.status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    border-radius: 999px;
+    padding: 0.35rem 0.8rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: capitalize;
+    background: rgba(148, 163, 184, 0.18);
+}
+
+.status-pill--online {
+    background: rgba(16, 185, 129, 0.14);
+    color: #047857;
+}
+
+.status-pill--offline {
+    background: rgba(239, 68, 68, 0.12);
+    color: #b91c1c;
+}
+
+.status-pill--unknown {
+    background: rgba(59, 130, 246, 0.12);
+    color: #1d4ed8;
+}
+
+.timeline-list {
+    display: grid;
+    gap: 1rem;
+}
+
+.timeline-item {
+    display: grid;
+    grid-template-columns: 12px 1fr;
+    gap: 1rem;
+    align-items: start;
+}
+
+.timeline-item__dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 999px;
+    margin-top: 0.4rem;
+    background: linear-gradient(135deg, #0f766e, #f59e0b);
+}
+
+.config-list .list-group-item {
+    border: 0;
+    border-bottom: 1px solid var(--cb-border);
+    background: transparent;
+}
+
+.config-list .list-group-item.active {
+    background: var(--cb-surface-strong);
+    color: #f8fafc;
+}
+
+.history-stack {
+    display: grid;
+    gap: 0.8rem;
+}
+
+.history-item,
+.audit-details {
+    padding: 0.9rem 1rem;
+    border-radius: 1rem;
+    background: rgba(21, 34, 46, 0.05);
+}
+
+.audit-details {
+    max-width: 34rem;
+    white-space: pre-wrap;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.8rem;
+}
+
+/* Audit logs page: sticky header with proper background */
+.audit-logs-page .sticky-top {
+    background: var(--cb-surface);
+    z-index: 10;
+}
+
+.audit-logs-page .sticky-top th {
+    border-bottom-width: 2px;
+}
+
+.form-control,
+.form-select {
+    border-radius: 0.95rem;
+    border-color: rgba(21, 34, 46, 0.12);
+    padding: 0.85rem 1rem;
+}
+
+/* Low specificity btn overrides to coexist with Bootstrap */
+:where(.btn) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-block-size: 2.75rem;
+    border-radius: 999px;
+    padding-inline: 1rem;
+}
+
+.panel-card__header .btn.btn-sm {
+    min-block-size: 2.75rem;
+    padding-inline: 1.1rem;
+}
+
+.btn-primary {
+    --bs-btn-bg: var(--cb-accent);
+    --bs-btn-border-color: var(--cb-accent);
+    --bs-btn-hover-bg: var(--cb-accent-strong);
+    --bs-btn-hover-border-color: var(--cb-accent-strong);
+}
+
+@media (max-width: 991.98px) {
+    .app-shell {
+        grid-template-columns: 1fr;
+    }
+
+    .app-sidebar {
+        position: static;
+        min-height: auto;
+        gap: 2rem;
+    }
+
+    .auth-panel {
+        grid-template-columns: 1fr;
+    }
+}

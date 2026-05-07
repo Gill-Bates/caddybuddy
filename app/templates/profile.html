@@ -1,0 +1,62 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<section class="d-grid gap-4">
+    <div>
+        <p class="eyebrow mb-2">Identity</p>
+        <h1 class="page-title mb-2">Profile</h1>
+        <p class="text-body-secondary mb-0">Keep your account details and password current.</p>
+    </div>
+
+    <div class="row g-4 align-items-start">
+        <div class="col-lg-6">
+            <div class="panel-card">
+                <div class="panel-card__header">
+                    <h2 class="h5 mb-0">Profile details</h2>
+                </div>
+                <form action="/profile" method="post" class="d-grid gap-3">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <div>
+                        <label class="form-label" for="profile-username">Username</label>
+                        <input id="profile-username" name="username" class="form-control"
+                            value="{{ current_user.username }}" required>
+                    </div>
+                    <div>
+                        <label class="form-label" for="profile-email">Email</label>
+                        <input id="profile-email" name="email" type="email" class="form-control"
+                            value="{{ current_user.email or '' }}">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Save profile</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="col-lg-6">
+            <div class="panel-card">
+                <div class="panel-card__header">
+                    <h2 class="h5 mb-0">Change password</h2>
+                </div>
+                <form action="/profile/password" method="post" class="d-grid gap-3">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <div>
+                        <label class="form-label" for="profile-current-password">Current password</label>
+                        <input id="profile-current-password" name="current_password" type="password"
+                            class="form-control" required>
+                    </div>
+                    <div>
+                        <label class="form-label" for="profile-new-password">New password</label>
+                        <input id="profile-new-password" name="new_password" type="password" class="form-control"
+                            minlength="8" required>
+                    </div>
+                    <div>
+                        <label class="form-label" for="profile-confirm-password">Confirm new password</label>
+                        <input id="profile-confirm-password" name="confirm_password" type="password"
+                            class="form-control" minlength="8" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Update password</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

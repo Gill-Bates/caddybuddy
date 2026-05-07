@@ -1,0 +1,32 @@
+caddy.sv2.cirrio.de {
+
+    reverse_proxy 10.30.0.140:8000 {
+        transport http {
+            keepalive 30s
+        }
+
+        header_up Host {host}
+        header_up Authorization {http.request.header.Authorization}
+    }
+
+    encode gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+        -X-Powered-By
+    }
+
+    request_body {
+        max_size 100MB
+    }
+
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 10mb
+        }
+    }
+}

@@ -1,0 +1,883 @@
+//
+// tools/ui-lint/run-ui-lint.mjs
+// Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
+//
+
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { injectAnalyzers, installAnalyzers } from './lib/inject-analyzers.mjs';
+
+import { chromium, devices } from 'playwright';
+
+import {
+    BADGE_FONT_SIZE_TOLERANCE_PX,
+    BADGE_FONT_WEIGHT_TOLERANCE,
+    BADGE_PADDING_TOLERANCE_PX,
+    BADGE_RADIUS_TOLERANCE_PX,
+    CARD_BORDER_RADIUS_EXPECTED_PX,
+    CARD_BORDER_RADIUS_TOLERANCE_PX,
+    CLICK_TARGET_MIN_SIZE_PX,
+    COMPACT_CARD_ACTION_BORDER_TOP_MAX_PX,
+    COMPACT_CARD_ACTION_MARGIN_TOP_MAX_PX,
+    COMPACT_CARD_ACTION_PADDING_TOP_MAX_PX,
+    COMPONENT_LAYOUT_SHIFT_SETTLE_MS,
+    COMPONENT_LAYOUT_SHIFT_THRESHOLD_PX,
+    DASHBOARD_MAIN_GRID_DESKTOP_COLUMNS,
+    DASHBOARD_MAIN_GRID_TABLET_COLUMNS,
+    DETAILS_EXPAND_SETTLE_MS,
+    FLEX_MIN_HEIGHT_ZERO_TOLERANCE_PX,
+    FOOTER_OVERLAP_TOLERANCE_PX,
+    FORM_SWITCH_HEIGHT_TOLERANCE_PX,
+    FORM_SWITCH_MAX_HEIGHT_PX,
+    FULL_MOTION_RESET_CSS,
+    GHOST_SCROLL_DELTA_MAX_PX,
+    GHOST_SCROLL_MIN_HEIGHT_PX,
+    INPUT_GROUP_HEIGHT_EXPECTED_PX,
+    INPUT_GROUP_HEIGHT_TOLERANCE_PX,
+    KPI_CARD_PADDING_EXPECTED,
+    KPI_CARD_PADDING_TOLERANCE,
+    KPI_ICON_CENTER_TOLERANCE_PX,
+    KPI_ICON_NEUTRAL_COLOR_DISTANCE_MAX,
+    KPI_ROW_VARIANCE_MAX,
+    LOGIN_ERROR_SETTLE_MS,
+    LOGIN_LOCKOUT_RESET_MS,
+    LOGIN_TEST_STAGGER_MS,
+    LOGS_DELETE_HAIRLINE_TOLERANCE_PX,
+    MODAL_BACKDROP_ALPHA_EXPECTED,
+    MODAL_BACKDROP_ALPHA_TOLERANCE,
+    MODAL_BACKDROP_BLUR_EXPECTED_PX,
+    MODAL_BACKDROP_BLUR_TOLERANCE_PX,
+    MODAL_BACKDROP_SATURATE_EXPECTED,
+    MODAL_BACKDROP_SATURATE_TOLERANCE,
+    MONOSPACE_PADDING_TOLERANCE_PX,
+    MONOSPACE_RADIUS_TOLERANCE_PX,
+    OVERFLOW_TOLERANCE_PX,
+    SCROLL_EDGE_CLEARANCE_MIN,
+    SCREENSHOT_SETTLE_MS,
+    STACK_GAP_VARIANCE_TOLERANCE_PX,
+    TAB_SWITCH_SETTLE_MS,
+    TOP_BAR_HEIGHT_EXPECTED_PX,
+    TOP_BAR_HEIGHT_TOLERANCE_PX,
+    UI_EVAL_CONSTANTS,
+    VERTICAL_GAP_MAX,
+    VERTICAL_GAP_MIN,
+    VISUAL_DRIFT_THRESHOLD,
+    WCAG_CONTRAST,
+} from './lib/constants.mjs';
+import {
+    captureKpiCards,
+    captureStablePair,
+    collectConsoleAndNetwork,
+    diffScreenshots,
+    disableMotion,
+    installLayoutShiftObserver,
+    login,
+    applyTheme,
+    resetLayoutShiftMetric,
+    sanitize,
+} from './lib/browser-utils.mjs';
+import { summarizeFindings, isExpectedStatusUnavailable } from './lib/findings.mjs';
+import { LOGIN_FAILURE_VIEWS, VIEWS } from './lib/views.mjs';
+import {
+    captureVisualSnapshot,
+    compareVisualSnapshot,
+    ensureVisualRegressionDirs,
+    getVisualRegressionConfig,
+} from './visual-regression.mjs';
+
+const BASE_URL = process.env.UI_LINT_BASE_URL || 'http://localhost:8000';
+const USERNAME = process.env.UI_LINT_USERNAME;
+const PASSWORD = process.env.UI_LINT_PASSWORD;
+
+// Centralized selector registry (reduces duplication & fragility)
+const SELECTORS = {
+    interactive: 'button, [role="button"], a[href], input:not([type="hidden"]), select, textarea',
+    clickTarget: [
+        'button',
+        '.btn',
+        '[role="button"]',
+        'a[href]',
+        'summary',
+        'input[type="button"]',
+        'input[type="submit"]',
+        'input[type="reset"]',
+        'select.form-select:not(.form-select-sm)',
+    ].join(', '),
+    focusable: [
+        'a[href]',
+        'button',
+        'input:not([type="hidden"])',
+        'select',
+        'textarea',
+        'summary',
+        '[tabindex]',
+    ].join(', '),
+};
+
+if (!USERNAME || !PASSWORD) {
+    console.error('Error: UI_LINT_USERNAME and UI_LINT_PASSWORD environment variables must be set');
+    console.error('Example: export UI_LINT_USERNAME=admin && export UI_LINT_PASSWORD=your-password');
+    process.exit(1);
+}
+
+// Generate unique session ID for this test run to avoid conflicts
+const SESSION_ID = Date.now();
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const OUTPUT_DIR = process.env.UI_LINT_OUTPUT_DIR || `/tmp/caddybuddy-ui-lint-${SESSION_ID}`;
+const SCREENSHOT_DIR = path.resolve(
+    OUTPUT_DIR,
+    process.env.UI_LINT_SCREENSHOT_DIR || 'screenshots'
+);
+// Results JSON stays in tools/ui-lint/, not in temp
+const RESULTS_DIR = SCRIPT_DIR;
+const VISUAL_REGRESSION = getVisualRegressionConfig();
+
+const UI_LINT_FIXED_NOW_ISO = process.env.UI_LINT_VISUAL_FIXED_NOW || '2026-05-01T12:00:00Z';
+const UI_LINT_LOCALE = process.env.UI_LINT_LOCALE || 'en-US';
+const UI_LINT_TIMEZONE = process.env.UI_LINT_TIMEZONE || 'UTC';
+const UI_LINT_EXPECTED_CHROMIUM_MAJOR = process.env.UI_LINT_EXPECTED_CHROMIUM_MAJOR || '';
+const UI_LINT_BASELINE_GC = (process.env.UI_LINT_BASELINE_GC || 'warn').toLowerCase();
+const FAIL_THRESHOLD = 65;
+const REQUIRED_SECURITY_HEADERS = [
+    'content-security-policy',
+    'strict-transport-security',
+    'x-frame-options',
+    'x-content-type-options',
+];
+
+const DEVICE_CONTEXT_OPTIONS = new Map([
+    ['desktop', { viewport: { width: 1440, height: 1100 } }],
+    ['large-desktop', { viewport: { width: 1600, height: 1100 } }],
+    ['tablet', { ...devices['iPad Pro 11'], deviceScaleFactor: 1 }],
+    ['mobile', { ...devices['iPhone 13'], deviceScaleFactor: 1 }],
+]);
+
+async function installUiLintInitScript(context) {
+    await context.addInitScript(({ fixedNowIso }) => {
+        window.__UI_LINT__ = true;
+
+        const fixedNow = new Date(fixedNowIso).valueOf();
+        if (Number.isFinite(fixedNow)) {
+            const NativeDate = Date;
+            class FixedDate extends NativeDate {
+                constructor(...args) {
+                    if (args.length === 0) {
+                        super(fixedNow);
+                    } else {
+                        super(...args);
+                    }
+                }
+
+                static now() {
+                    return fixedNow;
+                }
+            }
+
+            Object.defineProperty(FixedDate, 'name', { value: 'Date' });
+            window.Date = FixedDate;
+        }
+
+        window.requestAnimationFrame = (cb) => setTimeout(() => cb(performance.now()), 16);
+
+        window.ResizeObserver = class {
+            observe() { }
+            unobserve() { }
+            disconnect() { }
+        };
+    }, { fixedNowIso: UI_LINT_FIXED_NOW_ISO });
+}
+
+function getNavigationWaitUntil(view) {
+    // Live views can keep long-lived connections open, so networkidle may never settle.
+    if (view?.live === true) {
+        return 'domcontentloaded';
+    }
+    return 'networkidle';
+}
+
+function buildContextOptions(overrides = {}) {
+    return {
+        locale: UI_LINT_LOCALE,
+        timezoneId: UI_LINT_TIMEZONE,
+        deviceScaleFactor: 1,
+        ...overrides,
+    };
+}
+
+async function pathExists(targetPath) {
+    try {
+        await fs.access(targetPath);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+function getPageForView(devicePages, view) {
+    return devicePages.get(view.device) ?? devicePages.get('desktop');
+}
+
+function buildErrorResult(view, error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+        name: view.name,
+        url: view.url,
+        theme: view.theme,
+        error: message,
+        findings: ['auditError'],
+        hardFindings: ['auditError'],
+        warnings: [],
+        diff: { ratio: 0, sizeMismatch: false },
+        metrics: {},
+        network: {
+            consoleEntries: [],
+            pageErrors: [],
+            requestFailures: [],
+            badResponses: [],
+            requests: [],
+            duplicateRequests: [],
+        },
+        securityHeaders: { missing: [] },
+        visualRegression: null,
+    };
+}
+
+function applySummary(result) {
+    const summarized = summarizeFindings(result);
+    result.findings = summarized.findings;
+    result.hardFindings = summarized.hardFindings;
+    result.warnings = summarized.warnings;
+
+    const missingSecurityHeaders = result.securityHeaders?.missing || [];
+    if (missingSecurityHeaders.length) {
+        result.hardFindings = [
+            ...result.hardFindings,
+            `missingSecurityHeaders=${missingSecurityHeaders.join(',')}`,
+        ];
+    }
+
+    return result;
+}
+
+function collectSecurityHeaders(response) {
+    const headers = response?.headers?.() || {};
+    return {
+        missing: REQUIRED_SECURITY_HEADERS.filter((header) => !headers[header]),
+    };
+}
+
+async function prepareOutputDirs() {
+    const resolvedOutputDir = path.resolve(OUTPUT_DIR);
+    const allowedTempRoots = ['/tmp', '/var/tmp'];
+    const isTemporaryOutput = allowedTempRoots.some((root) =>
+        resolvedOutputDir === root || resolvedOutputDir.startsWith(`${root}/`)
+    );
+
+    if (!isTemporaryOutput && process.env.UI_LINT_FORCE_OUTPUT !== '1') {
+        throw new Error(
+            `Refusing to clean non-temporary UI lint output directory: ${resolvedOutputDir}. `
+            + 'Use UI_LINT_FORCE_OUTPUT=1 to override.'
+        );
+    }
+
+    await fs.rm(resolvedOutputDir, { recursive: true, force: true });
+    await fs.mkdir(SCREENSHOT_DIR, { recursive: true });
+
+    if (VISUAL_REGRESSION.enabled) {
+        await fs.rm(VISUAL_REGRESSION.currentDir, { recursive: true, force: true });
+        await fs.rm(VISUAL_REGRESSION.diffDir, { recursive: true, force: true });
+        ensureVisualRegressionDirs(VISUAL_REGRESSION);
+    }
+}
+
+async function buildDevicePages(browser, storageState) {
+    const entries = await Promise.all(
+        Array.from(DEVICE_CONTEXT_OPTIONS.entries()).map(async ([device, options]) => {
+            const context = await browser.newContext(buildContextOptions({
+                ...options,
+                storageState,
+            }));
+            await installUiLintInitScript(context);
+            await installAnalyzers(context);
+            await installLayoutShiftObserver(context);
+
+            const page = await context.newPage();
+            await page.emulateMedia({ reducedMotion: 'reduce' });
+
+            return [device, page];
+        })
+    );
+
+    return new Map(entries);
+}
+
+async function runBaselineGc(config, expectedSnapshotNames) {
+    if (!config.enabled || !(await pathExists(config.baselineDir))) {
+        return;
+    }
+
+    const expected = new Set(expectedSnapshotNames.map((name) => `${sanitize(name)}.png`));
+    const baselineFiles = (await fs.readdir(config.baselineDir)).filter((name) => name.endsWith('.png'));
+    const obsolete = baselineFiles.filter((file) => !expected.has(file));
+
+    if (!obsolete.length) {
+        return;
+    }
+
+    if (UI_LINT_BASELINE_GC === 'delete') {
+        await Promise.all(obsolete.map((file) => fs.rm(path.join(config.baselineDir, file), { force: true })));
+        console.log(`Baseline GC removed obsolete files: ${obsolete.join(', ')}`);
+        return;
+    }
+
+    console.warn(`Baseline GC warning (obsolete baselines): ${obsolete.join(', ')}`);
+}
+
+async function collectPageMetrics(page, scope) {
+    await injectAnalyzers(page);
+
+    return page.evaluate(async ({ scope, constants, selectors }) => {
+        return window.__uiLint.runAll({
+            scope,
+            constants,
+            selectors,
+        });
+    }, {
+        scope,
+        constants: UI_EVAL_CONSTANTS,
+        selectors: SELECTORS,
+    });
+}
+
+function mergeMetricsPatch(metrics, patch) {
+    if (!patch || typeof patch !== 'object') {
+        return metrics;
+    }
+
+    for (const [key, value] of Object.entries(patch)) {
+        if (
+            value
+            && typeof value === 'object'
+            && !Array.isArray(value)
+            && metrics[key]
+            && typeof metrics[key] === 'object'
+            && !Array.isArray(metrics[key])
+        ) {
+            metrics[key] = { ...metrics[key], ...value };
+            continue;
+        }
+        metrics[key] = value;
+    }
+
+    return metrics;
+}
+
+function stripAbortedRequests(network) {
+    network.requestFailures = network.requestFailures.filter((entry) => entry.error !== 'net::ERR_ABORTED');
+}
+
+async function collectAuditArtifacts(page, view, metricsPatch = null) {
+    let visualRegression = null;
+
+    await resetLayoutShiftMetric(page);
+    await page.waitForTimeout(SCREENSHOT_SETTLE_MS);
+
+    const shots = await captureStablePair(page, {
+        motionResetCss: FULL_MOTION_RESET_CSS,
+        name: view.name,
+        screenshotDir: SCREENSHOT_DIR,
+        screenshotSettleMs: SCREENSHOT_SETTLE_MS,
+    });
+    const kpiShots = await captureKpiCards(page, view.name, SCREENSHOT_DIR);
+    const diff = await diffScreenshots({
+        name: view.name,
+        shotA: shots.shotA,
+        shotB: shots.shotB,
+        screenshotDir: SCREENSHOT_DIR,
+    });
+
+    if (VISUAL_REGRESSION.enabled) {
+        await captureVisualSnapshot(page, view.name, VISUAL_REGRESSION);
+        visualRegression = compareVisualSnapshot(view.name, VISUAL_REGRESSION);
+    }
+
+    const metrics = await collectPageMetrics(page, view.scope);
+    if (!metrics) {
+        throw new Error(`No metrics collected for view: ${view.name}`);
+    }
+
+    return {
+        diff,
+        kpiShots,
+        metrics: mergeMetricsPatch(metrics, metricsPatch),
+        screenshots: { ...shots, diffPath: diff.diffPath },
+        visualRegression,
+    };
+}
+
+async function auditPageFlow(page, view, {
+    load,
+    afterLoad,
+    prepare,
+    finalize,
+} = {}) {
+    const detachNetwork = collectConsoleAndNetwork(page);
+    let network = null;
+    try {
+        const response = await load(page, view);
+        await disableMotion(page, FULL_MOTION_RESET_CSS, view.name);
+        if (afterLoad) {
+            await afterLoad({ page, view, response });
+        }
+
+        const prepared = prepare ? await prepare({ page, view, response }) : {};
+        if (view.tab) {
+            await page.click(view.tab);
+            await page.waitForTimeout(TAB_SWITCH_SETTLE_MS);
+        }
+        const artifacts = await collectAuditArtifacts(page, view, prepared.metricsPatch || null);
+        network = detachNetwork();
+        stripAbortedRequests(network);
+
+        let resultFields = prepared.resultFields || {};
+        let securityResponse = prepared.securityResponse || response;
+        if (finalize) {
+            const finalized = await finalize({
+                network,
+                page,
+                prepared,
+                response,
+                view,
+            }) || {};
+            if (finalized.network) {
+                network = finalized.network;
+            }
+            if (finalized.resultFields) {
+                resultFields = { ...resultFields, ...finalized.resultFields };
+            }
+            if (finalized.securityResponse) {
+                securityResponse = finalized.securityResponse;
+            }
+        }
+
+        return {
+            name: view.name,
+            url: page.url(),
+            theme: view.theme,
+            diff: artifacts.diff,
+            metrics: artifacts.metrics,
+            network,
+            securityHeaders: collectSecurityHeaders(securityResponse),
+            findings: [],
+            screenshots: artifacts.screenshots,
+            visualRegression: artifacts.visualRegression,
+            kpiShots: artifacts.kpiShots,
+            ...resultFields,
+        };
+    } finally {
+        // Always detach network listeners to prevent memory leaks
+        if (!network) detachNetwork();
+    }
+}
+
+async function auditView(page, view) {
+    return auditPageFlow(page, view, {
+        load: async () => {
+            await applyTheme(page, { baseUrl: BASE_URL, theme: view.theme, label: view.name });
+            return page.goto(`${BASE_URL}${view.url}`, {
+                waitUntil: getNavigationWaitUntil(view),
+                timeout: 30000,
+            });
+        },
+        finalize: async ({ network, response, view }) => {
+            const statusUnavailableExpected = isExpectedStatusUnavailable(view, response);
+            if (statusUnavailableExpected) {
+                network.consoleEntries = network.consoleEntries.filter((entry) => {
+                    const text = String(entry.text || '');
+                    return !(text.includes('/status') && text.includes('404'))
+                        && text !== 'Failed to load resource: the server responded with a status of 404 (Not Found)';
+                });
+                network.badResponses = network.badResponses.filter((entry) => {
+                    try {
+                        return !(entry.status === 404 && new URL(entry.url).pathname === '/status');
+                    } catch {
+                        return true;
+                    }
+                });
+            }
+
+            return { network, resultFields: { statusUnavailableExpected } };
+        },
+    });
+}
+
+async function auditLoginFailureView(page, view) {
+    return auditPageFlow(page, view, {
+        load: () => page.goto(`${BASE_URL}${view.url}`, { waitUntil: 'networkidle', timeout: 10000 }),
+        afterLoad: () => applyTheme(page, { baseUrl: BASE_URL, theme: view.theme, label: view.name }),
+        prepare: async () => {
+            const invalidPassword = `${PASSWORD}__ui_lint_invalid`;
+            await page.fill('#username', USERNAME);
+            await page.fill('#password', invalidPassword);
+
+            const [loginResponse] = await Promise.all([
+                page.waitForResponse((response) => {
+                    try {
+                        return new URL(response.url()).pathname === '/login' && response.request().method() === 'POST';
+                    } catch {
+                        return false;
+                    }
+                }, { timeout: 30000 }),
+                page.locator('form[action="/login"] button[type="submit"]').first().click(),
+            ]);
+
+            await page.waitForURL((url) => {
+                try {
+                    return url.pathname === '/login';
+                } catch {
+                    return false;
+                }
+            }, { timeout: 30000 }).catch(() => { });
+            await page.locator('.alert[role="alert"]').first().waitFor({ state: 'visible', timeout: 30000 });
+            await page.waitForTimeout(LOGIN_ERROR_SETTLE_MS);
+
+            const loginFailure = await page.evaluate(() => {
+                const isVisible = (element) => {
+                    if (!element || !element.isConnected) return false;
+                    if (element.closest('.d-none, [hidden], [aria-hidden="true"]')) return false;
+                    const style = window.getComputedStyle(element);
+                    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+                    const rect = element.getBoundingClientRect();
+                    return rect.width > 0 && rect.height > 0;
+                };
+
+                const alert = Array.from(document.querySelectorAll('.alert[role="alert"]')).find((element) => isVisible(element)) || null;
+                const submitButton = document.querySelector('form[action="/login"] button[type="submit"]');
+                const passwordInput = document.getElementById('password');
+
+                return {
+                    alertVisible: isVisible(alert),
+                    errorText: alert?.textContent?.trim() || '',
+                    submitButtonDisabled: Boolean(submitButton?.disabled),
+                    submitButtonReset: !submitButton?.disabled,
+                    submitButtonLabel: submitButton?.textContent?.trim() || '',
+                    passwordInvalidClass: Boolean(passwordInput?.classList.contains('is-invalid')),
+                };
+            });
+
+            return {
+                metricsPatch: { loginFailure },
+                resultFields: { loginResponseStatus: loginResponse.status() },
+                securityResponse: loginResponse,
+                loginResponse,
+            };
+        },
+        finalize: async ({ network, prepared }) => {
+            const { loginResponse } = prepared;
+            network.consoleEntries = network.consoleEntries.filter((entry) =>
+                !(loginResponse.status() === 401 && entry.text.includes('401 (Unauthorized)'))
+            );
+            network.badResponses = network.badResponses.filter((entry) => {
+                try {
+                    return !(entry.status === 401 && new URL(entry.url).pathname === '/login');
+                } catch {
+                    return true;
+                }
+            });
+
+            return {
+                network,
+                resultFields: prepared.resultFields,
+                securityResponse: prepared.securityResponse,
+            };
+        },
+    });
+}
+
+function buildLoginRateLimitResult({ attempts, response, reached429 }) {
+    const result = {
+        name: 'login-rate-limit',
+        url: `${BASE_URL}/login`,
+        theme: null,
+        diff: { ratio: 0, sizeMismatch: false },
+        metrics: {
+            loginRateLimit: {
+                attempts,
+                reached429,
+                status: response?.status?.() ?? null,
+            },
+        },
+        network: {
+            consoleEntries: [],
+            pageErrors: [],
+            requestFailures: [],
+            badResponses: [],
+            requests: [],
+            duplicateRequests: [],
+        },
+        securityHeaders: collectSecurityHeaders(response),
+        findings: [],
+        hardFindings: [],
+        warnings: [],
+        visualRegression: null,
+    };
+
+    applySummary(result);
+    if (!reached429) {
+        result.hardFindings = [...result.hardFindings, 'loginRateLimitMissing429'];
+        result.findings = [...result.hardFindings, ...(result.warnings || [])];
+    }
+
+    return result;
+}
+
+async function auditLoginRateLimit(browser) {
+    const context = await browser.newContext(buildContextOptions(DEVICE_CONTEXT_OPTIONS.get('desktop')));
+    try {
+        const page = await context.newPage();
+        let attempts = 0;
+        let lastResponse = null;
+
+        for (; attempts < 6; attempts += 1) {
+            await page.goto(`${BASE_URL}/login`, { waitUntil: 'networkidle', timeout: 10000 });
+            await page.fill('#username', USERNAME);
+            await page.fill('#password', `${PASSWORD}__ui_lint_rate_limit_${attempts}`);
+
+            const [response] = await Promise.all([
+                page.waitForResponse((candidate) => {
+                    try {
+                        return new URL(candidate.url()).pathname === '/login' && candidate.request().method() === 'POST';
+                    } catch {
+                        return false;
+                    }
+                }, { timeout: 30000 }),
+                page.locator('form[action="/login"] button[type="submit"]').first().click(),
+            ]);
+
+            lastResponse = response;
+            if (response.status() === 429) {
+                return buildLoginRateLimitResult({
+                    attempts: attempts + 1,
+                    response,
+                    reached429: true,
+                });
+            }
+        }
+
+        return buildLoginRateLimitResult({
+            attempts,
+            response: lastResponse,
+            reached429: false,
+        });
+    } finally {
+        await context.close();
+    }
+}
+
+async function main() {
+    // Basic environment validation improvements
+    if (!BASE_URL.startsWith('http')) {
+        throw new Error(`Invalid BASE_URL: ${BASE_URL}`);
+    }
+
+    await prepareOutputDirs();
+
+    const results = [];
+    let browser;
+
+    try {
+        browser = await chromium.launch({ headless: true });
+        const browserVersion = browser.version();
+        if (UI_LINT_EXPECTED_CHROMIUM_MAJOR && !browserVersion.startsWith(`${UI_LINT_EXPECTED_CHROMIUM_MAJOR}.`)) {
+            console.warn(`Chromium version drift: expected major ${UI_LINT_EXPECTED_CHROMIUM_MAJOR}, got ${browserVersion}`);
+        }
+
+        const authContext = await browser.newContext(buildContextOptions(DEVICE_CONTEXT_OPTIONS.get('desktop')));
+        const authPage = await authContext.newPage();
+        await authPage.emulateMedia({ reducedMotion: 'reduce' });
+        await login(authPage, {
+            baseUrl: BASE_URL,
+            username: USERNAME,
+            password: PASSWORD,
+            motionResetCss: FULL_MOTION_RESET_CSS,
+        });
+        const authState = await authContext.storageState();
+        await authContext.close();
+
+        const devicePages = await buildDevicePages(browser, authState);
+        const loginFailurePages = await buildDevicePages(browser);
+
+        // Run authenticated view tests
+        for (const view of VIEWS) {
+            const page = getPageForView(devicePages, view);
+            try {
+                results.push(applySummary(await auditView(page, view)));
+            } catch (err) {
+                console.error(`[${view.name}] Audit failed: ${err.message}`);
+                results.push(buildErrorResult(view, err));
+            }
+        }
+
+        // Run login-failure tests LAST to avoid rate limiting blocking the real login
+        for (const [index, view] of LOGIN_FAILURE_VIEWS.entries()) {
+            const page = getPageForView(loginFailurePages, view);
+
+            // Retry logic for rate limiting: detect "too many attempts" and wait before retry
+            let result;
+            let attempt = 0;
+            const maxRetries = 3;
+
+            while (attempt < maxRetries) {
+                try {
+                    // Stagger login attempts to stay under 5/minute rate limit
+                    if (index > 0 && attempt === 0) {
+                        await new Promise((resolve) => setTimeout(resolve, LOGIN_TEST_STAGGER_MS));
+                    }
+
+                    result = await auditLoginFailureView(page, view);
+
+                    // Check if rate limited by examining error text
+                    const errorText = result?.metrics?.loginFailure?.errorText?.toLowerCase() || '';
+                    if (errorText.includes('too many') || errorText.includes('rate limit') || errorText.includes('locked')) {
+                        if (attempt < maxRetries - 1) {
+                            console.warn(`[${view.name}] Rate limited, waiting ${LOGIN_LOCKOUT_RESET_MS}ms before retry ${attempt + 1}/${maxRetries - 1}`);
+                            await new Promise((resolve) => setTimeout(resolve, LOGIN_LOCKOUT_RESET_MS));
+                            attempt++;
+                            continue;
+                        }
+                    }
+
+                    // Success or non-rate-limit error
+                    break;
+                } catch (err) {
+                    if (attempt === maxRetries - 1) {
+                        console.error(`[${view.name}] Audit failed after ${maxRetries} attempts: ${err.message}`);
+                        result = buildErrorResult(view, err);
+                        break;
+                    }
+                    attempt++;
+                }
+            }
+
+            if (result) {
+                results.push(applySummary(result));
+            }
+        }
+
+        results.push(await auditLoginRateLimit(browser));
+
+        await runBaselineGc(
+            VISUAL_REGRESSION,
+            [...VIEWS, ...LOGIN_FAILURE_VIEWS].map((view) => view.name)
+        );
+    } finally {
+        if (browser) {
+            await browser.close();
+        }
+    }
+
+    const summaryPath = path.join(RESULTS_DIR, 'ui-lint-summary.json');
+    await fs.writeFile(summaryPath, JSON.stringify(results, null, 2));
+
+    console.log(`\nResults saved to: ${summaryPath}`);
+    console.log(`Screenshots: ${SCREENSHOT_DIR}\n`);
+
+    console.log('UI_LINT_START');
+    for (const result of results) {
+        const metrics = result.metrics || {};
+        const spacing = metrics.spacing || {};
+        const horizontalOverflow = metrics.horizontalOverflow || {};
+        const layoutShiftValue = Number(metrics.layoutShift?.value || 0);
+        console.log(JSON.stringify({
+            name: result.name,
+            url: result.url,
+            theme: result.theme || null,
+            findings: result.findings,
+            hardFindings: result.hardFindings || [],
+            warnings: result.warnings || [],
+            uiScore: metrics.uiScore ?? null,
+            uiScoreLabel: metrics.uiScoreLabel ?? null,
+            visualRegressionEnabled: VISUAL_REGRESSION.enabled,
+            visualRegressionPass: result.visualRegression?.pass ?? null,
+            visualRegressionReason: result.visualRegression?.reason ?? null,
+            visualRegressionDiffPercent: result.visualRegression?.percent ?? null,
+            diffRatio: Number(result.diff.ratio.toFixed(6)),
+            layoutShift: Number(layoutShiftValue.toFixed(6)),
+            overflowOffenders: horizontalOverflow.offenders?.length || 0,
+            clippedButtons: metrics.clippedButtons?.length || 0,
+            clickTargetsTooSmall: metrics.clickTargetsTooSmall?.length || 0,
+            iconButtonsTouchBlocked: metrics.iconButtonsTouchBlocked?.length || 0,
+            hiddenInteractive: metrics.hiddenInteractiveElements?.length || 0,
+            bootstrapGridIssues: metrics.bootstrapGridIssues?.length || 0,
+            bootstrapColumnsOutsideRows: metrics.bootstrapColumnsOutsideRows?.length || 0,
+            breakpointDisplayConflicts: metrics.breakpointDisplayConflicts?.length || 0,
+            navbarCollapseIssues: metrics.navbarCollapseIssues?.length || 0,
+            focusOrderIssues: metrics.focusOrderIssues?.length || 0,
+            focusIndicatorMissing: metrics.focusIndicatorMissing?.length || 0,
+            scrollEdgeCrowding: metrics.scrollEdgeCrowding?.length || 0,
+            scrollBottomCrowding: metrics.scrollBottomCrowding?.length || 0,
+            footerViewportGap: metrics.footerViewportGap?.gapPx ?? null,
+            footerViewportGapPass: metrics.footerViewportGap?.present ? (metrics.footerViewportGap.passesMinimum ? 1 : 0) : null,
+            ghostScrollContainers: metrics.ghostScrollContainers?.length || 0,
+            nestedScrollContainers: metrics.nestedScrollContainers?.length || 0,
+            flexScrollTraps: metrics.flexScrollTraps?.length || 0,
+            badgeStyleMismatches: metrics.badgeStyleMismatches?.length || 0,
+            buttonContrastIssues: metrics.buttonContrastIssues?.length || 0,
+            nonTokenColorUsage: metrics.nonTokenColorUsage?.length || 0,
+            monospaceToneMismatches: metrics.monospaceToneMismatches?.length || 0,
+            modalThemeIssues: metrics.modalThemeIssues?.length || 0,
+            modalBackdropBlur: metrics.modalBackdrop?.blurPx ?? null,
+            modalBackdropSaturate: metrics.modalBackdrop?.saturate ?? null,
+            modalBackdropAlpha: metrics.modalBackdrop?.alpha ?? null,
+            contrastProblems: metrics.contrastProblems?.length || 0,
+            componentLayoutShift: metrics.componentLayoutShift?.length || 0,
+            visualContainmentIssues: metrics.visualContainmentIssues?.length || 0,
+            mobileRowCardStackGapRows: spacing.mobileRowCardStackGaps?.length || 0,
+            mobileRowCardStackGapIssues: spacing.mobileRowCardStackGaps?.filter((entry) => !entry.gapsConsistent)?.length || 0,
+            mobileCardEdgeAlignment: spacing.mobileCardEdgeAlignment ? 1 : 0,
+            mobileCardEdgeAlignmentIssues: spacing.mobileCardEdgeAlignment
+                ? [!spacing.mobileCardEdgeAlignment.matchesLeft, !spacing.mobileCardEdgeAlignment.matchesRight].filter(Boolean).length
+                : 0,
+            duplicateRequests: result.network.duplicateRequests?.length || 0,
+            kpiCards: spacing.kpiCards?.length || 0,
+            kpiMissingClass: spacing.cardsMissingKpiClass?.length || 0,
+            cardBorderRadiusMismatch: spacing.cardBorderRadiusIssues?.length || 0,
+            kpiHeightVariance: spacing.kpiHeightVariance || 0,
+            loginErrorVisible: Boolean(metrics.loginFailure?.alertVisible),
+            loginShakeActive: Boolean(metrics.loginFailure?.cardAnimationActive),
+            loginPasswordInvalid: Boolean(metrics.loginFailure?.passwordInvalidClass),
+            loginRateLimitAttempts: metrics.loginRateLimit?.attempts ?? null,
+            loginRateLimit429: metrics.loginRateLimit?.reached429 ?? null,
+            loginRateLimitStatus: metrics.loginRateLimit?.status ?? null,
+            missingSecurityHeaders: result.securityHeaders?.missing?.length || 0,
+            summaryPath,
+        }));
+    }
+    console.log('UI_LINT_END');
+
+    const hasHardFindings = results.some((result) => (result.hardFindings || []).length > 0);
+    const hasVisualRegressionFailures = VISUAL_REGRESSION.enabled &&
+        results.some((result) => result.visualRegression && result.visualRegression.pass === false);
+    const lowScoreResults = results.filter((result) => Number(result.metrics?.uiScore ?? 100) < FAIL_THRESHOLD);
+    if (hasVisualRegressionFailures) {
+        const failed = results
+            .filter((result) => result.visualRegression && result.visualRegression.pass === false)
+            .map((result) => `${result.name}:${result.visualRegression.reason}`)
+            .join(', ');
+        console.error(`Visual regression failed: ${failed}`);
+    }
+    if (lowScoreResults.length) {
+        console.error(`UI score below threshold (${FAIL_THRESHOLD}): ${lowScoreResults.map((result) => `${result.name}=${result.metrics.uiScore}`).join(', ')}`);
+    }
+    // Exit codes:
+    //   0 - all checks passed
+    //   1 - hard findings present without score/regression failure
+    //   2 - visual regression failure or UI score below FAIL_THRESHOLD
+    process.exitCode = (lowScoreResults.length || hasVisualRegressionFailures) ? 2 : (hasHardFindings ? 1 : 0);
+}
+
+main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+});

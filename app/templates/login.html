@@ -1,0 +1,37 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<section class="auth-shell">
+    <div class="auth-panel">
+        <div class="auth-panel__intro">
+            <p class="eyebrow">Python 3.13 · FastAPI · SQLite</p>
+            <h1>Manage Caddy servers from one place.</h1>
+            <p class="text-body-secondary mb-0">
+                This rebuild keeps the original project focus, but runs as a server-rendered FastAPI app with Bootstrap,
+                Jinja, and SQLite-only persistence.
+            </p>
+        </div>
+
+        <div class="auth-panel__form card border-0 shadow-lg">
+            <div class="card-body p-4 p-lg-5">
+                <h2 class="h4 mb-4">Sign in</h2>
+                <form action="/login" method="post" class="d-grid gap-3">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="next" value="{{ request.query_params.get('next', '/') }}">
+                    <div>
+                        <label for="username" class="form-label">Username</label>
+                        <input id="username" name="username" class="form-control form-control-lg"
+                            autocomplete="username" required autofocus>
+                    </div>
+                    <div>
+                        <label for="password" class="form-label">Password</label>
+                        <input id="password" name="password" type="password" class="form-control form-control-lg"
+                            autocomplete="current-password" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-lg">Enter Control Plane</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

@@ -1,0 +1,126 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<section class="d-grid gap-4">
+    <div>
+        <p class="eyebrow mb-2">Config management</p>
+        <h1 class="page-title mb-2">Configurations</h1>
+        <p class="text-body-secondary mb-0">Edit JSON payloads, assign them to targets, and push them to active Caddy
+            endpoints.</p>
+    </div>
+
+    <div class="row g-4 align-items-start">
+        <div class="col-xl-4">
+            <div class="panel-card mb-4">
+                <div class="panel-card__header">
+                    <h2 class="h5 mb-0">Configuration catalog</h2>
+                </div>
+                <div class="list-group list-group-flush config-list">
+                    <a href="/configs"
+                        class="list-group-item list-group-item-action {% if not selected_config %}active{% endif %}">
+                        New configuration
+                    </a>
+                    {% for config in configs %}
+                    <a href="/configs/{{ config.id }}"
+                        class="list-group-item list-group-item-action {% if selected_config and selected_config.id == config.id %}active{% endif %}">
+                        <div class="d-flex justify-content-between align-items-center gap-3">
+                            <div>
+                                <div class="fw-semibold">{{ config.name }}</div>
+                                <div class="small opacity-75">{{ config.updated_at|datetimeformat }}</div>
+                            </div>
+                            <span class="badge rounded-pill text-bg-light">{{ config.status }}</span>
+                        </div>
+                    </a>
+                    {% else %}
+                    <div class="list-group-item text-body-secondary">No configurations yet.</div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-xl-8">
+            <div class="panel-card">
+                <div class="panel-card__header">
+                    <h2 class="h5 mb-0">{% if selected_config %}Edit configuration{% else %}Create configuration{% endif
+                        %}</h2>
+                    {% if selected_config %}
+                    <div class="d-flex gap-2">
+                        <form action="/configs/{{ selected_config.id }}/deploy" method="post">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <button type="submit" class="btn btn-sm btn-primary">Deploy</button>
+                        </form>
+                        <form action="/configs/{{ selected_config.id }}/delete" method="post">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <button type="submit" class="btn btn-sm btn-outline-danger js-confirm"
+                                data-confirm="Delete this configuration?">Delete</button>
+                        </form>
+                    </div>
+                    {% endif %}
+                </div>
+
+                <form action="/configs" method="post" class="d-grid gap-3">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="config_id" value="{{ selected_config.id if selected_config else '' }}">
+
+                    <div class="row g-3">
+                        <div class="col-lg-8">
+                            <label class="form-label" for="config-name">Name</label>
+                            <input id="config-name" name="name" class="form-control"
+                                value="{{ selected_config.name if selected_config else '' }}" required>
+                        </div>
+                        <div class="col-lg-4">
+                            <label class="form-label" for="config-status">Status</label>
+                            <select id="config-status" name="status" class="form-select">
+                                {% for state in ['draft', 'live', 'archived'] %}
+                                <option value="{{ state }}" {% if selected_config and selected_config.status==state
+                                    %}selected{% endif %}>{{ state }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="form-label" for="config-servers">Assigned servers</label>
+                        <select id="config-servers" name="servers" class="form-select" multiple size="6">
+                            {% for server in servers %}
+                            <option value="{{ server.id }}" {% if server.id in selected_server_ids %}selected{% endif
+                                %}>{{ server.name }} · {{ server.api_url }}:{{ server.api_port }}</option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">Hold Ctrl or Cmd to select multiple targets.</div>
+                    </div>
+
+                    <div>
+                        <label class="form-label" for="config-metadata-json">Metadata JSON</label>
+                        <textarea id="config-metadata-json" name="metadata_json" rows="7"
+                            class="form-control font-monospace" data-json-editor>{{ selected_metadata_json }}</textarea>
+                    </div>
+
+                    <div>
+                        <label class="form-label" for="config-json-config">Configuration JSON</label>
+                        <textarea id="config-json-config" name="json_config" rows="16"
+                            class="form-control font-monospace" data-json-editor>{{ selected_config_json }}</textarea>
+                    </div>
+
+                    {% if selected_config and selected_config.history_entries %}
+                    <div>
+                        <label class="form-label">History</label>
+                        <div class="history-stack">
+                            {% for entry in selected_config.history_entries|reverse %}
+                            <div class="history-item">
+                                <div class="fw-semibold">{{ entry.action }}</div>
+                                <div class="small text-body-secondary">{{ entry.actor }} · {{ entry.timestamp }}</div>
+                                <div class="small mt-1">{{ entry.note }}</div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    <button type="submit" class="btn btn-primary align-self-start">Save configuration</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

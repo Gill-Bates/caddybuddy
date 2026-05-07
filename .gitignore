@@ -82,6 +82,19 @@ target/
 profile_default/
 ipython_config.py
 
+_caddymanager-main/
+data/
+
+# Node / UI lint local artifacts
+node_modules/
+tools/ui-lint/node_modules/
+tools/ui-lint/screenshots/
+tools/ui-lint/ui-lint-summary.json
+tools/ui-lint/visual/current/
+tools/ui-lint/visual/diff/
+!tools/ui-lint/lib/
+!tools/ui-lint/lib/**
+
 # pyenv
 #   For a library or package, you might want to ignore these files since the code is
 #   intended to run in multiple environments; otherwise, check them in:

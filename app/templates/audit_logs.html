@@ -1,0 +1,176 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<section class="audit-logs-page d-flex flex-column" style="height: calc(100vh - 6rem);">
+    <div class="mb-3">
+        <p class="eyebrow mb-2">Traceability</p>
+        <h1 class="page-title mb-2">Audit Logs</h1>
+        <p class="text-body-secondary mb-0">Review the latest actions across authentication, user administration, server
+            operations, and configuration deploys.</p>
+    </div>
+
+    <div class="panel-card flex-grow-1 d-flex flex-column overflow-hidden">
+        <div class="panel-card__header flex-wrap">
+            <h2 class="h5 mb-0">Latest events</h2>
+            <div class="d-flex flex-wrap gap-2 align-items-center ms-auto">
+                <input type="text" id="filterSearch" class="form-control form-control-sm" placeholder="Search..."
+                    aria-label="Search logs" style="width: 160px;">
+                <select id="filterUsername" class="form-select form-select-sm" aria-label="Filter by user"
+                    style="width: 140px;">
+                    <option value="">All users</option>
+                </select>
+                <input type="date" id="filterDateFrom" class="form-control form-control-sm" aria-label="From date"
+                    title="From date" style="width: 140px;">
+                <input type="date" id="filterDateTo" class="form-control form-control-sm" aria-label="To date"
+                    title="To date" style="width: 140px;">
+                <button type="button" id="filterReset" class="btn btn-outline-secondary btn-sm">Reset</button>
+            </div>
+        </div>
+        <div class="table-responsive flex-grow-1 overflow-auto" id="auditTableContainer">
+            <table class="table align-middle mb-0 table-hover" id="auditTable">
+                <thead class="sticky-top bg-body">
+                    <tr>
+                        <th style="width: 140px;">Timestamp</th>
+                        <th style="width: 140px;">Action</th>
+                        <th style="width: 100px;">User</th>
+                        <th style="width: 120px;">Resource</th>
+                        <th>Details</th>
+                    </tr>
+                </thead>
+                <tbody id="auditTableBody">
+                    {% for log in logs %}
+                    <tr data-timestamp="{{ log.timestamp.isoformat() if log.timestamp else '' }}"
+                        data-action="{{ log.action }}" data-username="{{ log.username }}"
+                        data-resource="{{ log.resource_type }}{% if log.resource_id %} #{{ log.resource_id }}{% endif %}"
+                        data-details="{{ log.details_json }}">
+                        <td>{{ log.timestamp|datetimeformat }}</td>
+                        <td><code class="text-body">{{ log.action }}</code></td>
+                        <td>{{ log.username }}</td>
+                        <td>{{ log.resource_type }}{% if log.resource_id %} #{{ log.resource_id }}{% endif %}</td>
+                        <td>
+                            <pre class="audit-details mb-0">{{ log.details_json }}</pre>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr id="emptyRow">
+                        <td colspan="5" class="text-body-secondary">No audit entries recorded yet.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div class="border-top pt-2 mt-auto">
+            <small class="text-body-secondary">
+                Showing <span id="visibleCount">{{ logs|length }}</span> of <span id="totalCount">{{ logs|length
+                    }}</span> entries
+            </small>
+        </div>
+    </div>
+</section>
+
+<script>
+    (function () {
+        const searchInput = document.getElementById('filterSearch');
+        const usernameSelect = document.getElementById('filterUsername');
+        const dateFromInput = document.getElementById('filterDateFrom');
+        const dateToInput = document.getElementById('filterDateTo');
+        const resetBtn = document.getElementById('filterReset');
+        const tableBody = document.getElementById('auditTableBody');
+        const visibleCountEl = document.getElementById('visibleCount');
+        const totalCountEl = document.getElementById('totalCount');
+        const rows = Array.from(tableBody.querySelectorAll('tr[data-timestamp]'));
+
+        // Populate username dropdown from existing log entries
+        const usernames = [...new Set(rows.map(r => r.dataset.username).filter(Boolean))].sort();
+        usernames.forEach(username => {
+            const option = document.createElement('option');
+            option.value = username;
+            option.textContent = username;
+            usernameSelect.appendChild(option);
+        });
+
+        totalCountEl.textContent = rows.length;
+
+        function filterRows() {
+            const searchTerm = searchInput.value.toLowerCase().trim();
+            const selectedUsername = usernameSelect.value;
+            const dateFrom = dateFromInput.value ? new Date(dateFromInput.value + 'T00:00:00') : null;
+            const dateTo = dateToInput.value ? new Date(dateToInput.value + 'T23:59:59') : null;
+
+            let visibleCount = 0;
+
+            rows.forEach(row => {
+                const timestamp = row.dataset.timestamp ? new Date(row.dataset.timestamp) : null;
+                const action = row.dataset.action.toLowerCase();
+                const username = row.dataset.username;
+                const resource = row.dataset.resource.toLowerCase();
+                const details = row.dataset.details.toLowerCase();
+
+                // Check search term (substring match across all fields)
+                const matchesSearch = !searchTerm ||
+                    action.includes(searchTerm) ||
+                    username.toLowerCase().includes(searchTerm) ||
+                    resource.includes(searchTerm) ||
+                    details.includes(searchTerm) ||
+                    (row.cells[0].textContent.toLowerCase().includes(searchTerm));
+
+                // Check username filter
+                const matchesUsername = !selectedUsername || username === selectedUsername;
+
+                // Check date range
+                let matchesDate = true;
+                if (timestamp) {
+                    if (dateFrom && timestamp < dateFrom) matchesDate = false;
+                    if (dateTo && timestamp > dateTo) matchesDate = false;
+                }
+
+                const isVisible = matchesSearch && matchesUsername && matchesDate;
+                row.style.display = isVisible ? '' : 'none';
+                if (isVisible) visibleCount++;
+            });
+
+            visibleCountEl.textContent = visibleCount;
+
+            // Show/hide empty state
+            const emptyRow = document.getElementById('emptyRow');
+            if (emptyRow) {
+                emptyRow.style.display = rows.length === 0 ? '' : 'none';
+            }
+
+            // Show "no results" if filtering returns 0
+            let noResultsRow = document.getElementById('noResultsRow');
+            if (visibleCount === 0 && rows.length > 0) {
+                if (!noResultsRow) {
+                    noResultsRow = document.createElement('tr');
+                    noResultsRow.id = 'noResultsRow';
+                    noResultsRow.innerHTML = '<td colspan="5" class="text-body-secondary">No entries match the current filters.</td>';
+                    tableBody.appendChild(noResultsRow);
+                }
+                noResultsRow.style.display = '';
+            } else if (noResultsRow) {
+                noResultsRow.style.display = 'none';
+            }
+        }
+
+        function resetFilters() {
+            searchInput.value = '';
+            usernameSelect.value = '';
+            dateFromInput.value = '';
+            dateToInput.value = '';
+            filterRows();
+        }
+
+        // Event listeners with debounce for search
+        let debounceTimer;
+        searchInput.addEventListener('input', () => {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(filterRows, 150);
+        });
+
+        usernameSelect.addEventListener('change', filterRows);
+        dateFromInput.addEventListener('change', filterRows);
+        dateToInput.addEventListener('change', filterRows);
+        resetBtn.addEventListener('click', resetFilters);
+    })();
+</script>
+{% endblock %}

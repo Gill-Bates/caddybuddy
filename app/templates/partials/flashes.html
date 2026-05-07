@@ -1,0 +1,10 @@
+{% if flashes %}
+<div class="d-grid gap-2 mb-4">
+    {% for flash in flashes %}
+    <div class="alert alert-{{ flash.category }} alert-dismissible fade show shadow-sm border-0" role="alert">
+        {{ flash.message }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}

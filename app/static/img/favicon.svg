@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="CaddyBuddy favicon">
+  <rect width="64" height="64" rx="14" fill="#102542"/>
+  <path d="M18 23c0-4.418 3.582-8 8-8h12c4.418 0 8 3.582 8 8v2h-8v-1c0-1.105-.895-2-2-2H28c-1.105 0-2 .895-2 2v4h20c0 11.046-8.954 20-20 20h-8v-8h8c5.523 0 10-4.477 10-10H18V23z" fill="#f4f1de"/>
+</svg>
