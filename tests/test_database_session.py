@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+#
+# tests/test_database_session.py
+# Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
+#
 
 from __future__ import annotations
 
@@ -108,6 +112,65 @@ class DatabaseSessionInitTests(_SessionModuleStateMixin, unittest.IsolatedAsynci
             self.assertTrue(session_module._sqlite_init_lock_path(database_path).exists())
             execute_database_init.assert_awaited_once()
             self.assertEqual(flock.call_count, 2)
+
+
+class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase):
+    def test_apply_known_schema_migrations_adds_deployment_version_column(self) -> None:
+        executed_sql: list[str] = []
+
+        class FakeConnection:
+            def exec_driver_sql(self, statement: str) -> None:
+                executed_sql.append(statement)
+
+        migrated = session_module._apply_known_schema_migrations(
+            FakeConnection(),
+            {"deployments": {"id", "status"}},
+        )
+
+        self.assertTrue(migrated)
+        self.assertEqual(
+            executed_sql,
+            ["ALTER TABLE deployments ADD COLUMN version INTEGER NOT NULL DEFAULT 1"],
+        )
+
+    def test_apply_known_schema_migrations_removes_server_description_column(self) -> None:
+        executed_sql: list[str] = []
+
+        class FakeConnection:
+            def exec_driver_sql(self, statement: str) -> None:
+                executed_sql.append(statement)
+
+        migrated = session_module._apply_known_schema_migrations(
+            FakeConnection(),
+            {"caddy_servers": {"id", "name", "description"}},
+        )
+
+        self.assertTrue(migrated)
+        self.assertEqual(
+            executed_sql,
+            ["ALTER TABLE caddy_servers DROP COLUMN description"],
+        )
+
+    def test_apply_known_schema_migrations_removes_template_validation_columns(self) -> None:
+        executed_sql: list[str] = []
+
+        class FakeConnection:
+            def exec_driver_sql(self, statement: str) -> None:
+                executed_sql.append(statement)
+
+        migrated = session_module._apply_known_schema_migrations(
+            FakeConnection(),
+            {"config_templates": {"id", "name", "syntax_valid", "validation_error"}},
+        )
+
+        self.assertTrue(migrated)
+        self.assertEqual(
+            executed_sql,
+            [
+                "ALTER TABLE config_templates DROP COLUMN syntax_valid",
+                "ALTER TABLE config_templates DROP COLUMN validation_error",
+            ],
+        )
 
 
 if __name__ == "__main__":

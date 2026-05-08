@@ -4,6 +4,7 @@
 # Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
 #
 
+import os
 from functools import cache
 from pathlib import Path
 
@@ -15,9 +16,13 @@ def get_build_info() -> dict[str, str]:
     """Return version and commit metadata for the running build."""
     settings = get_settings()
     base_dir = settings.base_dir
+    version = os.getenv("APP_VERSION") or _read_text(base_dir / "VERSION") or "dev"
+    commit = os.getenv("GIT_SHA") or _read_text(base_dir / "BUILD_INFO") or "working-tree"
+    build_date = os.getenv("BUILD_DATE") or "unknown"
     return {
-        "version": _read_text(base_dir / "VERSION") or "dev",
-        "commit": (_read_text(base_dir / "BUILD_INFO") or "working-tree").splitlines()[0],
+        "version": version.splitlines()[0],
+        "commit": commit.splitlines()[0],
+        "build_date": build_date.splitlines()[0],
     }
 
 

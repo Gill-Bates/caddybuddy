@@ -98,6 +98,11 @@ async def audit_commit_and_flash(
     try:
         await session.commit()
     except Exception:
+        logger.exception(
+            "Failed to commit audit action '%s' for resource type '%s'",
+            action,
+            resource_type,
+        )
         await session.rollback()
         raise
     for category, message in flashes:

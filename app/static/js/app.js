@@ -516,6 +516,10 @@ const initializeDomainPreview = () => {
     const previewOutput = document.querySelector("[data-domain-preview-output]");
     const errorContainer = document.querySelector("[data-domain-preview-errors-container]");
     const errorList = document.querySelector("[data-domain-preview-errors]");
+    const statusBadge = document.querySelector("[data-domain-preview-status]");
+    const presetsContainer = document.getElementById("domain-security-presets");
+    const headerCombined = document.getElementById("domain-header-combined");
+    const headerExtra = document.getElementById("domain-header-extra");
 
     if (
         !(form instanceof HTMLFormElement) ||
@@ -557,6 +561,50 @@ const initializeDomainPreview = () => {
     let activeRequestController = null;
     let latestRequestId = 0;
 
+    // Security preset checkboxes → combined header_directives hidden field.
+    const presetCheckboxes = presetsContainer
+        ? Array.from(presetsContainer.querySelectorAll("input[data-header-line]"))
+        : [];
+
+    const syncHeaderDirectives = () => {
+        if (!headerCombined) return;
+        const presetLines = presetCheckboxes
+            .filter((cb) => cb.checked)
+            .map((cb) => cb.dataset.headerLine ?? "");
+        const extraLines = headerExtra
+            ? headerExtra.value.split("\n").filter((l) => l.trim())
+            : [];
+        headerCombined.value = [...presetLines, ...extraLines].join("\n");
+    };
+
+    // Parse existing header_directives to pre-check matching presets.
+    if (presetCheckboxes.length > 0 && headerCombined) {
+        const existingLines = headerCombined.value.split("\n").map((l) => l.trim()).filter(Boolean);
+        const remainingLines = [];
+        for (const line of existingLines) {
+            const matchedCb = presetCheckboxes.find((cb) => cb.dataset.headerLine === line);
+            if (matchedCb) {
+                matchedCb.checked = true;
+            } else {
+                remainingLines.push(line);
+            }
+        }
+        if (headerExtra) {
+            headerExtra.value = remainingLines.join("\n");
+        }
+    }
+
+    const updateStatus = (errors) => {
+        if (!(statusBadge instanceof HTMLElement)) return;
+        if (!Array.isArray(errors) || errors.length === 0) {
+            statusBadge.textContent = "Valid";
+            statusBadge.className = "badge text-bg-success";
+        } else {
+            statusBadge.textContent = `${errors.length} warning${errors.length !== 1 ? "s" : ""}`;
+            statusBadge.className = "badge text-bg-warning";
+        }
+    };
+
     const clearInvalidStates = () => {
         for (const field of fieldsByName.values()) {
             field.classList.remove("is-invalid");
@@ -586,6 +634,7 @@ const initializeDomainPreview = () => {
 
     const renderErrors = (errors) => {
         errorList.replaceChildren();
+        updateStatus(errors);
         if (!Array.isArray(errors) || errors.length === 0) {
             errorContainer.hidden = true;
             clearInvalidStates();
@@ -652,6 +701,31 @@ const initializeDomainPreview = () => {
     form.addEventListener("input", schedulePreview);
     form.addEventListener("change", schedulePreview);
 
+    // Preset checkboxes and extra textarea trigger header sync + preview refresh.
+    for (const cb of presetCheckboxes) {
+        cb.addEventListener("change", () => {
+            syncHeaderDirectives();
+            schedulePreview();
+        });
+    }
+    if (headerExtra instanceof HTMLTextAreaElement) {
+        headerExtra.addEventListener("input", () => {
+            syncHeaderDirectives();
+            schedulePreview();
+        });
+    }
+
+    // Bootstrap HTML5 inline validation on submit.
+    form.addEventListener("submit", (event) => {
+        syncHeaderDirectives();
+        if (!form.checkValidity()) {
+            event.preventDefault();
+            event.stopPropagation();
+        }
+        form.classList.add("was-validated");
+    });
+
+    syncHeaderDirectives();
     void fetchPreview();
 };
 

@@ -25,10 +25,21 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 FROM python:3.13-slim AS runtime
 
+ARG APP_VERSION
+ARG GIT_SHA
+ARG BUILD_DATE
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" \
-    PORT=8000
+    PORT=8000 \
+    APP_VERSION="$APP_VERSION" \
+    GIT_SHA="$GIT_SHA" \
+    BUILD_DATE="$BUILD_DATE"
+
+LABEL org.opencontainers.image.version=$APP_VERSION \
+      org.opencontainers.image.revision=$GIT_SHA \
+      org.opencontainers.image.created=$BUILD_DATE
 
 RUN groupadd --system --gid 1000 app \
     && useradd --system --uid 1000 --gid app --home /app --shell /usr/sbin/nologin app

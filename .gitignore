@@ -94,6 +94,7 @@ tools/ui-lint/visual/current/
 tools/ui-lint/visual/diff/
 !tools/ui-lint/lib/
 !tools/ui-lint/lib/**
+full_codebase*
 
 # pyenv
 #   For a library or package, you might want to ignore these files since the code is

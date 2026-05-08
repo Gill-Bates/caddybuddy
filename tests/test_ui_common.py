@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+#
+# tests/test_ui_common.py
+# Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
+#
 
 from __future__ import annotations
 

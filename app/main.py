@@ -98,6 +98,7 @@ def create_app() -> FastAPI:
     """Construct and configure the FastAPI application."""
     settings = get_settings()
     static_dir: Path = settings.base_dir / "app" / "static"
+    favicon_path: Path = static_dir / "img" / "favicon.svg"
     app = FastAPI(title=settings.app_name, lifespan=lifespan)
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _handle_rate_limit_exceeded)
@@ -106,11 +107,16 @@ def create_app() -> FastAPI:
         secret_key=settings.secret_key.get_secret_value(),
         session_cookie=settings.session_cookie_name,
         max_age=settings.session_max_age_seconds,
-        same_site="lax",
+        same_site=settings.session_cookie_samesite,
         https_only=settings.session_https_only,
     )
     app.add_middleware(SecurityHeadersMiddleware)
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon() -> RedirectResponse:
+        return RedirectResponse(url="/static/img/favicon.svg", status_code=307)
+
     app.include_router(ui_router)
     app.include_router(api_router)
 

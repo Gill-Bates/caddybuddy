@@ -103,11 +103,19 @@ class Settings(BaseSettings):
             "session_https_only",
         ),
     )
+    session_cookie_samesite: Literal["strict", "lax", "none"] = Field(
+        default="lax",
+        validation_alias=AliasChoices(
+            "CADDYBUDDY_SESSION_SAMESITE",
+            "SESSION_SAMESITE",
+            "session_cookie_samesite",
+        ),
+    )
     session_cookie_name: str = "caddybuddy_session"
-    session_max_age_seconds: int = 60 * 60 * 24  # Cookie lifetime (24h)
-    session_inactivity_timeout_seconds: int = 60 * 60  # 60 min inactivity timeout
-    session_absolute_timeout_seconds: int = 60 * 60 * 24  # 24h absolute lifetime
-    default_admin_username: str = "admin"
+    session_max_age_seconds: int = Field(default=60 * 60 * 24, ge=1)  # Cookie lifetime (24h)
+    session_inactivity_timeout_seconds: int = Field(default=60 * 60, ge=1)  # 60 min inactivity timeout
+    session_absolute_timeout_seconds: int = Field(default=60 * 60 * 24, ge=1)  # 24h absolute lifetime
+    default_admin_username: str = Field(default="admin", min_length=1)
     default_admin_password: SecretStr = Field(
         default=SecretStr("admin"),
         validation_alias=AliasChoices(
@@ -149,19 +157,15 @@ class Settings(BaseSettings):
                 "CADDYBUDDY_SECRET_KEY or SECRET_KEY."
             )
 
-        return self
-
-    def validate_default_admin_bootstrap_password(self, password: str) -> None:
-        """Validate the bootstrap admin password only when a default admin must be created."""
-        if self.allow_insecure_defaults:
-            return
-
-        if password.strip() in _INSECURE_ADMIN_PASSWORD_VALUES:
+        admin_password = self.default_admin_password.get_secret_value().strip()
+        if admin_password in _INSECURE_ADMIN_PASSWORD_VALUES:
             raise ValueError(
                 "Set CADDYBUDDY_ADMIN_PASSWORD or ADMIN_PASSWORD to a non-default value "
                 "before first startup, or explicitly set CADDYBUDDY_ALLOW_INSECURE_DEFAULTS=true "
                 "for a disposable local setup."
             )
+
+        return self
 
     @property
     def base_dir(self) -> Path:

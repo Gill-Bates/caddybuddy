@@ -23,6 +23,9 @@ def main() -> None:
 
     # In reload mode, Uvicorn runs a supervisor process that respawns a worker
     # on file changes. The banner flag above is inherited by that subprocess.
+    # Exclude the data/ directory so SQLite WAL/SHM churn never triggers reloads.
+    reload_excludes = ["data"] if settings.reload else []
+
     uvicorn.run(
         "app.main:app",
         host=settings.host,
@@ -32,6 +35,7 @@ def main() -> None:
         proxy_headers=True,
         forwarded_allow_ips=settings.forwarded_allow_ips,
         reload=settings.reload,
+        reload_excludes=reload_excludes,
     )
 
 

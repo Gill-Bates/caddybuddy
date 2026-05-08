@@ -45,7 +45,6 @@ class ServerRepository:
         api_port: int,
         admin_api_path: str,
         active: bool,
-        description: str | None,
         tags: list[str],
         status: str,
     ) -> CaddyServer:
@@ -55,7 +54,6 @@ class ServerRepository:
             api_port=api_port,
             admin_api_path=admin_api_path,
             active=active,
-            description=description,
             tags=tags,
             status=status,
         )

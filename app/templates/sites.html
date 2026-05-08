@@ -1,0 +1,250 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<section class="d-grid gap-4">
+    <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-end">
+        <div>
+            <p class="eyebrow mb-2">Site Management</p>
+            <h1 class="page-title mb-2">Sites</h1>
+            <p class="text-body-secondary mb-0">Define sites with their domains and Caddyfiles. Each domain
+                can only be assigned once (enforced at database level).</p>
+        </div>
+    </div>
+
+    <div class="row g-4 align-items-start">
+        <div class="col-xl-4">
+            <div class="panel-card">
+                <div class="panel-card__header">
+                    <h2 class="h5 mb-0">{% if selected_site %}Edit site{% else %}Create site{% endif %}</h2>
+                </div>
+                <form action="/sites" method="post" class="d-grid gap-3">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    {% if selected_site %}
+                    <input type="hidden" name="site_id" value="{{ selected_site.id }}">
+                    {% endif %}
+
+                    <div>
+                        <label class="form-label" for="site-domain">Domain</label>
+                        <input id="site-domain" name="domain" class="form-control"
+                            value="{{ selected_site.domain if selected_site else '' }}" placeholder="example.com"
+                            required>
+                        <div class="form-text">Unique domain for this site. Subdomains are separate sites.</div>
+                    </div>
+
+                    <div>
+                        <label class="form-label" for="site-template">Caddyfile</label>
+                        <select id="site-template" name="config_template_id" class="form-select" required>
+                            <option value="">Select a Caddyfile...</option>
+                            {% for template in templates %}
+                            <option value="{{ template.id }}" {% if selected_site and
+                                selected_site.config_template_id==template.id %}selected{% endif %}>
+                                {{ template.name }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">
+                            <a href="/templates" class="text-decoration-none">Manage Caddyfiles →</a>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="form-label" for="site-description">Description</label>
+                        <textarea id="site-description" name="description" rows="2"
+                            class="form-control">{{ selected_site.description if selected_site else '' }}</textarea>
+                    </div>
+
+                    <div>
+                        <label class="form-label" for="site-upstream">Upstream</label>
+                        <input id="site-upstream" name="upstream" class="form-control"
+                            value="{{ selected_site.variables.get('upstream', '') if selected_site and selected_site.variables else '' }}"
+                            placeholder="127.0.0.1:8080">
+                        <div class="form-text">Used for template placeholders like
+                            <code>{% raw %}{{upstream}}{% endraw %}</code>.
+                        </div>
+                    </div>
+
+                    <div class="row g-3">
+                        <div class="col-6">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="ssl_enabled" id="site-ssl-enabled"
+                                    {% if not selected_site or selected_site.ssl_enabled %}checked{% endif %}>
+                                <label class="form-check-label" for="site-ssl-enabled">SSL enabled</label>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="enabled" id="site-enabled" {% if
+                                    not selected_site or selected_site.enabled %}checked{% endif %}>
+                                <label class="form-check-label" for="site-enabled">Site enabled</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="form-label" for="site-ssl-provider">SSL Provider</label>
+                        <select id="site-ssl-provider" name="ssl_provider" class="form-select">
+                            {% for provider in ssl_providers %}
+                            <option value="{{ provider }}" {% if selected_site and selected_site.ssl_provider==provider
+                                %}selected{% endif %}>
+                                {{ provider }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary flex-grow-1">
+                            {% if selected_site %}Update site{% else %}Create site{% endif %}
+                        </button>
+                        {% if selected_site %}
+                        <a href="/sites" class="btn btn-outline-secondary">Cancel</a>
+                        {% endif %}
+                    </div>
+                </form>
+
+                {% if selected_site %}
+                <hr class="my-4">
+                <div class="d-grid gap-3">
+                    <h3 class="h6 mb-0">Deploy to Server</h3>
+                    <form action="/sites/{{ selected_site.id }}/deploy" method="post" class="d-flex gap-2">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <select name="server_id" class="form-select flex-grow-1" required>
+                            <option value="">Select server...</option>
+                            {% for server in servers %}
+                            <option value="{{ server.id }}" {% if not server.active %}disabled{% endif %}>
+                                {{ server.name }}{% if not server.active %} (inactive){% endif %}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <button type="submit" class="btn btn-success">Deploy</button>
+                    </form>
+                </div>
+
+                <hr class="my-4">
+                <form action="/sites/{{ selected_site.id }}/delete" method="post"
+                    onsubmit="return confirm('Delete site {{ selected_site.domain }}? This will also delete all deployments.')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="btn btn-outline-danger w-100">Delete site</button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="col-xl-8">
+            {% if selected_site and site_preview %}
+            <div class="panel-card mb-4">
+                <div class="panel-card__header">
+                    <h2 class="h5 mb-0">Configuration Preview</h2>
+                </div>
+                <pre
+                    class="mb-0 p-3 bg-dark text-light rounded-bottom cb-code-block cb-code-block--scroll-md"><code>{{ site_preview }}</code></pre>
+            </div>
+            {% endif %}
+
+            {% if selected_site and deployments %}
+            <div class="panel-card mb-4">
+                <div class="panel-card__header">
+                    <h2 class="h5 mb-0">Deployment History</h2>
+                </div>
+                <div class="table-responsive">
+                    <table class="table align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th>Server</th>
+                                <th>Status</th>
+                                <th>Deployed</th>
+                                <th class="text-end">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for deployment in deployments[:5] %}
+                            <tr>
+                                <td>{{ deployment.server.name if deployment.server else 'Unknown' }}</td>
+                                <td>
+                                    <span class="badge 
+                                        {% if deployment.status.value == 'deployed' %}text-bg-success
+                                        {% elif deployment.status.value == 'failed' or deployment.status.value == 'invalid' %}text-bg-danger
+                                        {% elif deployment.status.value == 'pending' or deployment.status.value == 'validating' %}text-bg-warning
+                                        {% else %}text-bg-secondary{% endif %}">
+                                        {{ deployment.status.value }}
+                                    </span>
+                                </td>
+                                <td>
+                                    {% if deployment.deployed_at %}
+                                    {{ deployment.deployed_at.strftime('%Y-%m-%d %H:%M') }}
+                                    {% else %}
+                                    <span class="text-body-secondary">Not deployed</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-end">
+                                    <a href="/deployments/{{ deployment.id }}"
+                                        class="btn btn-sm btn-outline-primary">Details</a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="panel-card">
+                <div class="panel-card__header">
+                    <h2 class="h5 mb-0">All Sites</h2>
+                </div>
+                <div class="table-responsive">
+                    <table class="table align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th>Domain</th>
+                                <th>Template</th>
+                                <th>Status</th>
+                                <th class="text-end">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for site in sites %}
+                            <tr {% if selected_site and selected_site.id==site.id %}class="table-active" {% endif %}>
+                                <td>
+                                    <div class="fw-semibold">{{ site.domain }}</div>
+                                    <div class="small text-body-secondary">{{ site.description or 'No description' }}
+                                    </div>
+                                </td>
+                                <td>
+                                    {% if site.config_template %}
+                                    <a href="/templates/{{ site.config_template.id }}" class="text-decoration-none">
+                                        {{ site.config_template.name }}
+                                    </a>
+                                    {% else %}
+                                    <span class="text-danger">No template</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if site.enabled %}
+                                    <span class="badge text-bg-success">Enabled</span>
+                                    {% else %}
+                                    <span class="badge text-bg-secondary">Disabled</span>
+                                    {% endif %}
+                                    {% if site.ssl_enabled %}
+                                    <span class="badge text-bg-info">SSL</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-end">
+                                    <a href="/sites/{{ site.id }}" class="btn btn-sm btn-outline-primary">Edit</a>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="4" class="text-center text-body-secondary py-4">
+                                    No sites configured. Create one using the form.
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

@@ -2,36 +2,42 @@
 
 {% block content %}
 <section class="auth-shell">
-    <div class="auth-panel">
-        <div class="auth-panel__intro">
-            <h1>Sign in to CaddyBuddy.</h1>
-            <p class="auth-panel__lede text-body-secondary mt-2 mb-0">
+    <div class="auth-card panel-card">
+        <div class="auth-brand">
+            <div class="auth-brand__logo-wrap" aria-hidden="true">
+                <img src="{{ request.app.url_path_for('static', path='img/favicon.svg') }}" alt=""
+                    class="auth-brand__logo">
+            </div>
+            <p class="auth-brand__eyebrow">{{ app_name }}</p>
+        </div>
+
+        <div class="auth-card__header">
+            <h1 class="auth-card__title">Sign in</h1>
+            <p class="auth-card__subtitle text-body-secondary mb-0">
                 Secure access to your infrastructure control plane.
             </p>
         </div>
 
-        <div class="auth-panel__form panel-card">
-            <div class="p-2">
-                <h2 class="h5 mb-4">Sign in</h2>
-                <form action="/login" method="post" class="d-grid gap-3">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <input type="hidden" name="next" value="{{ request.query_params.get('next', '/') }}">
-                    <div>
-                        <label for="username"
-                            class="form-label auth-field-label small text-uppercase fw-semibold mb-2">Username</label>
-                        <input id="username" name="username" class="form-control" placeholder="Enter username"
-                            autocomplete="username" required autofocus>
-                    </div>
-                    <div>
-                        <label for="password"
-                            class="form-label auth-field-label small text-uppercase fw-semibold mb-2">Password</label>
-                        <input id="password" name="password" type="password" class="form-control" placeholder="••••••••"
-                            autocomplete="current-password" required>
-                    </div>
-                    <button type="submit" class="btn btn-primary w-100 mt-2">Sign in</button>
-                </form>
+        <form action="/login" method="post" class="auth-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="next" value="{{ request.query_params.get('next', '/') }}">
+
+            <div class="auth-form__group">
+                <label for="username" class="form-label auth-field-label">Username</label>
+                <input id="username" name="username" class="form-control form-control-lg auth-form__control"
+                    placeholder="Enter username" autocomplete="username" autocapitalize="off" autocorrect="off" required
+                    autofocus>
             </div>
-        </div>
+
+            <div class="auth-form__group auth-form__group--last">
+                <label for="password" class="form-label auth-field-label">Password</label>
+                <input id="password" name="password" type="password"
+                    class="form-control form-control-lg auth-form__control" placeholder="••••••••"
+                    autocomplete="current-password" required>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-lg w-100 auth-form__submit">Sign in</button>
+        </form>
     </div>
 </section>
 {% endblock %}

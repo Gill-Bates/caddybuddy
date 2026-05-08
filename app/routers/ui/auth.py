@@ -69,7 +69,7 @@ async def login_action(request: Request, session: AsyncSession = Depends(get_db_
     logger.debug("Login attempt for username=%r password_len=%d", username, len(password))
     user = await auth_service.authenticate(session, username, password)
     if user is None:
-        logger.debug("Authentication failed for username=%r", username)
+        logger.warning("Authentication failed for username=%r", username)
         await audit_commit_and_flash(
             session,
             request,

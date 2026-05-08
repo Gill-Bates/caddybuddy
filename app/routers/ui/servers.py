@@ -18,7 +18,7 @@ from app.dependencies.web import push_flash, redirect_to, render_template
 from app.models.entities import CaddyServer
 from app.repositories.configs import config_repository
 from app.repositories.servers import server_repository
-from app.services.caddy import caddy_service
+from app.services.caddy import CaddyServiceError, caddy_service
 from app.services.events import publish_resource_event
 from app.utils.parsing import split_csv
 
@@ -88,7 +88,6 @@ async def create_server(request: Request, session: AsyncSession = Depends(get_db
         )
         return redirect_to("/servers")
     active = form.get("active") == "on"
-    description = str(form.get("description", "")).strip() or None
     tags = split_csv(str(form.get("tags", "")))
     probe = CaddyServer(
         name=name,
@@ -96,7 +95,6 @@ async def create_server(request: Request, session: AsyncSession = Depends(get_db
         api_port=api_port,
         admin_api_path=admin_api_path,
         active=active,
-        description=description,
         tags=tags,
         status="unknown",
     )
@@ -108,7 +106,7 @@ async def create_server(request: Request, session: AsyncSession = Depends(get_db
     except ValueError as exc:
         push_flash(request, "danger", str(exc))
         return redirect_to("/servers")
-    except httpx.HTTPError:
+    except CaddyServiceError:
         status = "offline"
     try:
         server = await server_repository.create(
@@ -118,7 +116,6 @@ async def create_server(request: Request, session: AsyncSession = Depends(get_db
             api_port=api_port,
             admin_api_path=admin_api_path,
             active=active,
-            description=description,
             tags=tags,
             status=status,
         )
@@ -168,7 +165,7 @@ async def test_server(request: Request, server_id: int, session: AsyncSession = 
         caddy_service.mark_server_online(server)
         push_flash(request, "success", f"Connection to '{server.name}' is healthy.")
         status_code = 200
-    except (httpx.HTTPError, ValueError) as exc:
+    except (CaddyServiceError, ValueError) as exc:
         caddy_service.mark_server_offline(server)
         push_flash(request, "danger", f"Connection test failed: {exc}")
         status_code = 502
@@ -223,7 +220,7 @@ async def sync_server_config(request: Request, server_id: int, session: AsyncSes
             actor=current_user,
             flashes=(("success", f"Imported live configuration from '{server.name}'."),),
         )
-    except (httpx.HTTPError, ValueError) as exc:
+    except (CaddyServiceError, ValueError) as exc:
         caddy_service.mark_server_offline(server)
         await session.commit()
         push_flash(request, "danger", f"Could not pull the live configuration: {exc}")

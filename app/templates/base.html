@@ -29,12 +29,15 @@
                     <a class="app-nav__link {% if request.url.path.startswith('/servers') %}is-active{% endif %}"
                         href="/servers" {% if request.url.path.startswith('/servers') %}aria-current="page" {% endif
                         %}>Servers</a>
-                    <a class="app-nav__link {% if request.url.path.startswith('/domains') %}is-active{% endif %}"
-                        href="/domains" {% if request.url.path.startswith('/domains') %}aria-current="page" {% endif
-                        %}>Domains</a>
-                    <a class="app-nav__link {% if request.url.path.startswith('/configs') %}is-active{% endif %}"
-                        href="/configs" {% if request.url.path.startswith('/configs') %}aria-current="page" {% endif
-                        %}>Configurations</a>
+                    <a class="app-nav__link {% if request.url.path.startswith('/templates') %}is-active{% endif %}"
+                        href="/templates" {% if request.url.path.startswith('/templates') %}aria-current="page" {% endif
+                        %}>Caddyfile</a>
+                    <a class="app-nav__link {% if request.url.path.startswith('/sites') %}is-active{% endif %}"
+                        href="/sites" {% if request.url.path.startswith('/sites') %}aria-current="page" {% endif
+                        %}>Sites</a>
+                    <a class="app-nav__link {% if request.url.path.startswith('/deployments') %}is-active{% endif %}"
+                        href="/deployments" {% if request.url.path.startswith('/deployments') %}aria-current="page" {%
+                        endif %}>Deployments</a>
                     <a class="app-nav__link {% if request.url.path.startswith('/api-keys') %}is-active{% endif %}"
                         href="/api-keys" {% if request.url.path.startswith('/api-keys') %}aria-current="page" {% endif
                         %}>API Keys</a>

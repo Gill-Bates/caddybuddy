@@ -84,13 +84,18 @@ async def create_api_key(request: Request, session: AsyncSession = Depends(get_d
         "delete": form.get("perm_delete") == "on",
     }
     expires_at = parse_expires_days(str(form.get("expires_days", "")).strip() or None)
-    api_key, raw_key = await auth_service.create_api_key(
-        session,
-        user_id=current_user.id,
-        name=name,
-        permissions=permissions,
-        expires_at=expires_at,
-    )
+    try:
+        api_key, raw_key = await auth_service.create_api_key(
+            session,
+            actor=current_user,
+            user_id=current_user.id,
+            name=name,
+            permissions=permissions,
+            expires_at=expires_at,
+        )
+    except ValueError as exc:
+        push_flash(request, "danger", str(exc))
+        return redirect_to("/api-keys")
     await audit_commit_and_flash(
         session,
         request,

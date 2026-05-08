@@ -4,6 +4,9 @@
 # Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
 #
 
+from __future__ import annotations
+
+import asyncio
 import fcntl
 import os
 import threading
@@ -126,6 +129,50 @@ def _read_existing_table_columns(sync_connection) -> dict[str, set[str]]:
     }
 
 
+def _read_existing_unique_constraints(sync_connection) -> dict[str, set[tuple[str, ...]]]:
+    """Return table-level unique constraints as normalized column tuples."""
+    schema_inspector = inspect(sync_connection)
+    table_constraints: dict[str, set[tuple[str, ...]]] = {}
+    for table_name in schema_inspector.get_table_names():
+        constraints: set[tuple[str, ...]] = set()
+        for constraint in schema_inspector.get_unique_constraints(table_name):
+            column_names = constraint.get("column_names") or []
+            if column_names:
+                constraints.add(tuple(column_names))
+        table_constraints[table_name] = constraints
+    return table_constraints
+
+
+def _apply_known_schema_migrations(
+    sync_connection,
+    existing_columns: dict[str, set[str]],
+) -> bool:
+    """Apply narrowly scoped schema migrations required by the app."""
+    migrated = False
+
+    deployment_columns = existing_columns.get("deployments")
+    if deployment_columns is not None and "version" not in deployment_columns:
+        sync_connection.exec_driver_sql(
+            "ALTER TABLE deployments ADD COLUMN version INTEGER NOT NULL DEFAULT 1"
+        )
+        migrated = True
+
+    server_columns = existing_columns.get("caddy_servers")
+    if server_columns is not None and "description" in server_columns:
+        sync_connection.exec_driver_sql("ALTER TABLE caddy_servers DROP COLUMN description")
+        migrated = True
+
+    template_columns = existing_columns.get("config_templates")
+    if template_columns is not None and "syntax_valid" in template_columns:
+        sync_connection.exec_driver_sql("ALTER TABLE config_templates DROP COLUMN syntax_valid")
+        migrated = True
+    if template_columns is not None and "validation_error" in template_columns:
+        sync_connection.exec_driver_sql("ALTER TABLE config_templates DROP COLUMN validation_error")
+        migrated = True
+
+    return migrated
+
+
 async def get_db_session() -> AsyncIterator[AsyncSession]:
     """Yield a database session.
 
@@ -166,6 +213,14 @@ def _sqlite_init_lock_path(database_path: Path) -> Path:
     return database_path.with_name(f"{database_path.name}.init.lock")
 
 
+def _acquire_sqlite_init_lock(lock_file) -> None:
+    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+
+
+def _release_sqlite_init_lock(lock_file) -> None:
+    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 async def _execute_database_init() -> None:
     """Perform schema bootstrap or schema validation for the current database."""
     async with get_engine().begin() as connection:
@@ -185,6 +240,10 @@ async def _execute_database_init() -> None:
             )
 
         existing_columns = await connection.run_sync(_read_existing_table_columns)
+        migrated = await connection.run_sync(_apply_known_schema_migrations, existing_columns)
+        if migrated:
+            existing_columns = await connection.run_sync(_read_existing_table_columns)
+
         missing_columns: list[str] = []
         for table_name, table in Base.metadata.tables.items():
             current_columns = existing_columns.get(table_name, set())
@@ -195,6 +254,29 @@ async def _execute_database_init() -> None:
             raise RuntimeError(
                 "Existing database schema is missing columns: "
                 f"{', '.join(missing_columns)}. "
+                "Startup will not mutate an existing schema automatically. "
+                "Reinitialize the database or add migrations before starting the app."
+            )
+
+        existing_unique_constraints = await connection.run_sync(_read_existing_unique_constraints)
+        missing_unique_constraints: list[str] = []
+        for table_name, table in Base.metadata.tables.items():
+            expected_constraints = {
+                tuple(column.name for column in constraint.columns)
+                for constraint in table.constraints
+                if getattr(constraint, "__visit_name__", "") == "unique_constraint"
+            }
+            current_constraints = existing_unique_constraints.get(table_name, set())
+            for expected_constraint in sorted(expected_constraints):
+                if expected_constraint not in current_constraints:
+                    missing_unique_constraints.append(
+                        f"{table_name}({', '.join(expected_constraint)})"
+                    )
+
+        if missing_unique_constraints:
+            raise RuntimeError(
+                "Existing database schema is missing unique constraints: "
+                f"{', '.join(missing_unique_constraints)}. "
                 "Startup will not mutate an existing schema automatically. "
                 "Reinitialize the database or add migrations before starting the app."
             )
@@ -216,11 +298,11 @@ async def init_database() -> None:
     _ensure_sqlite_database_directory(database_path)
     lock_path = _sqlite_init_lock_path(database_path)
     with lock_path.open("a+b") as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        await asyncio.to_thread(_acquire_sqlite_init_lock, lock_file)
         try:
             await _execute_database_init()
         finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            await asyncio.to_thread(_release_sqlite_init_lock, lock_file)
 
 
 async def dispose_engine() -> None:

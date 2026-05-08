@@ -85,7 +85,12 @@ async def change_password(request: Request, session: AsyncSession = Depends(get_
         push_flash(request, "danger", "Your current password is incorrect.")
         return redirect_to("/profile")
     try:
-        await auth_service.update_password(session, current_user, new_password)
+        await auth_service.update_password(
+            session,
+            actor=current_user,
+            user=current_user,
+            new_password=new_password,
+        )
     except WeakPasswordError as exc:
         push_flash(request, "danger", str(exc))
         return redirect_to("/profile")

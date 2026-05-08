@@ -1,3 +1,4 @@
+
 services:
   caddybuddy:
     image: docker.cirrio.de/caddybuddy:latest
@@ -6,7 +7,8 @@ services:
     stop_grace_period: 20s
     environment:
       CADDYBUDDY_SECRET_KEY: "l+QGUq6BH9dLZkAQpG2jivXZeLLwYNMCmzUsfcD2wPM=" # Generate with: head -c 32 /dev/urandom | base64
-      CADDYBUDDY_ADMIN_PASSWORD: "admin"
+      CADDYBUDDY_ADMIN_PASSWORD: "jesusrocks"
+      CADDYBUDDY_ALLOW_INSECURE_DEFAULTS: "true"
       LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
       TZ: ${TZ:-Europe/Berlin}
       HOST: ${HOST:-0.0.0.0}

@@ -7,8 +7,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import socket
+import shutil
+from contextlib import suppress
 from datetime import UTC, datetime
+from pathlib import Path
+from tempfile import NamedTemporaryFile
 from ipaddress import ip_address
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
@@ -19,6 +24,12 @@ from app.models.entities import CaddyServer
 
 _FORBIDDEN_HOSTS = frozenset({"169.254.169.254", "metadata.google.internal"})
 _FORBIDDEN_IPS = frozenset({ip_address("169.254.169.254")})
+_CADDY_ADAPT_TIMEOUT = 10.0
+_CADDY_KILL_TIMEOUT = 2.0
+
+
+class CaddyServiceError(Exception):
+    """Domain exception for Caddy Admin API transport failures."""
 
 
 class CaddyService:
@@ -27,6 +38,103 @@ class CaddyService:
 
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None
+        self._caddy_path: str | None = None
+        self._checked_caddy = False
+
+    def _find_caddy_binary(self) -> str | None:
+        if self._checked_caddy:
+            return self._caddy_path
+
+        self._checked_caddy = True
+        self._caddy_path = shutil.which("caddy")
+        return self._caddy_path
+
+    @staticmethod
+    async def _kill_process(process: asyncio.subprocess.Process) -> None:
+        with suppress(ProcessLookupError):
+            process.kill()
+
+        try:
+            await asyncio.wait_for(process.wait(), timeout=_CADDY_KILL_TIMEOUT)
+        except asyncio.TimeoutError:
+            return
+
+    async def _run_caddy_command(
+        self,
+        args: list[str],
+        *,
+        timeout: float = _CADDY_ADAPT_TIMEOUT,
+    ) -> tuple[int, str, str]:
+        caddy_path = self._find_caddy_binary()
+        if not caddy_path:
+            raise CaddyServiceError("Caddy binary not available for deployment.")
+
+        process = await asyncio.create_subprocess_exec(
+            caddy_path,
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+        except asyncio.TimeoutError as exc:
+            await self._kill_process(process)
+            raise CaddyServiceError(f"Caddy command timed out after {timeout}s") from exc
+
+        return (
+            process.returncode or 0,
+            stdout.decode("utf-8", errors="replace"),
+            stderr.decode("utf-8", errors="replace"),
+        )
+
+    @staticmethod
+    def _parse_caddy_errors(stderr: str) -> tuple[str, ...]:
+        if not stderr.strip():
+            return ()
+
+        errors: list[str] = []
+        for line in stderr.strip().splitlines():
+            normalized = line.strip()
+            if not normalized or normalized.startswith("Warning:"):
+                continue
+            if normalized.startswith("Error:"):
+                normalized = normalized[6:].strip()
+            elif normalized.startswith("adapt:"):
+                normalized = normalized[6:].strip()
+            errors.append(normalized)
+        return tuple(errors) if errors else (stderr.strip(),)
+
+    async def adapt_caddyfile_to_json(self, caddyfile: str) -> dict:
+        with NamedTemporaryFile(
+            mode="w",
+            suffix=".caddyfile",
+            delete=False,
+            encoding="utf-8",
+        ) as tmp:
+            tmp.write(caddyfile)
+            tmp_path = Path(tmp.name)
+
+        try:
+            return_code, stdout, stderr = await self._run_caddy_command(
+                ["adapt", "--config", str(tmp_path), "--adapter", "caddyfile"],
+            )
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+        if return_code != 0:
+            error_text = "\n".join(self._parse_caddy_errors(stderr)) or "Failed to adapt Caddyfile."
+            raise CaddyServiceError(error_text)
+
+        try:
+            payload = json.loads(stdout)
+        except json.JSONDecodeError as exc:
+            raise CaddyServiceError(f"Failed to parse adapted Caddy JSON output: {exc}") from exc
+
+        if not isinstance(payload, dict):
+            raise CaddyServiceError("Adapted Caddy configuration must be a JSON object.")
+
+        return payload
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -59,8 +167,21 @@ class CaddyService:
             host = f"[{host}]"
         return urlunsplit((parsed.scheme, f"{host}:{server.api_port}", "", "", ""))
 
+    @staticmethod
+    def _relative_admin_api_path(server: CaddyServer) -> str:
+        path = server.admin_api_path.strip()
+        if path.startswith(("http://", "https://", "//")):
+            raise ValueError("admin_api_path must be a relative path, not an absolute URL.")
+        parsed = urlsplit(path)
+        if parsed.scheme or parsed.netloc:
+            raise ValueError("admin_api_path must be a relative path, not an absolute URL.")
+        normalized = path.lstrip("/")
+        if not normalized:
+            raise ValueError("admin_api_path must not be empty.")
+        return normalized
+
     def _endpoint(self, server: CaddyServer) -> str:
-        return urljoin(f"{self._base_url(server)}/", server.admin_api_path.lstrip("/"))
+        return urljoin(f"{self._base_url(server)}/", self._relative_admin_api_path(server))
 
     @staticmethod
     def _load_endpoint(server: CaddyServer) -> str:
@@ -119,15 +240,21 @@ class CaddyService:
     async def fetch_config(self, server: CaddyServer) -> dict:
         await self._validate_target(server)
         client = self._get_client()
-        response = await client.get(self._endpoint(server))
-        response.raise_for_status()
+        try:
+            response = await client.get(self._endpoint(server))
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise CaddyServiceError(f"Caddy API request failed: {exc}") from exc
         return response.json()
 
     async def deploy_config(self, server: CaddyServer, config_payload: dict) -> dict:
         await self._validate_target(server)
         client = self._get_client()
-        response = await client.post(self._load_endpoint(server), json=config_payload)
-        response.raise_for_status()
+        try:
+            response = await client.post(self._load_endpoint(server), json=config_payload)
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise CaddyServiceError(f"Caddy API request failed: {exc}") from exc
         return response.json() if response.content else {"status": "ok"}
 
     @staticmethod

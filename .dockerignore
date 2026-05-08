@@ -5,6 +5,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+tests/
 data/*.db
 data/*.db-*
 node_modules/

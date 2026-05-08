@@ -1,0 +1,199 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<section class="d-grid gap-4">
+    <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-end">
+        <div>
+            <p class="eyebrow mb-2">Caddyfile</p>
+            <h1 class="page-title mb-2">Caddyfile</h1>
+            <p class="text-body-secondary mb-0">Reusable Caddy configurations. Caddyfiles are referenced by Sites and
+                rendered with site-specific variables during deployment.</p>
+        </div>
+    </div>
+
+    <div class="row g-4 align-items-start">
+        <div class="col-xl-5">
+            <div class="panel-card">
+                <div class="panel-card__header">
+                    <h2 class="h5 mb-0">{% if selected_template %}Edit Caddyfile{% else %}Create Caddyfile{% endif %}
+                    </h2>
+                </div>
+                <form action="/templates" method="post" class="d-grid gap-3">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    {% if selected_template %}
+                    <input type="hidden" name="template_id" value="{{ selected_template.id }}">
+                    {% endif %}
+
+                    <div>
+                        <label class="form-label" for="template-name">Name</label>
+                        <input id="template-name" name="name" class="form-control"
+                            value="{{ selected_template.name if selected_template else '' }}"
+                            placeholder="reverse-proxy-standard" required>
+                    </div>
+
+                    <div>
+                        <label class="form-label" for="template-description">Description</label>
+                        <textarea id="template-description" name="description" rows="2"
+                            class="form-control">{{ selected_template.description if selected_template else '' }}</textarea>
+                    </div>
+
+                    <div>
+                        <label class="form-label" for="template-caddyfile">Caddyfile Configuration</label>
+                        <textarea id="template-caddyfile" name="caddyfile" rows="15"
+                            class="form-control font-monospace cb-code-block"
+                            required>{{ selected_template.caddyfile if selected_template else template_example }}</textarea>
+                        <div class="form-text">
+                            Use <code>{% raw %}{{variable}}{% endraw %}</code> syntax for variables.
+                            Reserved: <code>{% raw %}{{domain}}{% endraw %}</code>,
+                            <code>{% raw %}{{ssl_enabled}}{% endraw %}</code>,
+                            <code>{% raw %}{{ssl_provider}}{% endraw %}</code>.
+                            Site values: <code>{% raw %}{{upstream}}{% endraw %}</code>.
+                        </div>
+                    </div>
+
+                    {% if selected_template %}
+                    <div>
+                        <label class="form-label" for="template-change-summary">Change Summary</label>
+                        <input id="template-change-summary" name="change_summary" class="form-control"
+                            placeholder="Brief description of changes">
+                    </div>
+                    {% endif %}
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary flex-grow-1">
+                            {% if selected_template %}Update Caddyfile{% else %}Create Caddyfile{% endif %}
+                        </button>
+                        {% if selected_template %}
+                        <a href="/templates" class="btn btn-outline-secondary">Cancel</a>
+                        {% endif %}
+                    </div>
+                </form>
+
+                {% if selected_template %}
+                <hr class="my-4">
+
+                {% if undefined_vars %}
+                <div class="alert alert-warning mb-3">
+                    <strong>Undefined variables:</strong> {{ undefined_vars | join(', ') }}
+                    <div class="small mt-1">These must be provided by the Site or will remain as placeholders.</div>
+                </div>
+                {% endif %}
+
+                {% if selected_template.sites %}
+                <div class="alert alert-info mb-3">
+                    <strong>Used by {{ selected_template.sites | length }} site(s):</strong>
+                    {% for site in selected_template.sites[:5] %}
+                    <a href="/sites/{{ site.id }}" class="text-decoration-none">{{ site.domain }}</a>{% if not loop.last
+                    %}, {% endif %}
+                    {% endfor %}
+                    {% if selected_template.sites | length > 5 %}
+                    and {{ selected_template.sites | length - 5 }} more
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                <form action="/templates/{{ selected_template.id }}/delete" method="post">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="btn btn-outline-danger w-100 js-confirm"
+                        data-confirm="Delete Caddyfile {{ selected_template.name }}?"
+                        data-confirm-title="Delete Caddyfile" data-confirm-accept="Delete" {% if selected_template.sites
+                        %}disabled title="Cannot delete - template is in use" {% endif %}>
+                        Delete Caddyfile
+                    </button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="col-xl-7">
+            {% if selected_template and revisions %}
+            <div class="panel-card mb-4">
+                <div class="panel-card__header">
+                    <h2 class="h5 mb-0">Caddyfile Revision History</h2>
+                </div>
+                <div class="table-responsive">
+                    <table class="table align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th>Version</th>
+                                <th>Summary</th>
+                                <th>Created</th>
+                                <th class="text-end">Checksum</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for revision in revisions %}
+                            <tr {% if revision.checksum==selected_template.checksum %}class="table-active" {% endif %}>
+                                <td>
+                                    <span class="badge text-bg-secondary">v{{ revision.version }}</span>
+                                    {% if revision.checksum == selected_template.checksum %}
+                                    <span class="badge text-bg-primary">Current</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ revision.change_summary or 'No summary' }}</td>
+                                <td>
+                                    <div>{{ revision.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
+                                    {% if revision.created_by %}
+                                    <div class="small text-body-secondary">by {{ revision.created_by }}</div>
+                                    {% endif %}
+                                </td>
+                                <td class="text-end">
+                                    <code class="small">{{ revision.checksum[:8] }}</code>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="panel-card">
+                <div class="panel-card__header">
+                    <h2 class="h5 mb-0">All Caddyfiles</h2>
+                </div>
+                <div class="table-responsive">
+                    <table class="table align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Sites</th>
+                                <th class="text-end">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for template in templates %}
+                            <tr {% if selected_template and selected_template.id==template.id %}class="table-active" {%
+                                endif %}>
+                                <td>
+                                    <div class="fw-semibold">{{ template.name }}</div>
+                                    <div class="small text-body-secondary">{{ template.description or 'No description'
+                                        }}</div>
+                                </td>
+                                <td>
+                                    {% if template.sites %}
+                                    <span class="badge text-bg-info">{{ template.sites | length }}</span>
+                                    {% else %}
+                                    <span class="text-body-secondary">0</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-end">
+                                    <a href="/templates/{{ template.id }}"
+                                        class="btn btn-sm btn-outline-primary">Edit</a>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="3" class="text-center text-body-secondary py-4">
+                                    No Caddyfiles configured. Create one using the form.
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

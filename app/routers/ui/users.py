@@ -59,6 +59,7 @@ async def create_user(request: Request, session: AsyncSession = Depends(get_db_s
     try:
         created_user = await auth_service.create_user(
             session,
+            actor=current_user,
             username=username,
             email=email,
             password=password,
