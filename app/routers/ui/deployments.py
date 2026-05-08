@@ -4,11 +4,7 @@
 # Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
 #
 
-"""UI Router for Deployment management.
-
-Deployments are the key entity linking Sites to Servers.
-They track the deployment state machine and enable rollback.
-"""
+"""UI Router for deployment management."""
 
 from __future__ import annotations
 
@@ -84,43 +80,6 @@ async def deployments_page(
         "can_rollback": selected_deployment and deployment_state_machine.can_rollback(selected_deployment.status),
     }
     return render_template(request, "deployments.html", current_user=current_user, context=context)
-
-
-@router.post("/deployments/{deployment_id}/validate")
-async def validate_deployment(
-    request: Request,
-    deployment_id: int,
-    session: AsyncSession = Depends(get_db_session),
-):
-    """Validate a pending deployment."""
-    current_user = await require_admin(request, session)
-    if current_user is None:
-        return redirect_to("/")
-
-    await validated_form(request)
-
-    deployment = await deployment_repository.get_by_id(session, deployment_id)
-    if deployment is None:
-        push_flash(request, "danger", "Deployment not found.")
-        return redirect_to("/deployments")
-
-    result = await deployment_engine.validate_deployment(session, deployment)
-
-    if result.success:
-        await audit_commit_and_flash(
-            session,
-            request,
-            action="validate",
-            resource_type="deployment",
-            resource_id=str(deployment_id),
-            actor=current_user,
-            flashes=(("success", "Deployment validated successfully."),),
-        )
-    else:
-        await session.commit()
-        push_flash(request, "danger", f"Validation failed: {result.error or result.message}")
-
-    return redirect_to(f"/deployments/{deployment_id}")
 
 
 @router.post("/deployments/{deployment_id}/deploy")

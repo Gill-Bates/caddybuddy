@@ -95,6 +95,26 @@ class Settings(BaseSettings):
         default="sqlite+aiosqlite:///data/app.db",
         validation_alias=AliasChoices("DATABASE_URL", "database_url"),
     )
+    config_template_revision_retry_limit: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        validation_alias=AliasChoices(
+            "CADDYBUDDY_CONFIG_TEMPLATE_REVISION_RETRY_LIMIT",
+            "CONFIG_TEMPLATE_REVISION_RETRY_LIMIT",
+            "config_template_revision_retry_limit",
+        ),
+    )
+    config_template_checksum_timeout_seconds: float = Field(
+        default=5.0,
+        gt=0,
+        le=30.0,
+        validation_alias=AliasChoices(
+            "CADDYBUDDY_CONFIG_TEMPLATE_CHECKSUM_TIMEOUT_SECONDS",
+            "CONFIG_TEMPLATE_CHECKSUM_TIMEOUT_SECONDS",
+            "config_template_checksum_timeout_seconds",
+        ),
+    )
     session_https_only: bool = Field(
         default=True,
         validation_alias=AliasChoices(

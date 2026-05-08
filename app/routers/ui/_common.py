@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 
 from fastapi import Request
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import FormData
 
@@ -52,7 +53,7 @@ async def validated_form(request: Request) -> FormData:
     return form
 
 
-def safe_next(next_path: str) -> str:
+def safe_next(next_path: str | None) -> str:
     """Sanitize the 'next' redirect path to prevent open redirects."""
     if (
         not next_path
@@ -97,13 +98,20 @@ async def audit_commit_and_flash(
     )
     try:
         await session.commit()
-    except Exception:
+    except SQLAlchemyError:
         logger.exception(
             "Failed to commit audit action '%s' for resource type '%s'",
             action,
             resource_type,
         )
-        await session.rollback()
+        try:
+            await session.rollback()
+        except SQLAlchemyError:
+            logger.exception(
+                "Failed to roll back audit action '%s' for resource type '%s'",
+                action,
+                resource_type,
+            )
         raise
     for category, message in flashes:
         push_flash(request, category, message)
@@ -141,8 +149,13 @@ def config_history_entry(action: str, actor: str, note: str) -> dict[str, str]:
     }
 
 
-async def load_api_keys(session: AsyncSession, current_user: User):
-    """Load API keys for the current user (or all if admin)."""
+async def load_api_keys(
+    session: AsyncSession,
+    current_user: User,
+    *,
+    limit: int = 100,
+) -> list[ApiKey]:
+    """Return all API keys for admins, else only keys owned by ``current_user``."""
     if current_user.role == "admin":
-        return await api_key_repository.list_all(session)
-    return await api_key_repository.list_for_user(session, current_user.id)
+        return await api_key_repository.list_all(session, limit=limit)
+    return await api_key_repository.list_for_user(session, current_user.id, limit=limit)

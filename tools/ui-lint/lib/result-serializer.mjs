@@ -30,6 +30,7 @@ export function serializeResultForOutput(result, { summaryPath, visualRegression
         layoutShift: Number(layoutShiftValue.toFixed(6)),
         overflowOffenders: countItems(horizontalOverflow.offenders),
         clippedButtons: countItems(metrics.clippedButtons),
+        buttonAlignmentIssues: countItems(metrics.buttonAlignmentIssues),
         clickTargetsTooSmall: countItems(metrics.clickTargetsTooSmall),
         iconButtonsTouchBlocked: countItems(metrics.iconButtonsTouchBlocked),
         hiddenInteractive: countItems(metrics.hiddenInteractiveElements),

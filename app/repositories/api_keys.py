@@ -6,11 +6,11 @@
 
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.entities import ApiKey
+from app.models.entities import ApiKey, User
 
 
 class ApiKeyRepository:
@@ -18,15 +18,25 @@ class ApiKeyRepository:
         result = await session.execute(select(func.count(ApiKey.id)))
         return int(result.scalar_one())
 
-    async def list_all(self, session: AsyncSession) -> list[ApiKey]:
+    async def list_all(self, session: AsyncSession, *, limit: int | None = None) -> list[ApiKey]:
         statement = select(ApiKey).options(selectinload(ApiKey.user)).order_by(ApiKey.created_at.desc())
+        if limit is not None:
+            statement = statement.limit(limit)
         result = await session.execute(statement)
         return list(result.scalars().all())
 
-    async def list_for_user(self, session: AsyncSession, user_id: int | None = None) -> list[ApiKey]:
+    async def list_for_user(
+        self,
+        session: AsyncSession,
+        user_id: int | None = None,
+        *,
+        limit: int | None = None,
+    ) -> list[ApiKey]:
         statement = select(ApiKey).options(selectinload(ApiKey.user)).order_by(ApiKey.created_at.desc())
         if user_id is not None:
             statement = statement.where(ApiKey.user_id == user_id)
+        if limit is not None:
+            statement = statement.limit(limit)
         result = await session.execute(statement)
         return list(result.scalars().all())
 
@@ -69,6 +79,33 @@ class ApiKeyRepository:
         api_key.is_active = is_active
         await session.flush()
         return api_key
+
+    async def toggle_active_for_actor(
+        self,
+        session: AsyncSession,
+        *,
+        api_key_id: int,
+        actor: User,
+    ) -> tuple[int, bool] | None:
+        predicates = [ApiKey.id == api_key_id]
+        if actor.role != "admin":
+            predicates.append(ApiKey.user_id == actor.id)
+
+        result = await session.execute(
+            update(ApiKey)
+            .where(and_(*predicates))
+            .values(
+                is_active=case(
+                    (ApiKey.is_active.is_(True), False),
+                    else_=True,
+                )
+            )
+            .returning(ApiKey.id, ApiKey.is_active)
+        )
+        row = result.one_or_none()
+        if row is None:
+            return None
+        return int(row[0]), bool(row[1])
 
     async def mark_used(self, session: AsyncSession, api_key: ApiKey, when) -> ApiKey:
         api_key.last_used = when

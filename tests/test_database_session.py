@@ -130,7 +130,10 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
         self.assertTrue(migrated)
         self.assertEqual(
             executed_sql,
-            ["ALTER TABLE deployments ADD COLUMN version INTEGER NOT NULL DEFAULT 1"],
+            [
+                "ALTER TABLE deployments ADD COLUMN version INTEGER NOT NULL DEFAULT 1",
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_active_deployment_per_site_server ON deployments (site_id, server_id) WHERE status = 'DEPLOYED'",
+            ],
         )
 
     def test_apply_known_schema_migrations_removes_server_description_column(self) -> None:

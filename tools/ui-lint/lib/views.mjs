@@ -27,7 +27,7 @@ export const LOGIN_FAILURE_VIEW_DEFS = [
 export const VIEW_DEFS = [
     { name: 'dashboard', url: '/', scope: 'dashboard' },
     { name: 'servers', url: '/servers', scope: 'servers' },
-    { name: 'configs', url: '/configs', scope: 'configs' },
+    { name: 'configs', url: '/templates', scope: 'configs' },
     { name: 'api-keys', url: '/api-keys', scope: 'api-keys' },
     { name: 'users', url: '/users', scope: 'users' },
     { name: 'audit-logs', url: '/audit-logs', scope: 'audit-logs' },

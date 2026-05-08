@@ -6,49 +6,85 @@
 
 """Deployment state machine service.
 
-Defines valid state transitions and enforces state machine rules.
-This is the single source of truth for deployment lifecycle.
+Valid transitions:
 
-State Machine:
-    PENDING → DEPLOYING → DEPLOYED
-           ↘ VALIDATING → VALID
-                        ↘ INVALID
-                                      ↘ FAILED
-    DEPLOYED → ROLLBACK_PENDING → ROLLED_BACK
+- PENDING -> VALIDATING, DEPLOYING
+- VALIDATING -> VALID, INVALID
+- VALID -> DEPLOYING
+- INVALID -> PENDING
+- DEPLOYING -> DEPLOYED, FAILED
+- DEPLOYED -> ROLLBACK_PENDING
+- FAILED -> PENDING
+- ROLLBACK_PENDING -> ROLLED_BACK, FAILED
+- ROLLED_BACK -> terminal
+
+This module defines lifecycle rules only. Callers must persist mutations
+within a transaction and rely on the ORM version column for optimistic locking.
 
 """
 
 from __future__ import annotations
 
-from collections.abc import Set
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Final
 
 from app.models.entities import Deployment, DeploymentStatus
 
 
-# Valid state transitions
-_TRANSITIONS: Final[dict[DeploymentStatus, Set[DeploymentStatus]]] = {
-    DeploymentStatus.PENDING: {DeploymentStatus.VALIDATING, DeploymentStatus.DEPLOYING},
-    DeploymentStatus.VALIDATING: {DeploymentStatus.VALID, DeploymentStatus.INVALID},
-    DeploymentStatus.VALID: {DeploymentStatus.DEPLOYING},
-    DeploymentStatus.INVALID: {DeploymentStatus.PENDING},  # Allow retry after fix
-    DeploymentStatus.DEPLOYING: {DeploymentStatus.DEPLOYED, DeploymentStatus.FAILED},
-    DeploymentStatus.DEPLOYED: {DeploymentStatus.ROLLBACK_PENDING},
-    DeploymentStatus.FAILED: {DeploymentStatus.PENDING},  # Allow retry
-    DeploymentStatus.ROLLBACK_PENDING: {DeploymentStatus.ROLLED_BACK, DeploymentStatus.FAILED},
-    DeploymentStatus.ROLLED_BACK: set(),  # Terminal state
-}
+_EMPTY_TRANSITIONS: Final[frozenset[DeploymentStatus]] = frozenset()
+_FAILED_STATUSES: Final[frozenset[DeploymentStatus]] = frozenset({
+    DeploymentStatus.INVALID,
+    DeploymentStatus.FAILED,
+})
+_NON_ACTIVE_STATUSES: Final[frozenset[DeploymentStatus]] = frozenset({
+    DeploymentStatus.DEPLOYED,
+    DeploymentStatus.ROLLED_BACK,
+}) | _FAILED_STATUSES
+
+_TRANSITIONS: Final[Mapping[DeploymentStatus, frozenset[DeploymentStatus]]] = MappingProxyType({
+    DeploymentStatus.PENDING: frozenset({DeploymentStatus.VALIDATING, DeploymentStatus.DEPLOYING}),
+    DeploymentStatus.VALIDATING: frozenset({DeploymentStatus.VALID, DeploymentStatus.INVALID}),
+    DeploymentStatus.VALID: frozenset({DeploymentStatus.DEPLOYING}),
+    DeploymentStatus.INVALID: frozenset({DeploymentStatus.PENDING}),
+    DeploymentStatus.DEPLOYING: frozenset({DeploymentStatus.DEPLOYED, DeploymentStatus.FAILED}),
+    DeploymentStatus.DEPLOYED: frozenset({DeploymentStatus.ROLLBACK_PENDING}),
+    DeploymentStatus.FAILED: frozenset({DeploymentStatus.PENDING}),
+    DeploymentStatus.ROLLBACK_PENDING: frozenset({DeploymentStatus.ROLLED_BACK, DeploymentStatus.FAILED}),
+    DeploymentStatus.ROLLED_BACK: frozenset(),
+})
+
+_MISSING_STATUSES = set(DeploymentStatus).difference(_TRANSITIONS)
+if _MISSING_STATUSES:
+    missing = ", ".join(sorted(status.value for status in _MISSING_STATUSES))
+    raise RuntimeError(f"Deployment transition table is missing statuses: {missing}")
+
+
+def _targets_for(current: DeploymentStatus) -> frozenset[DeploymentStatus]:
+    try:
+        return _TRANSITIONS[current]
+    except KeyError as exc:
+        raise ValueError(f"Unhandled deployment status: {current!r}") from exc
 
 
 class InvalidStateTransitionError(Exception):
     """Raised when an invalid state transition is attempted."""
 
-    def __init__(self, current: DeploymentStatus, target: DeploymentStatus) -> None:
+    def __init__(
+        self,
+        current: DeploymentStatus,
+        target: DeploymentStatus,
+        deployment_id: int | None = None,
+    ) -> None:
+        self.deployment_id = deployment_id
         self.current = current
         self.target = target
-        super().__init__(
-            f"Invalid state transition: {current.value} → {target.value}"
+        prefix = (
+            f"Invalid state transition for deployment {deployment_id}: "
+            if deployment_id is not None
+            else "Invalid state transition: "
         )
+        super().__init__(f"{prefix}{current.value} → {target.value}")
 
 
 class DeploymentStateMachine:
@@ -61,33 +97,33 @@ class DeploymentStateMachine:
     @staticmethod
     def can_transition(current: DeploymentStatus, target: DeploymentStatus) -> bool:
         """Check if a state transition is valid."""
-        return target in _TRANSITIONS.get(current, set())
+        return target in _targets_for(current)
 
     @staticmethod
-    def validate_transition(current: DeploymentStatus, target: DeploymentStatus) -> None:
+    def validate_transition(
+        current: DeploymentStatus,
+        target: DeploymentStatus,
+        *,
+        deployment_id: int | None = None,
+    ) -> None:
         """Validate a state transition, raising on invalid."""
         if not DeploymentStateMachine.can_transition(current, target):
-            raise InvalidStateTransitionError(current, target)
+            raise InvalidStateTransitionError(current, target, deployment_id)
 
     @staticmethod
-    def get_valid_transitions(current: DeploymentStatus) -> Set[DeploymentStatus]:
+    def get_valid_transitions(current: DeploymentStatus) -> frozenset[DeploymentStatus]:
         """Get all valid target states from current state."""
-        return _TRANSITIONS.get(current, set())
+        return _targets_for(current)
 
     @staticmethod
     def is_terminal(status: DeploymentStatus) -> bool:
         """Check if a status is a terminal state."""
-        return len(_TRANSITIONS.get(status, set())) == 0
+        return not _targets_for(status)
 
     @staticmethod
     def is_active(status: DeploymentStatus) -> bool:
         """Check if deployment is in an active (non-terminal, non-error) state."""
-        return status in {
-            DeploymentStatus.PENDING,
-            DeploymentStatus.VALIDATING,
-            DeploymentStatus.VALID,
-            DeploymentStatus.DEPLOYING,
-        }
+        return bool(_targets_for(status)) and status not in _NON_ACTIVE_STATUSES
 
     @staticmethod
     def is_deployed(status: DeploymentStatus) -> bool:
@@ -97,64 +133,99 @@ class DeploymentStateMachine:
     @staticmethod
     def is_failed(status: DeploymentStatus) -> bool:
         """Check if deployment is in a failed state."""
-        return status in {DeploymentStatus.INVALID, DeploymentStatus.FAILED}
+        return status in _FAILED_STATUSES
 
     @staticmethod
     def can_retry(status: DeploymentStatus) -> bool:
         """Check if deployment can be retried."""
-        return status in {DeploymentStatus.INVALID, DeploymentStatus.FAILED}
+        return DeploymentStatus.PENDING in _targets_for(status)
 
     @staticmethod
     def can_rollback(status: DeploymentStatus) -> bool:
         """Check if deployment can be rolled back."""
-        return status == DeploymentStatus.DEPLOYED
+        return DeploymentStatus.ROLLBACK_PENDING in _targets_for(status)
 
     # High-level transition helpers
 
     def start_validation(self, deployment: Deployment) -> None:
-        """Transition deployment to VALIDATING state."""
-        self.validate_transition(deployment.status, DeploymentStatus.VALIDATING)
+        """Mutate ``deployment`` in place to VALIDATING. Caller must persist it."""
+        self.validate_transition(
+            deployment.status,
+            DeploymentStatus.VALIDATING,
+            deployment_id=getattr(deployment, "id", None),
+        )
         deployment.status = DeploymentStatus.VALIDATING
 
     def mark_valid(self, deployment: Deployment, output: str | None = None) -> None:
-        """Transition deployment to VALID state."""
-        self.validate_transition(deployment.status, DeploymentStatus.VALID)
+        """Mutate ``deployment`` in place to VALID. Caller must persist it."""
+        self.validate_transition(
+            deployment.status,
+            DeploymentStatus.VALID,
+            deployment_id=getattr(deployment, "id", None),
+        )
         deployment.mark_validated(output)
 
     def mark_invalid(self, deployment: Deployment, error: str) -> None:
-        """Transition deployment to INVALID state."""
-        self.validate_transition(deployment.status, DeploymentStatus.INVALID)
+        """Mutate ``deployment`` in place to INVALID. Caller must persist it."""
+        self.validate_transition(
+            deployment.status,
+            DeploymentStatus.INVALID,
+            deployment_id=getattr(deployment, "id", None),
+        )
         deployment.mark_invalid(error)
 
     def start_deployment(self, deployment: Deployment) -> None:
-        """Transition deployment to DEPLOYING state."""
-        self.validate_transition(deployment.status, DeploymentStatus.DEPLOYING)
+        """Mutate ``deployment`` in place to DEPLOYING. Caller must persist it."""
+        self.validate_transition(
+            deployment.status,
+            DeploymentStatus.DEPLOYING,
+            deployment_id=getattr(deployment, "id", None),
+        )
         deployment.mark_deploying()
 
     def mark_deployed(self, deployment: Deployment, deployed_by: str | None = None) -> None:
-        """Transition deployment to DEPLOYED state."""
-        self.validate_transition(deployment.status, DeploymentStatus.DEPLOYED)
+        """Mutate ``deployment`` in place to DEPLOYED. Caller must persist it."""
+        self.validate_transition(
+            deployment.status,
+            DeploymentStatus.DEPLOYED,
+            deployment_id=getattr(deployment, "id", None),
+        )
         deployment.mark_deployed(deployed_by)
 
     def mark_failed(self, deployment: Deployment, error: str) -> None:
-        """Transition deployment to FAILED state."""
-        self.validate_transition(deployment.status, DeploymentStatus.FAILED)
+        """Mutate ``deployment`` in place to FAILED. Caller must persist it."""
+        self.validate_transition(
+            deployment.status,
+            DeploymentStatus.FAILED,
+            deployment_id=getattr(deployment, "id", None),
+        )
         deployment.mark_failed(error)
 
     def start_rollback(self, deployment: Deployment) -> None:
-        """Transition deployment to ROLLBACK_PENDING state."""
-        self.validate_transition(deployment.status, DeploymentStatus.ROLLBACK_PENDING)
+        """Mutate ``deployment`` in place to ROLLBACK_PENDING. Caller must persist it."""
+        self.validate_transition(
+            deployment.status,
+            DeploymentStatus.ROLLBACK_PENDING,
+            deployment_id=getattr(deployment, "id", None),
+        )
         deployment.status = DeploymentStatus.ROLLBACK_PENDING
 
     def mark_rolled_back(self, deployment: Deployment) -> None:
-        """Transition deployment to ROLLED_BACK state."""
-        self.validate_transition(deployment.status, DeploymentStatus.ROLLED_BACK)
+        """Mutate ``deployment`` in place to ROLLED_BACK. Caller must persist it."""
+        self.validate_transition(
+            deployment.status,
+            DeploymentStatus.ROLLED_BACK,
+            deployment_id=getattr(deployment, "id", None),
+        )
         deployment.status = DeploymentStatus.ROLLED_BACK
 
     def reset_for_retry(self, deployment: Deployment) -> None:
-        """Reset a failed deployment to PENDING for retry."""
-        if not self.can_retry(deployment.status):
-            raise InvalidStateTransitionError(deployment.status, DeploymentStatus.PENDING)
+        """Mutate ``deployment`` in place back to PENDING. Caller must persist it."""
+        self.validate_transition(
+            deployment.status,
+            DeploymentStatus.PENDING,
+            deployment_id=getattr(deployment, "id", None),
+        )
         deployment.status = DeploymentStatus.PENDING
         deployment.validation_output = None
         deployment.deployment_error = None

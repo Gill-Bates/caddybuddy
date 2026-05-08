@@ -3,6 +3,7 @@
 // Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
 //
 
+import { randomBytes, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,9 +43,76 @@ import {
     getVisualRegressionConfig,
 } from './visual-regression.mjs';
 
-const BASE_URL = process.env.UI_LINT_BASE_URL || 'http://localhost:8000';
-const USERNAME = process.env.UI_LINT_USERNAME;
-const PASSWORD = process.env.UI_LINT_PASSWORD;
+function normalizeBaseUrl(rawValue) {
+    let url;
+    try {
+        url = new URL(rawValue);
+    } catch (error) {
+        throw new Error(`Invalid UI_LINT_BASE_URL: ${rawValue}`, { cause: error });
+    }
+
+    if (!['http:', 'https:'].includes(url.protocol)) {
+        throw new Error(`UI_LINT_BASE_URL must use http or https: ${rawValue}`);
+    }
+
+    url.hash = '';
+    url.search = '';
+    return url.toString().replace(/\/$/, '');
+}
+
+const BASE_URL = normalizeBaseUrl(process.env.UI_LINT_BASE_URL || 'http://localhost:8000');
+const CREDENTIALS_FILE = process.env.UI_LINT_CREDENTIALS_FILE;
+const RATE_LIMIT_USERNAME = process.env.UI_LINT_RATE_LIMIT_USERNAME || `ui_lint_rate_limit_${randomUUID()}`;
+let cachedCredentials = null;
+
+
+async function loadCredentials() {
+    if (cachedCredentials) {
+        return cachedCredentials;
+    }
+    if (!CREDENTIALS_FILE) {
+        throw new Error('UI_LINT_CREDENTIALS_FILE must be set to a private JSON file containing username and password.');
+    }
+
+    const resolvedPath = path.resolve(CREDENTIALS_FILE);
+    const stats = await fs.stat(resolvedPath);
+    if (!stats.isFile()) {
+        throw new Error(`UI lint credentials path must be a file: ${resolvedPath}`);
+    }
+    if ((stats.mode & 0o077) !== 0) {
+        throw new Error(`UI lint credentials file must not be group/world accessible: ${resolvedPath}`);
+    }
+
+    let parsed;
+    try {
+        parsed = JSON.parse(await fs.readFile(resolvedPath, 'utf8'));
+    } catch (error) {
+        throw new Error(`Failed to read UI lint credentials file: ${resolvedPath}`, { cause: error });
+    }
+
+    if (!parsed || typeof parsed.username !== 'string' || typeof parsed.password !== 'string') {
+        throw new Error('UI lint credentials file must contain JSON with string properties: username, password');
+    }
+
+    cachedCredentials = Object.freeze({
+        username: parsed.username,
+        password: parsed.password,
+    });
+    return cachedCredentials;
+}
+
+
+const credentialProvider = {
+    async getCredentials() {
+        return loadCredentials();
+    },
+    async getUsername() {
+        return (await loadCredentials()).username;
+    },
+    async getPassword() {
+        return (await loadCredentials()).password;
+    },
+};
 
 // Centralized selector registry (reduces duplication & fragility)
 const SELECTORS = {
@@ -71,22 +139,21 @@ const SELECTORS = {
     ].join(', '),
 };
 
-if (!USERNAME || !PASSWORD) {
-    console.error('Error: UI_LINT_USERNAME and UI_LINT_PASSWORD environment variables must be set');
-    console.error('Example: export UI_LINT_USERNAME=admin && export UI_LINT_PASSWORD=your-password');
+if (!CREDENTIALS_FILE) {
+    console.error('Error: UI_LINT_CREDENTIALS_FILE must be set');
+    console.error('Example: export UI_LINT_CREDENTIALS_FILE=/secure/path/ui-lint-credentials.json');
     process.exit(1);
 }
 
 // Generate unique session ID for this test run to avoid conflicts
-const SESSION_ID = Date.now();
+const SESSION_ID = randomUUID();
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = process.env.UI_LINT_OUTPUT_DIR || `/tmp/caddybuddy-ui-lint-${SESSION_ID}`;
 const SCREENSHOT_DIR = path.resolve(
     OUTPUT_DIR,
     process.env.UI_LINT_SCREENSHOT_DIR || 'screenshots'
 );
-// Results JSON stays in tools/ui-lint/, not in temp
-const RESULTS_DIR = SCRIPT_DIR;
+const RESULTS_DIR = OUTPUT_DIR;
 const VISUAL_REGRESSION = getVisualRegressionConfig();
 
 const UI_LINT_FIXED_NOW_ISO = process.env.UI_LINT_VISUAL_FIXED_NOW || '2026-05-01T12:00:00Z';
@@ -102,7 +169,6 @@ const FAIL_THRESHOLD = Number.isFinite(Number.parseFloat(process.env.UI_LINT_FAI
     : 65;
 const REQUIRED_SECURITY_HEADERS = [
     'content-security-policy',
-    'strict-transport-security',
     'x-frame-options',
     'x-content-type-options',
 ];
@@ -144,7 +210,12 @@ async function installUiLintInitScript(context) {
         }
 
         if (!disableRaf) {
-            window.requestAnimationFrame = (cb) => setTimeout(() => cb(performance.now()), 16);
+            const setTimer = window.setTimeout.bind(window);
+            const clearTimer = window.clearTimeout.bind(window);
+            window.requestAnimationFrame = (cb) => setTimer(() => cb(performance.now()), 16);
+            window.cancelAnimationFrame = (id) => {
+                clearTimer(id);
+            };
         }
 
         if (disableResizeObserver) {
@@ -187,6 +258,52 @@ async function pathExists(targetPath) {
     } catch {
         return false;
     }
+}
+
+
+function assertSafeGeneratedOutputDir(targetPath, label) {
+    const resolved = path.resolve(targetPath);
+    const allowedTempRoots = ['/tmp', '/var/tmp'].map((root) => path.resolve(root));
+    const isExactTempRoot = allowedTempRoots.includes(resolved);
+    const isUnderTempRoot = allowedTempRoots.some((root) => resolved.startsWith(`${root}${path.sep}`));
+    const hasExpectedName = path.basename(resolved).startsWith('caddybuddy-ui-lint-');
+
+    if (isExactTempRoot) {
+        throw new Error(`Refusing to clean unsafe ${label}: ${resolved}`);
+    }
+
+    if (!(isUnderTempRoot && hasExpectedName) && process.env.UI_LINT_FORCE_OUTPUT !== '1') {
+        throw new Error(
+            `Refusing to clean unsafe ${label}: ${resolved}. Use UI_LINT_FORCE_OUTPUT=1 to override.`,
+        );
+    }
+
+    return resolved;
+}
+
+
+function assertManagedVisualDir(targetPath, label) {
+    const resolved = path.resolve(targetPath);
+    const managedRoot = path.resolve(path.join(SCRIPT_DIR, 'visual'));
+    const relative = path.relative(managedRoot, resolved);
+    const expectedNames = new Set(['current', 'diff']);
+
+    if (relative.startsWith('..') || path.isAbsolute(relative) || !expectedNames.has(path.basename(resolved))) {
+        throw new Error(`Refusing to clean unsafe ${label}: ${resolved}`);
+    }
+
+    return resolved;
+}
+
+
+function assertPathWithinParent(targetPath, parentPath, label) {
+    const resolvedTarget = path.resolve(targetPath);
+    const resolvedParent = path.resolve(parentPath);
+    const relative = path.relative(resolvedParent, resolvedTarget);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+        throw new Error(`${label} must be within ${resolvedParent}: ${resolvedTarget}`);
+    }
+    return resolvedTarget;
 }
 
 function groupViewsByDevice(views) {
@@ -232,7 +349,6 @@ function buildErrorResult(view, error, context = {}) {
 
 function applySummary(result) {
     const summarized = summarizeFindings(result);
-    result.findings = summarized.findings;
     result.hardFindings = summarized.hardFindings;
     result.warnings = summarized.warnings;
 
@@ -244,36 +360,48 @@ function applySummary(result) {
         ];
     }
 
+    result.findings = [
+        ...result.hardFindings,
+        ...(result.warnings || []),
+    ];
+
     return result;
+}
+
+function requiredSecurityHeadersForResponse(response) {
+    const requiredHeaders = [...REQUIRED_SECURITY_HEADERS];
+    try {
+        if (response && new URL(response.url()).protocol === 'https:') {
+            requiredHeaders.push('strict-transport-security');
+        }
+    } catch {
+        // Keep base security headers for malformed or absent response URLs.
+    }
+    return requiredHeaders;
 }
 
 function collectSecurityHeaders(response) {
     const headers = response?.headers?.() || {};
+    const requiredHeaders = response ? requiredSecurityHeadersForResponse(response) : REQUIRED_SECURITY_HEADERS;
     return {
-        missing: REQUIRED_SECURITY_HEADERS.filter((header) => !headers[header]),
+        missing: requiredHeaders.filter((header) => !headers[header]),
     };
 }
 
 async function prepareOutputDirs() {
-    const resolvedOutputDir = path.resolve(OUTPUT_DIR);
-    const allowedTempRoots = ['/tmp', '/var/tmp'];
-    const isTemporaryOutput = allowedTempRoots.some((root) =>
-        resolvedOutputDir === root || resolvedOutputDir.startsWith(`${root}/`)
-    );
-
-    if (!isTemporaryOutput && process.env.UI_LINT_FORCE_OUTPUT !== '1') {
-        throw new Error(
-            `Refusing to clean non-temporary UI lint output directory: ${resolvedOutputDir}. `
-            + 'Use UI_LINT_FORCE_OUTPUT=1 to override.'
-        );
-    }
+    const resolvedOutputDir = assertSafeGeneratedOutputDir(OUTPUT_DIR, 'UI lint output directory');
+    const resolvedScreenshotDir = assertPathWithinParent(SCREENSHOT_DIR, resolvedOutputDir, 'UI lint screenshot directory');
 
     await fs.rm(resolvedOutputDir, { recursive: true, force: true });
-    await fs.mkdir(SCREENSHOT_DIR, { recursive: true });
+    await fs.mkdir(resolvedOutputDir, { recursive: true, mode: 0o700 });
+    await fs.mkdir(resolvedScreenshotDir, { recursive: true, mode: 0o700 });
 
     if (VISUAL_REGRESSION.enabled) {
-        await fs.rm(VISUAL_REGRESSION.currentDir, { recursive: true, force: true });
-        await fs.rm(VISUAL_REGRESSION.diffDir, { recursive: true, force: true });
+        const currentDir = assertManagedVisualDir(VISUAL_REGRESSION.currentDir, 'visual regression current directory');
+        const diffDir = assertManagedVisualDir(VISUAL_REGRESSION.diffDir, 'visual regression diff directory');
+
+        await fs.rm(currentDir, { recursive: true, force: true });
+        await fs.rm(diffDir, { recursive: true, force: true });
         ensureVisualRegressionDirs(VISUAL_REGRESSION);
     }
 }
@@ -540,8 +668,9 @@ async function auditLoginFailureView(page, view) {
         load: () => page.goto(`${BASE_URL}${view.url}`, { waitUntil: 'domcontentloaded', timeout: 10000 }),
         afterLoad: () => applyTheme(page, { baseUrl: BASE_URL, theme: view.theme, label: view.name }),
         prepare: async () => {
-            const invalidPassword = `${PASSWORD}__ui_lint_invalid`;
-            await page.fill('#username', USERNAME);
+            const { username } = await credentialProvider.getCredentials();
+            const invalidPassword = randomBytes(24).toString('hex');
+            await page.fill('#username', username);
             await page.fill('#password', invalidPassword);
 
             const [loginResponse] = await Promise.all([
@@ -618,6 +747,9 @@ async function auditLoginFailureView(page, view) {
 }
 
 function buildLoginRateLimitResult({ attempts, response, reached429 }) {
+    const status = response?.status?.() ?? null;
+    const redirectedWithout429 = status >= 300 && status < 400 && status !== 429;
+    const rateLimitHandled = reached429 || status === 429;
     const result = {
         name: 'login-rate-limit',
         url: `${BASE_URL}/login`,
@@ -627,7 +759,8 @@ function buildLoginRateLimitResult({ attempts, response, reached429 }) {
             loginRateLimit: {
                 attempts,
                 reached429,
-                status: response?.status?.() ?? null,
+                status,
+                redirectedWithout429,
             },
         },
         network: {
@@ -646,7 +779,7 @@ function buildLoginRateLimitResult({ attempts, response, reached429 }) {
     };
 
     applySummary(result);
-    if (!reached429) {
+    if (!rateLimitHandled) {
         result.hardFindings = [...result.hardFindings, 'loginRateLimitMissing429'];
         result.findings = [...result.hardFindings, ...(result.warnings || [])];
     }
@@ -663,8 +796,8 @@ async function auditLoginRateLimit(browser) {
 
         for (; attempts < 6; attempts += 1) {
             await page.goto(`${BASE_URL}/login`, { waitUntil: 'domcontentloaded', timeout: 10000 });
-            await page.fill('#username', USERNAME);
-            await page.fill('#password', `${PASSWORD}__ui_lint_rate_limit_${attempts}`);
+            await page.fill('#username', RATE_LIMIT_USERNAME);
+            await page.fill('#password', randomBytes(24).toString('hex'));
 
             const [response] = await Promise.all([
                 page.waitForResponse((candidate) => {
@@ -808,10 +941,7 @@ function emitResults(results, summaryPath) {
 }
 
 async function main() {
-    // Basic environment validation improvements
-    if (!BASE_URL.startsWith('http')) {
-        throw new Error(`Invalid BASE_URL: ${BASE_URL}`);
-    }
+    await loadCredentials();
 
     await prepareOutputDirs();
 
@@ -832,8 +962,7 @@ async function main() {
         await authPage.emulateMedia({ reducedMotion: 'reduce' });
         await login(authPage, {
             baseUrl: BASE_URL,
-            username: USERNAME,
-            password: PASSWORD,
+            credentialProvider,
             motionResetCss: FULL_MOTION_RESET_CSS,
         });
         const authState = await authContext.storageState();
@@ -878,6 +1007,7 @@ async function main() {
         }
     }
 
+    await fs.mkdir(RESULTS_DIR, { recursive: true, mode: 0o700 });
     const summaryPath = path.join(RESULTS_DIR, 'ui-lint-summary.json');
     await fs.writeFile(summaryPath, JSON.stringify(results, null, 2));
     emitResults(results, summaryPath);

@@ -6,8 +6,8 @@
         <div>
             <p class="eyebrow mb-2">Caddy inventory</p>
             <h1 class="page-title mb-2">Servers</h1>
-            <p class="text-body-secondary mb-0">Register admin API endpoints, test reachability, and import live
-                configurations into the local SQLite catalog.</p>
+            <p class="text-body-secondary mb-0">Register admin API endpoints, keep their health badges current in the
+                background, and import live configurations into the local SQLite catalog.</p>
         </div>
     </div>
 
@@ -90,10 +90,6 @@
                                 </td>
                                 <td class="text-end">
                                     <div class="d-inline-flex flex-wrap gap-2 justify-content-end">
-                                        <form action="/servers/{{ server.id }}/test" method="post">
-                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                            <button type="submit" class="btn btn-sm btn-outline-primary">Test</button>
-                                        </form>
                                         <form action="/servers/{{ server.id }}/sync" method="post">
                                             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                             <button type="submit" class="btn btn-sm btn-outline-secondary">Sync

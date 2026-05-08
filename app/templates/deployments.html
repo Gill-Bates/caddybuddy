@@ -6,7 +6,7 @@
         <div>
             <p class="eyebrow mb-2">Deployment Management</p>
             <h1 class="page-title mb-2">Deployments</h1>
-            <p class="text-body-secondary mb-0">Track deployment status, validate configurations, and manage rollbacks.
+            <p class="text-body-secondary mb-0">Track deployment status, deploy configurations, and manage rollbacks.
                 Each deployment links a Site to a Server.</p>
         </div>
         {% if status_counts %}
@@ -113,14 +113,7 @@
                 <hr class="my-4">
 
                 <div class="d-grid gap-2">
-                    {% if selected_deployment.status.value == 'pending' %}
-                    <form action="/deployments/{{ selected_deployment.id }}/validate" method="post">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                        <button type="submit" class="btn btn-primary w-100">Validate</button>
-                    </form>
-                    {% endif %}
-
-                    {% if selected_deployment.status.value == 'valid' %}
+                    {% if selected_deployment.status.value in ['pending', 'valid'] %}
                     <form action="/deployments/{{ selected_deployment.id }}/deploy" method="post">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <button type="submit" class="btn btn-success w-100">Deploy</button>
@@ -135,10 +128,11 @@
                     {% endif %}
 
                     {% if can_rollback %}
-                    <form action="/deployments/{{ selected_deployment.id }}/rollback" method="post"
-                        onsubmit="return confirm('Rollback this deployment? This will deploy the previous configuration.')">
+                    <form action="/deployments/{{ selected_deployment.id }}/rollback" method="post">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                        <button type="submit" class="btn btn-outline-danger w-100">Rollback</button>
+                        <button type="submit" class="btn btn-outline-danger w-100"
+                            data-confirm="Rollback this deployment? This will deploy the previous configuration."
+                            data-confirm-title="Rollback deployment" data-confirm-accept="Rollback">Rollback</button>
                     </form>
                     {% endif %}
 

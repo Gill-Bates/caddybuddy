@@ -25,6 +25,7 @@ _SENSITIVE_QUERY_PARAM_PATTERN = re.compile(
 _NOISY_DEBUG_LOGGERS = (
     "aiosqlite",
     "multipart",
+    "python_multipart",
     "sqlalchemy.engine",
     "sqlalchemy.pool",
 )
@@ -131,6 +132,11 @@ def build_log_config(level_name: str) -> dict[str, object]:
         "propagate": False,
     }
     log_config["loggers"]["multipart"] = {
+        "handlers": ["default"],
+        "level": "WARNING",
+        "propagate": False,
+    }
+    log_config["loggers"]["python_multipart"] = {
         "handlers": ["default"],
         "level": "WARNING",
         "propagate": False,

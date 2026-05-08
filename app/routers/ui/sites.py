@@ -14,19 +14,32 @@ Sites are the fachliche Einheit (business unit):
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import suppress
+import html
+import os
+import re
+import ssl
+import tempfile
+from datetime import UTC, datetime
+from types import SimpleNamespace
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import FormData
 
+from app.config.limiter import limiter
 from app.database.session import get_db_session
 from app.dependencies.web import push_flash, redirect_to, render_template
 from app.repositories.config_templates import config_template_repository
 from app.repositories.deployments import deployment_repository
 from app.repositories.servers import server_repository
 from app.repositories.sites import site_repository
+from app.services.config_renderer import ConfigRenderError
 from app.services.config_renderer import config_renderer
+from app.services.deployment_engine import DeploymentError
 from app.services.deployment_engine import deployment_engine
 from app.services.events import publish_resource_event
 
@@ -42,6 +55,111 @@ from ._common import (
 router = APIRouter()
 
 _MAX_DOMAIN_LENGTH = 253
+_TLS_PROBE_TIMEOUT_SECONDS = 3.0
+_DOMAIN_RE = re.compile(
+    r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+)
+
+
+def _deployment_navigation_response(target_path: str) -> HTMLResponse:
+    escaped_target = html.escape(target_path, quote=True)
+    content = f"""<!DOCTYPE html>
+<html lang=\"en\">
+<head>
+    <meta charset=\"utf-8\">
+    <meta http-equiv=\"refresh\" content=\"0;url={escaped_target}\">
+    <title>Deployment complete</title>
+</head>
+<body>
+    <p>Deployment complete. <a href=\"{escaped_target}\">Continue</a>.</p>
+    <script>
+        window.location.replace({escaped_target!r});
+    </script>
+</body>
+</html>
+"""
+    return HTMLResponse(content=content, status_code=200, headers={"Cache-Control": "no-store"})
+
+
+async def _fetch_site_certificate_expiry(domain: str) -> datetime | None:
+    try:
+        async with asyncio.timeout(_TLS_PROBE_TIMEOUT_SECONDS):
+            reader, writer = await asyncio.open_connection(
+                host=domain,
+                port=443,
+                ssl=ssl.create_default_context(),
+                server_hostname=domain,
+            )
+    except ssl.SSLCertVerificationError:
+        insecure_ssl_context = ssl.create_default_context()
+        insecure_ssl_context.check_hostname = False
+        insecure_ssl_context.verify_mode = ssl.CERT_NONE
+        try:
+            async with asyncio.timeout(_TLS_PROBE_TIMEOUT_SECONDS):
+                reader, writer = await asyncio.open_connection(
+                    host=domain,
+                    port=443,
+                    ssl=insecure_ssl_context,
+                    server_hostname=domain,
+                )
+        except (TimeoutError, OSError, ssl.SSLError):
+            return None
+    except (TimeoutError, OSError, ssl.SSLError):
+        return None
+
+    try:
+        ssl_object = writer.get_extra_info("ssl_object")
+        if ssl_object is None:
+            return None
+        peer_cert = ssl_object.getpeercert()
+        not_after = peer_cert.get("notAfter") if isinstance(peer_cert, dict) else None
+        if not isinstance(not_after, str) or not not_after:
+            peer_cert_der = ssl_object.getpeercert(binary_form=True)
+            not_after = _extract_not_after_from_der_certificate(peer_cert_der)
+        if not isinstance(not_after, str) or not not_after:
+            return None
+        return datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=UTC)
+    except (ValueError, TypeError):
+        return None
+    finally:
+        writer.close()
+        await writer.wait_closed()
+        del reader
+
+
+def _extract_not_after_from_der_certificate(certificate_der: bytes | None) -> str | None:
+    if not certificate_der:
+        return None
+
+    pem_certificate = ssl.DER_cert_to_PEM_cert(certificate_der)
+    with tempfile.NamedTemporaryFile("w", suffix=".pem", delete=False, encoding="utf-8") as handle:
+        handle.write(pem_certificate)
+        temp_path = handle.name
+
+    try:
+        decoded = ssl._ssl._test_decode_cert(temp_path)
+    except (AttributeError, OSError, ValueError, ssl.SSLError):
+        return None
+    finally:
+        with suppress(OSError):
+            os.unlink(temp_path)
+
+    not_after = decoded.get("notAfter") if isinstance(decoded, dict) else None
+    return not_after if isinstance(not_after, str) and not_after else None
+
+
+async def _load_site_certificate_expiries(sites: list) -> dict[int, datetime | None]:
+    ssl_sites = [site for site in sites if getattr(site, "ssl_enabled", False)]
+    if not ssl_sites:
+        return {}
+
+    expiries = await asyncio.gather(
+        *(_fetch_site_certificate_expiry(site.domain) for site in ssl_sites),
+    )
+    return {
+        site.id: expires_at
+        for site, expires_at in zip(ssl_sites, expiries, strict=True)
+    }
 
 
 def _read_site_form(form: FormData) -> dict:
@@ -69,6 +187,33 @@ def _merge_site_variables(existing: dict | None, *, upstream: str | None) -> dic
     return variables
 
 
+def _is_valid_domain_name(domain: str) -> bool:
+    return bool(domain and _DOMAIN_RE.fullmatch(domain))
+
+
+def _site_render_validation_message(
+    *,
+    domain: str,
+    ssl_enabled: bool,
+    ssl_provider: str,
+    variables: dict[str, str],
+    template,
+) -> str | None:
+    candidate_site = SimpleNamespace(
+        domain=domain,
+        ssl_enabled=ssl_enabled,
+        ssl_provider=ssl_provider,
+        variables=variables,
+    )
+    try:
+        config_renderer.render_site_config(candidate_site, template, strict=True)
+    except ConfigRenderError as exc:
+        if exc.missing_vars == ("upstream",):
+            return "This Caddyfile requires an upstream target."
+        return f"Configuration template is missing required variables: {', '.join(exc.missing_vars)}"
+    return None
+
+
 @router.get("/sites", response_class=HTMLResponse)
 @router.get("/sites/{site_id}", response_class=HTMLResponse)
 async def sites_page(
@@ -83,8 +228,9 @@ async def sites_page(
 
     sites = await site_repository.list_all(session)
     selected_site = await site_repository.get_by_id(session, site_id) if site_id else None
-    templates = await config_template_repository.list_all(session)
+    templates = await config_template_repository.list_all(session, limit=100)
     servers = await server_repository.list_all(session)
+    site_certificate_expiries = await _load_site_certificate_expiries(sites)
 
     # Get deployment info for selected site
     deployments = []
@@ -107,12 +253,14 @@ async def sites_page(
         "servers": servers,
         "deployments": deployments,
         "site_preview": preview,
+        "site_certificate_expiries": site_certificate_expiries,
         "ssl_providers": ["letsencrypt", "zerossl", "manual", "none"],
     }
     return render_template(request, "sites.html", current_user=current_user, context=context)
 
 
 @router.post("/sites")
+@limiter.limit("10/minute")
 async def save_site(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
@@ -132,6 +280,9 @@ async def save_site(
     if len(domain) > _MAX_DOMAIN_LENGTH:
         push_flash(request, "danger", f"Domain names must not exceed {_MAX_DOMAIN_LENGTH} characters.")
         return redirect_to("/sites")
+    if not _is_valid_domain_name(domain):
+        push_flash(request, "danger", "Enter a valid domain name.")
+        return redirect_to("/sites")
 
     template_id = form_data["config_template_id"]
     if template_id is None:
@@ -145,6 +296,17 @@ async def save_site(
         return redirect_to("/sites")
 
     site_id_raw = form_data["site_id_raw"]
+    site_variables = _merge_site_variables(None, upstream=form_data["upstream"])
+    validation_message = _site_render_validation_message(
+        domain=domain,
+        ssl_enabled=form_data["ssl_enabled"],
+        ssl_provider=form_data["ssl_provider"],
+        variables=site_variables,
+        template=template,
+    )
+    if validation_message is not None:
+        push_flash(request, "danger", validation_message)
+        return redirect_to(f"/sites/{site_id_raw}" if site_id_raw else "/sites")
 
     try:
         if site_id_raw:
@@ -171,7 +333,7 @@ async def save_site(
                 config_template_id=template_id,
                 enabled=form_data["enabled"],
                 description=form_data["description"],
-                variables=_merge_site_variables(site.variables, upstream=form_data["upstream"]),
+                variables=site_variables,
                 ssl_enabled=form_data["ssl_enabled"],
                 ssl_provider=form_data["ssl_provider"],
             )
@@ -185,6 +347,7 @@ async def save_site(
                 actor=current_user,
                 flashes=(("success", f"Site '{domain}' updated successfully."),),
             )
+            await publish_resource_event("site", "updated", str(site.id))
             return redirect_to(f"/sites/{site.id}")
 
         else:
@@ -199,7 +362,7 @@ async def save_site(
                 config_template_id=template_id,
                 enabled=form_data["enabled"],
                 description=form_data["description"],
-                variables=_merge_site_variables(None, upstream=form_data["upstream"]),
+                variables=site_variables,
                 ssl_enabled=form_data["ssl_enabled"],
                 ssl_provider=form_data["ssl_provider"],
             )
@@ -213,6 +376,7 @@ async def save_site(
                 actor=current_user,
                 flashes=(("success", f"Site '{domain}' created successfully."),),
             )
+            await publish_resource_event("site", "created", str(site.id))
             return redirect_to(f"/sites/{site.id}")
 
     except IntegrityError:
@@ -222,6 +386,7 @@ async def save_site(
 
 
 @router.post("/sites/{site_id}/delete")
+@limiter.limit("10/minute")
 async def delete_site(
     request: Request,
     site_id: int,
@@ -251,10 +416,12 @@ async def delete_site(
         actor=current_user,
         flashes=(("success", f"Site '{domain}' deleted successfully."),),
     )
+    await publish_resource_event("site", "deleted", str(site_id))
     return redirect_to("/sites")
 
 
 @router.post("/sites/{site_id}/deploy")
+@limiter.limit("5/minute")
 async def deploy_site(
     request: Request,
     site_id: int,
@@ -282,12 +449,24 @@ async def deploy_site(
         push_flash(request, "danger", "Target server not found.")
         return redirect_to(f"/sites/{site_id}")
 
-    result = await deployment_engine.deploy(
-        session,
-        site=site,
-        server=server,
-        deployed_by=current_user.username,
-    )
+    try:
+        result = await deployment_engine.deploy(
+            session,
+            site=site,
+            server=server,
+            deployed_by=current_user.username,
+        )
+    except DeploymentError as exc:
+        await session.rollback()
+        message = str(exc)
+        if message == "Configuration rendering failed: upstream":
+            message = "This Caddyfile requires an upstream target."
+        push_flash(request, "danger", f"Deployment error: {message}")
+        return redirect_to(f"/sites/{site_id}")
+    except Exception as exc:
+        await session.rollback()
+        push_flash(request, "danger", f"Deployment error: {exc}")
+        return redirect_to(f"/sites/{site_id}")
 
     if result.success:
         await audit_commit_and_flash(
@@ -299,7 +478,11 @@ async def deploy_site(
             actor=current_user,
             flashes=(("success", f"Site '{site.domain}' deployed to '{server.name}' successfully."),),
         )
+        await publish_resource_event("site", "updated", str(site_id))
+        return _deployment_navigation_response(f"/sites/{site_id}")
     else:
+        # The deployment engine persists failed deployment state/history in-session,
+        # so the failure branch must commit those records explicitly.
         await session.commit()
         push_flash(request, "danger", f"Deployment failed: {result.error or result.message}")
 

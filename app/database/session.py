@@ -156,6 +156,11 @@ def _apply_known_schema_migrations(
             "ALTER TABLE deployments ADD COLUMN version INTEGER NOT NULL DEFAULT 1"
         )
         migrated = True
+    if deployment_columns is not None:
+        sync_connection.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_active_deployment_per_site_server "
+            "ON deployments (site_id, server_id) WHERE status = 'DEPLOYED'"
+        )
 
     server_columns = existing_columns.get("caddy_servers")
     if server_columns is not None and "description" in server_columns:
@@ -163,6 +168,16 @@ def _apply_known_schema_migrations(
         migrated = True
 
     template_columns = existing_columns.get("config_templates")
+    if template_columns is not None and "version_id" not in template_columns:
+        sync_connection.exec_driver_sql(
+            "ALTER TABLE config_templates ADD COLUMN version_id INTEGER NOT NULL DEFAULT 1"
+        )
+        migrated = True
+    if template_columns is not None:
+        sync_connection.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_config_templates_checksum "
+            "ON config_templates (checksum)"
+        )
     if template_columns is not None and "syntax_valid" in template_columns:
         sync_connection.exec_driver_sql("ALTER TABLE config_templates DROP COLUMN syntax_valid")
         migrated = True
@@ -210,7 +225,7 @@ def _ensure_sqlite_database_directory(database_path: Path) -> None:
 
 def _sqlite_init_lock_path(database_path: Path) -> Path:
     """Return the sidecar lock file used to serialize SQLite initialization."""
-    return database_path.with_name(f"{database_path.name}.init.lock")
+    return database_path.with_name(f".{database_path.name}.init.lock")
 
 
 def _acquire_sqlite_init_lock(lock_file) -> None:

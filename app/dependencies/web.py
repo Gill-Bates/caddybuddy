@@ -8,7 +8,7 @@ from functools import cache
 import hmac
 import secrets
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from hashlib import sha256
 
 from fastapi import HTTPException, Request
@@ -33,7 +33,29 @@ def _format_datetime(value: datetime | None) -> str:
     return value.astimezone().strftime("%Y-%m-%d %H:%M")
 
 
+def _days_until(value: datetime | None) -> int | None:
+    """Return calendar days until ``value`` in local time, or ``None`` if missing."""
+    if value is None:
+        return None
+    now = datetime.now(UTC).astimezone()
+    return (value.astimezone().date() - now.date()).days
+
+
+def _expiry_badge_class(value: datetime | None) -> str:
+    """Return the Bootstrap badge class for an expiration timestamp."""
+    days_until = _days_until(value)
+    if days_until is None:
+        return "text-bg-secondary"
+    if days_until <= 0:
+        return "text-bg-danger"
+    if days_until <= 3:
+        return "text-bg-warning"
+    return "text-bg-success"
+
+
 templates.env.filters["datetimeformat"] = _format_datetime
+templates.env.filters["daysuntil"] = _days_until
+templates.env.filters["expirybadgeclass"] = _expiry_badge_class
 
 
 @cache
@@ -104,11 +126,11 @@ def validate_csrf_token(request: Request, submitted_token: str | None) -> None:
     """Verify a submitted CSRF token against the session-bound signed value."""
     session_token = request.session.get("csrf_token")
     if not session_token or not submitted_token:
-        raise HTTPException(status_code=400, detail="Invalid CSRF token.")
+        raise HTTPException(status_code=403, detail="Invalid CSRF token.")
 
     expected_token = f"{session_token}.{_csrf_hmac(session_token)}"
     if not hmac.compare_digest(submitted_token, expected_token):
-        raise HTTPException(status_code=400, detail="Invalid CSRF token.")
+        raise HTTPException(status_code=403, detail="Invalid CSRF token.")
 
 
 def push_flash(request: Request, category: str, message: str) -> None:

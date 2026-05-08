@@ -6,14 +6,33 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
-from collections.abc import Sequence
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.entities import CaddyServer, Deployment, DeploymentStatus, Site
+
+
+_DEFAULT_DEPLOYMENT_LIST_LIMIT = 100
+_DEFAULT_SERVER_LIST_LIMIT = 100
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigDriftResult:
+    deployment_id: int
+    rendered_checksum: str
+    deployed_checksum: str | None
+    has_drift: bool
+    status: str
+
+
+def _get_deployment_state_machine():
+    from app.services.deployment_state import deployment_state_machine
+
+    return deployment_state_machine
 
 
 class DeploymentRepository:
@@ -23,6 +42,9 @@ class DeploymentRepository:
     - Links Sites to Servers
     - Tracks deployment state machine
     - Stores rendered configuration for audit/rollback
+
+    Write methods flush to the session but do NOT commit.
+    Callers own the transaction boundary and must commit explicitly.
     """
 
     async def count(self, session: AsyncSession) -> int:
@@ -30,17 +52,20 @@ class DeploymentRepository:
         return int(result.scalar_one())
 
     async def list_all(
-        self, session: AsyncSession, *, limit: int | None = None
+        self,
+        session: AsyncSession,
+        *,
+        limit: int = _DEFAULT_DEPLOYMENT_LIST_LIMIT,
+        offset: int = 0,
     ) -> list[Deployment]:
         statement = (
             select(Deployment)
             .options(selectinload(Deployment.site), selectinload(Deployment.server))
             .order_by(Deployment.created_at.desc())
         )
-        if limit is not None:
-            statement = statement.limit(limit)
+        statement = statement.limit(limit).offset(offset)
         result = await session.execute(statement)
-        return list(result.scalars().unique().all())
+        return list(result.scalars().all())
 
     async def get_by_id(self, session: AsyncSession, deployment_id: int) -> Deployment | None:
         result = await session.execute(
@@ -55,15 +80,24 @@ class DeploymentRepository:
         return result.scalar_one_or_none()
 
     async def get_by_site_and_server(
-        self, session: AsyncSession, site_id: int, server_id: int
+        self,
+        session: AsyncSession,
+        site_id: int,
+        server_id: int,
+        *,
+        limit: int = _DEFAULT_DEPLOYMENT_LIST_LIMIT,
+        offset: int = 0,
     ) -> list[Deployment]:
         """Get all deployments for a site on a specific server."""
-        result = await session.execute(
+        statement = (
             select(Deployment)
             .options(selectinload(Deployment.site), selectinload(Deployment.server))
             .where(Deployment.site_id == site_id, Deployment.server_id == server_id)
             .order_by(Deployment.created_at.desc())
+            .limit(limit)
+            .offset(offset)
         )
+        result = await session.execute(statement)
         return list(result.scalars().all())
 
     async def get_active_deployment(
@@ -89,6 +123,8 @@ class DeploymentRepository:
         server_id: int,
         *,
         status: DeploymentStatus | None = None,
+        limit: int = _DEFAULT_DEPLOYMENT_LIST_LIMIT,
+        offset: int = 0,
     ) -> list[Deployment]:
         """Get all deployments on a specific server."""
         statement = (
@@ -98,32 +134,49 @@ class DeploymentRepository:
         )
         if status is not None:
             statement = statement.where(Deployment.status == status)
-        statement = statement.order_by(Deployment.created_at.desc())
+        statement = statement.order_by(Deployment.created_at.desc()).limit(limit).offset(offset)
         result = await session.execute(statement)
         return list(result.scalars().all())
 
     async def get_deployments_by_site(
-        self, session: AsyncSession, site_id: int
+        self,
+        session: AsyncSession,
+        site_id: int,
+        *,
+        limit: int = _DEFAULT_DEPLOYMENT_LIST_LIMIT,
+        offset: int = 0,
     ) -> list[Deployment]:
         """Get all deployments for a specific site."""
-        result = await session.execute(
+        statement = (
             select(Deployment)
             .options(selectinload(Deployment.server))
             .where(Deployment.site_id == site_id)
             .order_by(Deployment.created_at.desc())
+            .limit(limit)
+            .offset(offset)
         )
+        result = await session.execute(statement)
         return list(result.scalars().all())
 
-    async def get_pending_deployments(self, session: AsyncSession) -> list[Deployment]:
+    async def get_pending_deployments(
+        self,
+        session: AsyncSession,
+        *,
+        limit: int = _DEFAULT_DEPLOYMENT_LIST_LIMIT,
+        offset: int = 0,
+    ) -> list[Deployment]:
         """Get all deployments in PENDING or VALIDATING state."""
-        result = await session.execute(
+        statement = (
             select(Deployment)
             .options(selectinload(Deployment.site), selectinload(Deployment.server))
             .where(
                 Deployment.status.in_([DeploymentStatus.PENDING, DeploymentStatus.VALIDATING])
             )
             .order_by(Deployment.created_at.asc())
+            .limit(limit)
+            .offset(offset)
         )
+        result = await session.execute(statement)
         return list(result.scalars().all())
 
     async def create(
@@ -136,6 +189,9 @@ class DeploymentRepository:
         status: DeploymentStatus = DeploymentStatus.PENDING,
         rollback_deployment_id: int | None = None,
     ) -> Deployment:
+        if status == DeploymentStatus.DEPLOYED:
+            raise ValueError("Deployments cannot be created directly in DEPLOYED status")
+
         rendered_checksum = hashlib.sha256(rendered_config.encode("utf-8")).hexdigest()
         deployment = Deployment(
             site_id=site_id,
@@ -160,14 +216,37 @@ class DeploymentRepository:
         deployed_by: str | None = None,
     ) -> Deployment:
         """Update deployment status with appropriate state transitions."""
-        deployment.status = status
+        deployment_state_machine = _get_deployment_state_machine()
+
+        if status == DeploymentStatus.VALIDATING:
+            deployment_state_machine.start_validation(deployment)
+        elif status == DeploymentStatus.VALID:
+            deployment_state_machine.mark_valid(deployment, validation_output)
+        elif status == DeploymentStatus.INVALID:
+            deployment_state_machine.mark_invalid(
+                deployment,
+                deployment_error or validation_output or "Deployment validation failed",
+            )
+        elif status == DeploymentStatus.DEPLOYING:
+            deployment_state_machine.start_deployment(deployment)
+        elif status == DeploymentStatus.DEPLOYED:
+            deployment_state_machine.mark_deployed(deployment, deployed_by)
+        elif status == DeploymentStatus.FAILED:
+            deployment_state_machine.mark_failed(
+                deployment,
+                deployment_error or "Deployment failed",
+            )
+        elif status == DeploymentStatus.ROLLBACK_PENDING:
+            deployment_state_machine.start_rollback(deployment)
+        elif status == DeploymentStatus.ROLLED_BACK:
+            deployment_state_machine.mark_rolled_back(deployment)
+        elif status == DeploymentStatus.PENDING:
+            deployment_state_machine.reset_for_retry(deployment)
+
         if validation_output is not None:
             deployment.validation_output = validation_output
         if deployment_error is not None:
             deployment.deployment_error = deployment_error
-
-        if status == DeploymentStatus.DEPLOYED:
-            deployment.mark_deployed(deployed_by)
 
         await session.flush()
         return deployment
@@ -198,10 +277,15 @@ class DeploymentRepository:
         return list(result.scalars().all())
 
     async def get_servers_for_site(
-        self, session: AsyncSession, site_id: int
+        self,
+        session: AsyncSession,
+        site_id: int,
+        *,
+        limit: int = _DEFAULT_SERVER_LIST_LIMIT,
+        offset: int = 0,
     ) -> list[CaddyServer]:
         """Get all servers where a site has been deployed."""
-        result = await session.execute(
+        statement = (
             select(CaddyServer)
             .join(Deployment, Deployment.server_id == CaddyServer.id)
             .where(
@@ -209,24 +293,27 @@ class DeploymentRepository:
                 Deployment.status == DeploymentStatus.DEPLOYED,
             )
             .distinct()
+            .limit(limit)
+            .offset(offset)
         )
+        result = await session.execute(statement)
         return list(result.scalars().all())
 
     async def check_config_drift(
         self, session: AsyncSession, deployment_id: int
-    ) -> dict:
+    ) -> ConfigDriftResult:
         """Compare deployed checksum with rendered checksum to detect drift."""
         deployment = await self.get_by_id(session, deployment_id)
         if deployment is None:
-            return {"error": "Deployment not found"}
+            raise ValueError(f"Deployment {deployment_id} not found")
 
-        return {
-            "deployment_id": deployment.id,
-            "rendered_checksum": deployment.rendered_checksum,
-            "deployed_checksum": deployment.deployed_checksum,
-            "has_drift": deployment.rendered_checksum != deployment.deployed_checksum,
-            "status": deployment.status.value,
-        }
+        return ConfigDriftResult(
+            deployment_id=deployment.id,
+            rendered_checksum=deployment.rendered_checksum,
+            deployed_checksum=deployment.deployed_checksum,
+            has_drift=deployment.rendered_checksum != deployment.deployed_checksum,
+            status=deployment.status.value,
+        )
 
     async def get_active_deployments_by_server(
         self, session: AsyncSession, server_id: int

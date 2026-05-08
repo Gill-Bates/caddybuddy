@@ -198,6 +198,7 @@
                             <tr>
                                 <th>Domain</th>
                                 <th>Template</th>
+                                <th>Cert expires</th>
                                 <th>Status</th>
                                 <th class="text-end">Actions</th>
                             </tr>
@@ -220,6 +221,25 @@
                                     {% endif %}
                                 </td>
                                 <td>
+                                    {% if site.ssl_enabled %}
+                                    {% set cert_expires_at = site_certificate_expiries.get(site.id) %}
+                                    {% if cert_expires_at %}
+                                    {% set remaining_days = cert_expires_at|daysuntil %}
+                                    <div>{{ cert_expires_at|datetimeformat }}</div>
+                                    <div class="mt-1">
+                                        <span class="badge {{ cert_expires_at|expirybadgeclass }}">
+                                            {% if remaining_days < 0 %} expired {{ remaining_days|abs }} days ago {%
+                                                elif remaining_days==0 %} expires today {% else %} {{ remaining_days }}
+                                                days left {% endif %} </span>
+                                    </div>
+                                    {% else %}
+                                    <span class="text-body-secondary">Unknown</span>
+                                    {% endif %}
+                                    {% else %}
+                                    <span class="text-body-secondary">-</span>
+                                    {% endif %}
+                                </td>
+                                <td>
                                     {% if site.enabled %}
                                     <span class="badge text-bg-success">Enabled</span>
                                     {% else %}
@@ -235,7 +255,7 @@
                             </tr>
                             {% else %}
                             <tr>
-                                <td colspan="4" class="text-center text-body-secondary py-4">
+                                <td colspan="5" class="text-center text-body-secondary py-4">
                                     No sites configured. Create one using the form.
                                 </td>
                             </tr>

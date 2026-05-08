@@ -76,6 +76,21 @@
         return rect.width > 0 && rect.height > 0;
     }
 
+    function isVisuallyHidden(el) {
+        if (!el) return false;
+        const style = styleOf(el);
+        const rect = rectOf(el);
+        const clip = String(style?.clip || '').replace(/\s+/g, '');
+        const clipPath = String(style?.clipPath || '').replace(/\s+/g, '').toLowerCase();
+        const tinyBox = rect.width <= 1.5 && rect.height <= 1.5;
+
+        return tinyBox && (
+            clip === 'rect(0px,0px,0px,0px)'
+            || clip === 'rect(0,0,0,0)'
+            || clipPath.includes('inset(50%)')
+        );
+    }
+
     function getAccessibleName(el) {
         if (!el) return '';
 
@@ -234,6 +249,7 @@
 
         const tooSmall = targets
             .filter(isVisible)
+            .filter((el) => !isVisuallyHidden(el))
             .map((el) => ({ el, rect: rectOf(el) }))
             .filter(({ rect }) => rect.width < minSize || rect.height < minSize)
             .slice(0, 20)
@@ -243,7 +259,37 @@
                 height: rect.height,
             }));
 
-        return { clickTargetsTooSmall: tooSmall };
+        const buttonAlignmentIssues = Array.from(document.querySelectorAll('.btn:not(.btn-close):not(input)'))
+            .filter(isVisible)
+            .map((el) => {
+                const style = styleOf(el);
+                const display = style?.display || '';
+                const alignItems = style?.alignItems || '';
+                const justifyContent = style?.justifyContent || '';
+                const hasFlexDisplay = display === 'flex' || display === 'inline-flex';
+                const verticallyCentered = alignItems === 'center';
+                const horizontallyCentered = justifyContent === 'center';
+
+                if (hasFlexDisplay && verticallyCentered && horizontallyCentered) {
+                    return null;
+                }
+
+                return {
+                    tag: el.tagName,
+                    classes: el.className || '',
+                    display,
+                    alignItems,
+                    justifyContent,
+                    text: (el.textContent || '').trim().slice(0, 80),
+                };
+            })
+            .filter(Boolean)
+            .slice(0, 20);
+
+        return {
+            clickTargetsTooSmall: tooSmall,
+            buttonAlignmentIssues,
+        };
     }
 
     // ---------------- Contrast (simplified baseline) ----------------

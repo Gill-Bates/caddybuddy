@@ -148,6 +148,7 @@ export function summarizeFindings(result) {
         pushHard(`overflowOffenders=${metrics.horizontalOverflow.offenders.length}`);
     }
     if (metrics.clippedButtons.length) pushWarning(`clippedButtons=${metrics.clippedButtons.length}`);
+    if (metrics.buttonAlignmentIssues?.length) pushHard(`buttonAlignmentIssues=${metrics.buttonAlignmentIssues.length}`);
     if (metrics.clickTargetsTooSmall?.length) pushHard(`clickTargetsTooSmall=${metrics.clickTargetsTooSmall.length}`);
     if (metrics.hiddenInteractiveElements.length) pushHard(`hiddenInteractive=${metrics.hiddenInteractiveElements.length}`);
     if (metrics.bootstrapGridIssues?.length) pushWarning(`bootstrapGridIssues=${metrics.bootstrapGridIssues.length}`);

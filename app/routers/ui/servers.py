@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import httpx
+from dataclasses import dataclass
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.exc import IntegrityError
@@ -17,7 +18,9 @@ from app.database.session import get_db_session
 from app.dependencies.web import push_flash, redirect_to, render_template
 from app.models.entities import CaddyServer
 from app.repositories.configs import config_repository
+from app.repositories.config_templates import config_template_repository
 from app.repositories.servers import server_repository
+from app.repositories.sites import site_repository
 from app.services.caddy import CaddyServiceError, caddy_service
 from app.services.events import publish_resource_event
 from app.utils.parsing import split_csv
@@ -36,6 +39,85 @@ router = APIRouter()
 _SERVER_NAME_MAX_LENGTH = 120
 _SERVER_API_URL_MAX_LENGTH = 255
 _SERVER_ADMIN_API_PATH_MAX_LENGTH = 120
+
+
+@dataclass(slots=True)
+class _ServerProbe:
+    name: str
+    api_url: str
+    api_port: int
+    admin_api_path: str
+    active: bool
+    tags: list[str]
+    status: str = "unknown"
+    last_pinged: object | None = None
+
+
+async def _import_live_config(
+    session: AsyncSession,
+    *,
+    server,
+    config_payload: dict,
+    actor_username: str,
+) -> tuple[object, list[int]]:
+    imported_site_ids: list[int] = []
+    imported_sites = caddy_service.extract_site_definitions(
+        config_payload,
+        template_name_prefix=server.name,
+    )
+
+    for imported_site in imported_sites:
+        template_description = f"Imported from server '{server.name}'."
+        template = await config_template_repository.get_by_name(session, imported_site.template_name)
+        if template is None:
+            template = await config_template_repository.create(
+                session,
+                name=imported_site.template_name,
+                description=template_description,
+                caddyfile=imported_site.caddyfile,
+                created_by=actor_username,
+            )
+        else:
+            await config_template_repository.update(
+                session,
+                template,
+                description=template_description,
+                caddyfile=imported_site.caddyfile,
+                change_summary=f"Synced from server {server.name}",
+                updated_by=actor_username,
+            )
+
+        existing_site = await site_repository.get_by_domain(session, imported_site.domain)
+        if existing_site is not None:
+            continue
+
+        created_site = await site_repository.create(
+            session,
+            domain=imported_site.domain,
+            config_template_id=template.id,
+            enabled=True,
+            description=template_description,
+            variables={"upstream": imported_site.upstream} if imported_site.upstream else {},
+            ssl_enabled=imported_site.ssl_enabled,
+            ssl_provider="letsencrypt" if imported_site.ssl_enabled else "none",
+        )
+        imported_site_ids.append(created_site.id)
+
+    config = await config_repository.create(
+        session,
+        name=f"{server.name} live snapshot",
+        json_config=config_payload,
+        status="draft",
+        metadata_json={
+            "source": "server_sync",
+            "server_id": server.id,
+            "sites": caddy_service.extract_sites(config_payload),
+        },
+        history_entries=[config_history_entry("synced", actor_username, f"Imported from server {server.name}.")],
+        servers=[server],
+    )
+    await server_repository.update(session, server, active_config_id=config.id)
+    return config, imported_site_ids
 
 
 @router.get("/servers", response_class=HTMLResponse)
@@ -89,7 +171,7 @@ async def create_server(request: Request, session: AsyncSession = Depends(get_db
         return redirect_to("/servers")
     active = form.get("active") == "on"
     tags = split_csv(str(form.get("tags", "")))
-    probe = CaddyServer(
+    probe = _ServerProbe(
         name=name,
         api_url=api_url,
         api_port=api_port,
@@ -99,8 +181,9 @@ async def create_server(request: Request, session: AsyncSession = Depends(get_db
         status="unknown",
     )
     status = "offline"
+    config_payload: dict | None = None
     try:
-        await caddy_service.test_connection(probe)
+        config_payload = await caddy_service.test_connection(probe)
         caddy_service.mark_server_online(probe)
         status = probe.status
     except ValueError as exc:
@@ -119,11 +202,26 @@ async def create_server(request: Request, session: AsyncSession = Depends(get_db
             tags=tags,
             status=status,
         )
+    except IntegrityError:
+        await session.rollback()
+        push_flash(request, "danger", "A server with that name already exists.")
+        return redirect_to("/servers")
+
+    try:
         if probe.last_pinged is not None:
             server.last_pinged = probe.last_pinged
+        imported_site_ids: list[int] = []
+        if status == "online" and config_payload is not None:
+            _, imported_site_ids = await _import_live_config(
+                session,
+                server=server,
+                config_payload=config_payload,
+                actor_username=current_user.username,
+            )
+
         success_flash = (
             "success",
-            f"Server '{name}' created and validated.",
+            f"Server '{name}' created, validated, and imported {len(imported_site_ids)} site(s).",
         )
         warning_flash = (
             "warning",
@@ -135,16 +233,20 @@ async def create_server(request: Request, session: AsyncSession = Depends(get_db
             action="server_created",
             resource_type="server",
             resource_id=str(server.id),
-            details={"name": server.name, "status": status},
+            details={"name": server.name, "status": status, "imported_sites": len(imported_site_ids)},
             status_code=201,
             actor=current_user,
             flashes=((success_flash if status == "online" else warning_flash),),
         )
         await publish_resource_event("server", "created", str(server.id))
+        for site_id in imported_site_ids:
+            await publish_resource_event("site", "created", str(site_id))
     except IntegrityError:
         await session.rollback()
-        push_flash(request, "danger", "A server with that name already exists.")
+        push_flash(request, "danger", "A site or Caddyfile conflict occurred during import.")
         return redirect_to("/servers")
+    if status == "online":
+        return redirect_to(f"/templates?server_id={server.id}")
     return redirect_to("/servers")
 
 
@@ -196,18 +298,11 @@ async def sync_server_config(request: Request, server_id: int, session: AsyncSes
     try:
         config_payload = await caddy_service.fetch_config(server)
         caddy_service.mark_server_online(server)
-        config = await config_repository.create(
+        config, imported_site_ids = await _import_live_config(
             session,
-            name=f"{server.name} live snapshot",
-            json_config=config_payload,
-            status="draft",
-            metadata_json={
-                "source": "server_sync",
-                "server_id": server.id,
-                "sites": caddy_service.extract_sites(config_payload),
-            },
-            history_entries=[config_history_entry("synced", current_user.username, f"Imported from server {server.name}.")],
-            servers=[server],
+            server=server,
+            config_payload=config_payload,
+            actor_username=current_user.username,
         )
         await audit_commit_and_flash(
             session,
@@ -215,16 +310,32 @@ async def sync_server_config(request: Request, server_id: int, session: AsyncSes
             action="server_synced",
             resource_type="config",
             resource_id=str(config.id),
-            details={"server": server.name},
+            details={
+                "server": server.name,
+                "imported_sites": len(imported_site_ids),
+            },
             status_code=201,
             actor=current_user,
-            flashes=(("success", f"Imported live configuration from '{server.name}'."),),
+            flashes=(("success", f"Imported live configuration from '{server.name}' and discovered {len(imported_site_ids)} site(s)."),),
         )
+        for site_id in imported_site_ids:
+            await publish_resource_event("site", "created", str(site_id))
+    except IntegrityError:
+        await session.rollback()
+        push_flash(request, "danger", "A site or Caddyfile conflict occurred during import.")
+        return redirect_to(f"/templates?server_id={server.id}")
     except (CaddyServiceError, ValueError) as exc:
+        await session.rollback()
         caddy_service.mark_server_offline(server)
+        await server_repository.update(
+            session,
+            server,
+            status=server.status,
+            last_pinged=server.last_pinged,
+        )
         await session.commit()
         push_flash(request, "danger", f"Could not pull the live configuration: {exc}")
-    return redirect_to("/configs")
+    return redirect_to(f"/templates?server_id={server.id}")
 
 
 @router.post("/servers/{server_id}/delete")

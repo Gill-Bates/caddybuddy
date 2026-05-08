@@ -13,16 +13,27 @@ and Deployments render them with site-specific variables.
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import FormData
 
+from app.config.limiter import limiter
 from app.database.session import get_db_session
 from app.dependencies.web import push_flash, redirect_to, render_template
-from app.repositories.config_templates import config_template_repository
+from app.repositories.configs import config_repository
+from app.repositories.config_templates import (
+    ConcurrentTemplateUpdateError,
+    TemplateAlreadyExistsError,
+    config_template_repository,
+)
+from app.repositories.servers import server_repository
+from app.services.caddy import CaddyServiceError
 from app.services.config_renderer import config_renderer
+from app.services.deployment_engine import DeploymentError, deployment_engine
 from app.services.events import publish_resource_event
 
 from ._common import (
@@ -35,6 +46,8 @@ from ._common import (
 
 
 router = APIRouter()
+
+_MAX_CADDYFILE_LENGTH = 256_000
 
 
 TEMPLATE_EXAMPLE = """# Default Caddyfile
@@ -65,6 +78,7 @@ def _read_template_form(form: FormData) -> dict:
     """Extract template fields from form data."""
     return {
         "template_id_raw": str(form.get("template_id", "")).strip(),
+        "reference_server_id_raw": str(form.get("reference_server_id", "")).strip(),
         "name": str(form.get("name", "")).strip(),
         "description": str(form.get("description", "")).strip() or None,
         "caddyfile": str(form.get("caddyfile", "")).strip(),
@@ -77,6 +91,7 @@ def _read_template_form(form: FormData) -> dict:
 async def templates_page(
     request: Request,
     template_id: int | None = None,
+    server_id: int | None = None,
     session: AsyncSession = Depends(get_db_session),
 ):
     """Render templates management page."""
@@ -84,13 +99,26 @@ async def templates_page(
     if current_user is None:
         return redirect_to("/login")
 
-    templates = await config_template_repository.list_all(session)
+    templates = await config_template_repository.list_all(session, limit=100)
     selected_template = await config_template_repository.get_by_id(session, template_id) if template_id else None
 
     # Get revisions for selected template
     revisions = []
     if selected_template:
         revisions = await config_template_repository.get_revisions(session, selected_template.id, limit=10)
+
+    reference_server = await server_repository.get_by_id(session, server_id) if server_id else None
+    reference_live_config = None
+    reference_live_config_json = None
+    reference_live_sites: list[str] = []
+    if reference_server and reference_server.active_config_id is not None:
+        reference_live_config = await config_repository.get_by_id(session, reference_server.active_config_id)
+        if reference_live_config is not None:
+            reference_live_config_json = json.dumps(reference_live_config.json_config, indent=2, sort_keys=True)
+            metadata = reference_live_config.metadata_json if isinstance(reference_live_config.metadata_json, dict) else {}
+            raw_sites = metadata.get("sites", [])
+            if isinstance(raw_sites, list):
+                reference_live_sites = [site for site in raw_sites if isinstance(site, str)]
 
     # Get variable info
     defined_vars = set()
@@ -106,11 +134,16 @@ async def templates_page(
         "defined_vars": sorted(defined_vars),
         "undefined_vars": sorted(undefined_vars),
         "template_example": TEMPLATE_EXAMPLE,
+        "reference_server": reference_server,
+        "reference_live_config": reference_live_config,
+        "reference_live_config_json": reference_live_config_json,
+        "reference_live_sites": reference_live_sites,
     }
     return render_template(request, "templates.html", current_user=current_user, context=context)
 
 
 @router.post("/templates")
+@limiter.limit("10/minute")
 async def save_template(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
@@ -128,10 +161,16 @@ async def save_template(
         push_flash(request, "danger", "Template name is required.")
         return redirect_to("/templates")
 
+    reference_server_id = parse_int(form_data["reference_server_id_raw"])
+    redirect_target = f"/templates?server_id={reference_server_id}" if reference_server_id else "/templates"
+
     caddyfile = form_data["caddyfile"]
     if not caddyfile:
         push_flash(request, "danger", "Caddyfile content is required.")
-        return redirect_to("/templates")
+        return redirect_to(redirect_target)
+    if len(caddyfile) > _MAX_CADDYFILE_LENGTH:
+        push_flash(request, "danger", f"Caddyfile exceeds the maximum length of {_MAX_CADDYFILE_LENGTH} characters.")
+        return redirect_to(redirect_target)
 
     template_id_raw = form_data["template_id_raw"]
 
@@ -147,6 +186,16 @@ async def save_template(
             if template is None:
                 push_flash(request, "danger", "Template not found.")
                 return redirect_to("/templates")
+
+            redirect_target = f"/templates/{template.id}"
+            if reference_server_id:
+                redirect_target = f"{redirect_target}?server_id={reference_server_id}"
+
+            await deployment_engine.validate_template_for_save(
+                session,
+                name=name,
+                caddyfile=caddyfile,
+            )
 
             await config_template_repository.update(
                 session,
@@ -167,9 +216,16 @@ async def save_template(
                 actor=current_user,
                 flashes=(("success", f"Template '{name}' updated successfully."),),
             )
-            return redirect_to(f"/templates/{template.id}")
+            await publish_resource_event("config", "updated", str(template.id))
+            return redirect_to(redirect_target)
 
         else:
+            await deployment_engine.validate_template_for_save(
+                session,
+                name=name,
+                caddyfile=caddyfile,
+            )
+
             template = await config_template_repository.create(
                 session,
                 name=name,
@@ -187,15 +243,36 @@ async def save_template(
                 actor=current_user,
                 flashes=(("success", f"Template '{name}' created successfully."),),
             )
-            return redirect_to(f"/templates/{template.id}")
+            await publish_resource_event("config", "created", str(template.id))
+            success_target = f"/templates/{template.id}"
+            if reference_server_id:
+                success_target = f"{success_target}?server_id={reference_server_id}"
+            return redirect_to(success_target)
 
+    except TemplateAlreadyExistsError as exc:
+        await session.rollback()
+        push_flash(request, "danger", str(exc))
+        return redirect_to(redirect_target)
+    except ConcurrentTemplateUpdateError as exc:
+        await session.rollback()
+        push_flash(request, "danger", str(exc))
+        return redirect_to(redirect_target)
+    except ValueError as exc:
+        await session.rollback()
+        push_flash(request, "danger", str(exc))
+        return redirect_to(redirect_target)
     except IntegrityError:
         await session.rollback()
         push_flash(request, "danger", f"Caddyfile name '{name}' is already in use.")
         return redirect_to("/templates")
+    except (DeploymentError, CaddyServiceError) as exc:
+        await session.rollback()
+        push_flash(request, "danger", f"Caddyfile validation failed: {exc}")
+        return redirect_to(redirect_target)
 
 
 @router.post("/templates/{template_id}/delete")
+@limiter.limit("10/minute")
 async def delete_template(
     request: Request,
     template_id: int,
@@ -222,17 +299,24 @@ async def delete_template(
         return redirect_to(f"/templates/{template_id}")
 
     name = template.name
-    await config_template_repository.delete(session, template)
+    try:
+        await config_template_repository.delete(session, template)
 
-    await audit_commit_and_flash(
-        session,
-        request,
-        action="delete",
-        resource_type="config_template",
-        resource_id=str(template_id),
-        actor=current_user,
-        flashes=(("success", f"Template '{name}' deleted successfully."),),
-    )
+        await audit_commit_and_flash(
+            session,
+            request,
+            action="delete",
+            resource_type="config_template",
+            resource_id=str(template_id),
+            actor=current_user,
+            flashes=(("success", f"Template '{name}' deleted successfully."),),
+        )
+    except IntegrityError:
+        await session.rollback()
+        push_flash(request, "danger", "Cannot delete template - it is now referenced by one or more sites.")
+        return redirect_to(f"/templates/{template_id}")
+
+    await publish_resource_event("config", "deleted", str(template_id))
     return redirect_to("/templates")
 
 

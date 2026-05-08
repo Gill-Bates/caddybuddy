@@ -86,7 +86,20 @@
                                     endif %}
                                     {% endfor %}
                                 </td>
-                                <td>{{ api_key.expires_at|datetimeformat }}</td>
+                                <td>
+                                    {% if api_key.expires_at %}
+                                    {% set remaining_days = api_key.expires_at|daysuntil %}
+                                    <div>{{ api_key.expires_at|datetimeformat }}</div>
+                                    <div class="mt-1">
+                                        <span class="badge {{ api_key.expires_at|expirybadgeclass }}">
+                                            {% if remaining_days < 0 %} expired {{ remaining_days|abs }} days ago {%
+                                                elif remaining_days==0 %} expires today {% else %} {{ remaining_days }}
+                                                days left {% endif %} </span>
+                                    </div>
+                                    {% else %}
+                                    -
+                                    {% endif %}
+                                </td>
                                 <td>
                                     <form action="/api-keys/{{ api_key.id }}/toggle" method="post"
                                         class="d-inline-flex gap-2 align-items-center">

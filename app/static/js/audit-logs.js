@@ -45,8 +45,30 @@ function formatDetails(details) {
 }
 
 /**
+ * Builds a short single-line preview for the details column.
+ * @param {string} formattedDetails
+ * @returns {string}
+ */
+function summarizeDetails(formattedDetails) {
+    if (!formattedDetails) return "No details";
+
+    const compact = formattedDetails.replace(/\s+/g, " ").trim();
+    if (!compact) return "No details";
+    if (compact.length <= 96) return compact;
+    return `${compact.slice(0, 93)}...`;
+}
+
+/**
  * Creates a table row for an audit log entry using DOM APIs (no innerHTML).
- * @param {object} entry
+ * @param {{
+ *   id: number | string,
+ *   timestamp: string,
+ *   timestamp_iso: string,
+ *   action: string,
+ *   username: string,
+ *   resource: string,
+ *   details: unknown,
+ * }} entry
  * @returns {HTMLTableRowElement}
  */
 function createRow(entry) {
@@ -72,10 +94,44 @@ function createRow(entry) {
     tdRes.textContent = entry.resource;
 
     const tdDetails = document.createElement("td");
-    const pre = document.createElement("pre");
-    pre.className = "audit-details audit-details--table mb-0";
-    pre.textContent = formatDetails(entry.details);
-    tdDetails.appendChild(pre);
+    const formattedDetails = formatDetails(entry.details);
+    const detailsId = `audit-details-${entry.id}`;
+    const wrapper = document.createElement("div");
+    wrapper.className = "audit-details-toggle";
+
+    if (!formattedDetails) {
+        const emptyState = document.createElement("span");
+        emptyState.className = "text-body-secondary";
+        emptyState.textContent = "No details";
+        wrapper.appendChild(emptyState);
+    } else {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "btn btn-link btn-sm audit-details-toggle__button";
+        button.setAttribute("aria-expanded", "false");
+        button.setAttribute("aria-controls", detailsId);
+        button.textContent = "Show details";
+
+        const preview = document.createElement("div");
+        preview.className = "audit-details-toggle__preview text-body-secondary";
+        preview.textContent = summarizeDetails(formattedDetails);
+
+        const pre = document.createElement("pre");
+        pre.id = detailsId;
+        pre.className = "audit-details audit-details--table mb-0 d-none";
+        pre.textContent = formattedDetails;
+
+        button.addEventListener("click", () => {
+            const expanded = button.getAttribute("aria-expanded") === "true";
+            button.setAttribute("aria-expanded", String(!expanded));
+            button.textContent = expanded ? "Show details" : "Hide details";
+            pre.classList.toggle("d-none", expanded);
+        });
+
+        wrapper.append(button, preview, pre);
+    }
+
+    tdDetails.appendChild(wrapper);
 
     tr.append(tdTime, tdAction, tdUser, tdRes, tdDetails);
     return tr;
@@ -138,6 +194,10 @@ async function loadEntries(reset = false) {
         loadingRow.classList.remove("d-none");
     }
 
+    if (!currentAbortController) {
+        currentAbortController = new AbortController();
+    }
+
     const { signal } = currentAbortController;
     isLoading = true;
     loadMoreSentinel.classList.remove("d-none");
@@ -151,26 +211,30 @@ async function loadEntries(reset = false) {
         if (value) params.set(key, value);
     }
 
+    const requestUrl = new URL("./api/audit-logs", window.location.href);
+    requestUrl.search = params.toString();
+
     try {
-        const response = await fetch(`/api/audit-logs?${params}`, { signal });
+        const response = await fetch(requestUrl, { signal });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
         const data = await response.json();
+        const entries = Array.isArray(data.entries) ? data.entries : [];
 
         // Discard stale response from a superseded request.
         if (generation !== currentGeneration) return;
 
-        totalCount = data.total;
-        hasMore = data.has_more;
-        currentOffset += data.entries.length;
+        totalCount = typeof data.total === "number" ? data.total : 0;
+        hasMore = data.has_more === true;
+        currentOffset += entries.length;
 
         if (reset) loadingRow.remove();
 
-        if (data.entries.length === 0 && currentOffset === 0) {
+        if (entries.length === 0 && currentOffset === 0) {
             showEmptyState();
         } else {
             const fragment = document.createDocumentFragment();
-            for (const entry of data.entries) {
+            for (const entry of entries) {
                 fragment.appendChild(createRow(entry));
             }
             tableBody.appendChild(fragment);
@@ -185,6 +249,8 @@ async function loadEntries(reset = false) {
         if (reset) {
             loadingRow.remove();
             renderStatusRow("Failed to load entries. Please refresh the page.", "error");
+        } else {
+            hasMore = false;
         }
     } finally {
         if (generation === currentGeneration) {
@@ -210,6 +276,7 @@ function resetFilters() {
 }
 
 // Intersection Observer for infinite scroll.
+loadMoreSentinel.setAttribute("aria-hidden", "true");
 const observer = new IntersectionObserver(
     (entries) => {
         if (entries[0].isIntersecting && !isLoading && hasMore) {

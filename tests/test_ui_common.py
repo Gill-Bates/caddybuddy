@@ -10,6 +10,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from fastapi import HTTPException
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.datastructures import FormData
 
 from app.routers.ui import _common
@@ -26,9 +28,22 @@ class UiCommonTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(returned, form)
         validate_csrf_token.assert_called_once_with(request, "token")
 
+    async def test_validated_form_propagates_http_403_for_invalid_csrf(self) -> None:
+        form = FormData({"csrf_token": "bad-token"})
+        request = SimpleNamespace(form=AsyncMock(return_value=form))
+
+        with patch(
+            "app.routers.ui._common.validate_csrf_token",
+            side_effect=HTTPException(status_code=403, detail="Invalid CSRF token."),
+        ):
+            with self.assertRaises(HTTPException) as exc_info:
+                await _common.validated_form(request)
+
+        self.assertEqual(exc_info.exception.status_code, 403)
+
     async def test_audit_commit_and_flash_rolls_back_on_commit_failure(self) -> None:
         session = SimpleNamespace(
-            commit=AsyncMock(side_effect=RuntimeError("commit failed")),
+            commit=AsyncMock(side_effect=SQLAlchemyError("commit failed")),
             rollback=AsyncMock(),
         )
         request = object()
@@ -37,7 +52,7 @@ class UiCommonTests(unittest.IsolatedAsyncioTestCase):
             patch("app.routers.ui._common.audit_service.log_action", new=AsyncMock()) as log_action,
             patch("app.routers.ui._common.push_flash") as push_flash,
         ):
-            with self.assertRaisesRegex(RuntimeError, "commit failed"):
+            with self.assertRaisesRegex(SQLAlchemyError, "commit failed"):
                 await _common.audit_commit_and_flash(
                     session,
                     request,
@@ -79,6 +94,9 @@ class UiCommonTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(context["recent_logs"], ["log"])
         list_all.assert_awaited_once_with(session, limit=5)
         list_recent.assert_awaited_once_with(session, limit=8)
+
+    def test_safe_next_accepts_none(self) -> None:
+        self.assertEqual(_common.safe_next(None), "/")
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
-from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.ext.mutable import MutableDict, MutableList
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
@@ -199,15 +199,27 @@ class ConfigTemplate(TimestampMixin, Base):
 
     __tablename__ = "config_templates"
 
+    __table_args__ = (
+        UniqueConstraint("checksum", name="uq_config_templates_checksum"),
+    )
+
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(150), unique=True, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     caddyfile: Mapped[str] = mapped_column(Text)
     checksum: Mapped[str] = mapped_column(String(64), index=True)
     variables: Mapped[dict[str, Any]] = mapped_column(MutableDict.as_mutable(JSON), default=dict)
+    version_id: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    __mapper_args__ = {"version_id_col": version_id}
 
     sites: Mapped[list[Site]] = relationship(back_populates="config_template", lazy="selectin")
-    revisions: Mapped[list[ConfigRevision]] = relationship(back_populates="template", lazy="selectin")
+    revisions: Mapped[list[ConfigRevision]] = relationship(
+        back_populates="template",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
     @staticmethod
     def compute_checksum(caddyfile: str) -> str:
@@ -277,6 +289,13 @@ class Deployment(TimestampMixin, Base):
         Index("ix_deployments_site_server", "site_id", "server_id"),
         Index("ix_deployments_status", "status"),
         Index("ix_deployments_deployed_at", "deployed_at"),
+        Index(
+            "uq_active_deployment_per_site_server",
+            "site_id",
+            "server_id",
+            unique=True,
+            sqlite_where=text("status = 'DEPLOYED'"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)

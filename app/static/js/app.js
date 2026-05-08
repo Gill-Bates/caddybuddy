@@ -14,8 +14,7 @@ const initializeLiveUpdates = () => {
 
     const relevantResources = {
         "/servers": ["server"],
-        "/configs": ["config", "server"],
-        "/domains": ["domain", "server"],
+        "/templates": ["config_template", "site"],
         "/users": ["user"],
         "/api-keys": ["api_key"],
         "/audit-logs": ["audit_log", "server", "config", "domain", "user", "api_key"],

@@ -4,6 +4,7 @@
 # Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
 #
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -26,6 +27,7 @@ from app.routers.api import router as api_router
 from app.routers.ui import router as ui_router
 from app.services.auth import auth_service
 from app.services.caddy import caddy_service
+from app.services.server_status_monitor import run_server_status_monitor
 
 
 logger = logging.getLogger(__name__)
@@ -67,6 +69,8 @@ async def lifespan(app: FastAPI):
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     app.state.default_admin_created = False
     await init_database()
+    server_status_stop_event = asyncio.Event()
+    server_status_task: asyncio.Task[None] | None = None
 
     try:
         async with get_session_factory()() as session:
@@ -88,8 +92,14 @@ async def lifespan(app: FastAPI):
                     "Created default admin '%s'. Change the password immediately.",
                     settings.default_admin_username,
                 )
+        server_status_task = asyncio.create_task(
+            run_server_status_monitor(server_status_stop_event, get_session_factory())
+        )
         yield
     finally:
+        server_status_stop_event.set()
+        if server_status_task is not None:
+            await server_status_task
         await caddy_service.aclose()
         await dispose_engine()
 

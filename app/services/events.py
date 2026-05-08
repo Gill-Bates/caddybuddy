@@ -24,7 +24,7 @@ from typing import Literal
 
 logger = logging.getLogger(__name__)
 
-ResourceType = Literal["server", "config", "domain", "user", "api_key", "audit_log"]
+ResourceType = Literal["server", "config", "domain", "site", "user", "api_key", "audit_log", "deployment"]
 EventAction = Literal["created", "updated", "deleted", "deployed"]
 
 
@@ -39,6 +39,7 @@ class ResourceEvent:
     resource_type: ResourceType
     action: EventAction
     resource_id: str | None = None
+    details: dict[str, object] | None = None
     timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def to_json(self) -> str:
@@ -46,6 +47,7 @@ class ResourceEvent:
             "type": self.resource_type,
             "action": self.action,
             "id": self.resource_id,
+            "details": self.details or {},
             "ts": self.timestamp,
         })
 
@@ -132,7 +134,13 @@ async def publish_resource_event(
     resource_type: ResourceType,
     action: EventAction,
     resource_id: str | None = None,
+    details: dict[str, object] | None = None,
 ) -> None:
     """Convenience function to publish a resource change event."""
-    event = ResourceEvent(resource_type=resource_type, action=action, resource_id=resource_id)
+    event = ResourceEvent(
+        resource_type=resource_type,
+        action=action,
+        resource_id=resource_id,
+        details=details,
+    )
     await event_bus.publish(event)

@@ -1,0 +1,58 @@
+{
+	admin 0.0.0.0:2019
+	email tobias@steiner.rs
+
+	log {
+		level info
+		format json
+		output file /var/log/caddy/caddy.log {
+			roll_size 10mb
+			roll_keep 10
+			roll_keep_for 720h
+		}
+	}
+}
+
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+}
+
+(default_log) {
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 10mb
+		}
+		format json
+	}
+}
+
+# Bootstrap the CaddyBuddy GUI directly, without external site imports.
+caddy.sv2.cirrio.de {
+	import security_headers
+	import default_log
+
+	reverse_proxy 10.30.0.140:8000 {
+		transport http {
+			keepalive 30s
+		}
+
+		header_up Host {host}
+		header_up Authorization {http.request.header.Authorization}
+	}
+
+	encode gzip
+
+	header {
+		-Server
+		-X-Powered-By
+	}
+
+	request_body {
+		max_size 100MB
+	}
+}
