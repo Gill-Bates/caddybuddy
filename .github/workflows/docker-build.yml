@@ -2,8 +2,6 @@ name: Docker Build
 
 on:
   push:
-    branches:
-      - main
     tags:
       - 'v*'
   pull_request:
@@ -322,25 +320,38 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${{ steps.meta.outputs.version }}"
-          
-          # Use simple string matching instead of regex escaping
-          awk -v ver="$VERSION" '
-            BEGIN { header = "## [" ver "]" }
-            index($0, header) == 1 { found=1 }
-            found {
-              if (found > 1 && $0 ~ /^## \[/) exit
-              if ($0 ~ /^<details/) exit
-              found++
-              print
-            }
-          ' CHANGELOG.md > RELEASE_NOTES.md
-          
-          # Fallback if no changelog entry found
-          if [ ! -s RELEASE_NOTES.md ]; then
-            echo "Release v${VERSION}" > RELEASE_NOTES.md
-            echo "" >> RELEASE_NOTES.md
-            echo "No changelog entry found for this version." >> RELEASE_NOTES.md
-          fi
+          export VERSION
+          python <<'PY'
+          from pathlib import Path
+          import os
+
+          version = os.environ["VERSION"]
+          changelog_path = Path("CHANGELOG.md")
+          notes_path = Path("RELEASE_NOTES.md")
+          header = f"## [{version}]"
+
+          lines = changelog_path.read_text(encoding="utf-8").splitlines()
+          start_index = next((index for index, line in enumerate(lines) if line.startswith(header)), None)
+          if start_index is None:
+              raise SystemExit(f"Missing changelog entry for version {version} in CHANGELOG.md")
+
+          collected: list[str] = []
+          for index, line in enumerate(lines[start_index:], start=start_index):
+              if index > start_index and line.startswith("## ["):
+                  break
+              if line.startswith("<details"):
+                  break
+              collected.append(line)
+
+          notes = "\n".join(collected).strip()
+          if not notes:
+              raise SystemExit(f"Changelog entry for version {version} is empty")
+
+          notes_path.write_text(f"{notes}\n", encoding="utf-8")
+          PY
+
+          echo "Generated release notes:"
+          cat RELEASE_NOTES.md
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
