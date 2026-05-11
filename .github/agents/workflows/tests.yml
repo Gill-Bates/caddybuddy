@@ -1,0 +1,108 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'app/**'
+      - 'tests/**'
+      - 'requirements.txt'
+      - '.github/workflows/tests.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'app/**'
+      - 'tests/**'
+      - 'requirements.txt'
+      - '.github/workflows/tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+          cache-dependency-path: 'requirements.txt'
+
+      - name: Create virtual environment
+        run: python -m venv .venv
+
+      - name: Install dependencies
+        run: |
+          ./.venv/bin/pip install --upgrade pip
+          ./.venv/bin/pip install -r requirements.txt
+          ./.venv/bin/pip install pytest==8.3.4 pytest-asyncio==0.25.0
+
+      - name: Generate CI test settings
+        run: |
+          {
+            echo "CADDYBUDDY_SECRET_KEY=$(python -c 'import secrets; print(secrets.token_hex(32))')"
+            echo "CADDYBUDDY_ADMIN_PASSWORD=$(python -c 'import secrets; print(secrets.token_urlsafe(24))')"
+          } >> "$GITHUB_ENV"
+
+      - name: Run tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          ./.venv/bin/pytest tests/ -v --tb=short
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+          cache-dependency-path: 'requirements.txt'
+
+      - name: Create virtual environment
+        run: python -m venv .venv
+
+      - name: Install dependencies
+        run: |
+          ./.venv/bin/pip install --upgrade pip
+          ./.venv/bin/pip install ruff==0.9.0
+
+      - name: Ruff check
+        run: |
+          ./.venv/bin/ruff check app/ tests/ --output-format=github
+        continue-on-error: true
+
+  security-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Trivy scan Python dependencies
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          scan-type: 'fs'
+          scan-ref: 'requirements.txt'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: 'CRITICAL,HIGH'
+          timeout: '5m'
