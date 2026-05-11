@@ -24,7 +24,7 @@ from typing import Literal
 
 logger = logging.getLogger(__name__)
 
-ResourceType = Literal["server", "config", "domain", "site", "user", "api_key", "audit_log", "deployment"]
+ResourceType = Literal["server", "config", "site", "user", "api_key", "audit_log", "deployment"]
 EventAction = Literal["created", "updated", "deleted", "deployed"]
 
 

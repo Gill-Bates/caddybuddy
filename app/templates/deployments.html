@@ -107,6 +107,25 @@
                         <div class="small">The deployed checksum differs from the rendered configuration.</div>
                     </div>
                     {% endif %}
+
+                    <details class="cb-inline-history">
+                        <summary class="cb-inline-history__summary">
+                            <span class="fw-semibold">Rendered Configuration</span>
+                            {% if selected_deployment %}
+                            <code class="small">{{ selected_deployment.rendered_checksum[:8] }}</code>
+                            {% endif %}
+                        </summary>
+                        <div class="panel-card cb-inline-history__card mt-3">
+                            <div class="panel-card__header">
+                                <h2 class="h5 mb-0">Rendered Configuration</h2>
+                                {% if selected_deployment %}
+                                <code class="small">{{ selected_deployment.rendered_checksum[:8] }}</code>
+                                {% endif %}
+                            </div>
+                            <pre
+                                class="mb-0 p-3 bg-dark text-light rounded cb-code-block cb-code-block--scroll-lg"><code>{{ selected_deployment.rendered_config }}</code></pre>
+                        </div>
+                    </details>
                 </div>
 
                 <hr class="my-4">
@@ -191,22 +210,11 @@
         {% endif %}
 
         <div class="{% if selected_deployment %}col-xl-8{% else %}col-12{% endif %}">
-            {% if selected_deployment %}
-            <div class="panel-card mb-4">
-                <div class="panel-card__header d-flex justify-content-between align-items-center">
-                    <h2 class="h5 mb-0">Rendered Configuration</h2>
-                    <code class="small">{{ selected_deployment.rendered_checksum[:8] }}</code>
-                </div>
-                <pre
-                    class="mb-0 p-3 bg-dark text-light rounded-bottom cb-code-block cb-code-block--scroll-lg"><code>{{ selected_deployment.rendered_config }}</code></pre>
-            </div>
-            {% endif %}
-
-            <div class="panel-card panel-card--table">
+            <div class="panel-card panel-card--table deployments-table-card">
                 <div class="panel-card__header">
                     <h2 class="h5 mb-0">All Deployments</h2>
                 </div>
-                <div class="table-responsive">
+                <div class="table-responsive deployments-table-scroll">
                     <table class="table align-middle mb-0">
                         <thead>
                             <tr>
@@ -214,6 +222,7 @@
                                 <th>Site</th>
                                 <th>Server</th>
                                 <th>Status</th>
+                                <th>Initiated By</th>
                                 <th>Deployed</th>
                                 <th class="text-end">Actions</th>
                             </tr>
@@ -251,6 +260,13 @@
                                     </span>
                                 </td>
                                 <td>
+                                    {% if deployment.deployed_by %}
+                                    {{ deployment.deployed_by }}
+                                    {% else %}
+                                    <span class="text-body-secondary">-</span>
+                                    {% endif %}
+                                </td>
+                                <td>
                                     {% if deployment.deployed_at %}
                                     {{ deployment.deployed_at.strftime('%Y-%m-%d %H:%M') }}
                                     {% else %}
@@ -264,7 +280,7 @@
                             </tr>
                             {% else %}
                             <tr>
-                                <td colspan="6" class="text-center text-body-secondary py-4">
+                                <td colspan="7" class="text-center text-body-secondary py-4">
                                     No deployments yet. Deploy a site to create one.
                                 </td>
                             </tr>

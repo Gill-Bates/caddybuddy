@@ -666,6 +666,140 @@
         };
     }
 
+    function pageShellAnalyzer(constants = {}) {
+        const page = document.querySelector('.app-page');
+        const maximumGap = Number(constants.APP_PAGE_HEADER_CONTENT_GAP_MAX_PX ?? 56);
+        if (!(page instanceof Element) || !isVisible(page) || isVisuallyHidden(page)) {
+            return {
+                appPageLayout: {
+                    present: false,
+                    overflowY: null,
+                    locksVerticalOverflow: false,
+                },
+                pageHeaderContentGap: {
+                    present: false,
+                    gapPx: null,
+                    maximum: maximumGap,
+                    passesMaximum: true,
+                },
+            };
+        }
+
+        const pageStyle = styleOf(page);
+        const overflowY = pageStyle?.overflowY || 'visible';
+        const children = Array.from(page.children).filter((child) => child instanceof Element);
+        const header = children.find((child) => child.matches('.app-page__header') && isVisible(child) && !isVisuallyHidden(child)) || null;
+        const firstContentBlock = children.find((child) => child !== header && isVisible(child) && !isVisuallyHidden(child)) || null;
+
+        let pageHeaderContentGap = {
+            present: false,
+            gapPx: null,
+            maximum: maximumGap,
+            passesMaximum: true,
+        };
+
+        if (header && firstContentBlock) {
+            const gapPx = Math.max(0, rectOf(firstContentBlock).top - rectOf(header).bottom);
+            pageHeaderContentGap = {
+                present: true,
+                gapPx: roundTo(gapPx, 2),
+                maximum: maximumGap,
+                passesMaximum: gapPx <= maximumGap,
+            };
+        }
+
+        return {
+            appPageLayout: {
+                present: true,
+                overflowY,
+                locksVerticalOverflow: !['visible'].includes(overflowY),
+            },
+            pageHeaderContentGap,
+        };
+    }
+
+    function primaryPanelPaddingAnalyzer(constants = {}) {
+        const pageGrid = document.querySelector('.app-grid');
+        const tolerance = Number(constants.PRIMARY_PANEL_PADDING_VARIANCE_MAX_PX ?? 2);
+
+        if (!(pageGrid instanceof Element) || !isVisible(pageGrid) || isVisuallyHidden(pageGrid)) {
+            return {
+                primaryPanelPadding: {
+                    present: false,
+                    tolerance,
+                    panels: [],
+                    mismatches: [],
+                },
+            };
+        }
+
+        const rowTolerance = 8;
+        const panels = Array.from(pageGrid.children)
+            .filter((child) => child instanceof Element)
+            .map((column) => column.querySelector(':scope > .panel-card'))
+            .filter((panel) => panel instanceof Element && isVisible(panel) && !isVisuallyHidden(panel))
+            .map((panel) => {
+                const style = styleOf(panel);
+                const rect = rectOf(panel);
+                const isTableVariant = panel.classList.contains('panel-card--table');
+                return {
+                    className: panel.className || '',
+                    isTableVariant,
+                    top: roundTo(rect.top, 2),
+                    paddingTop: Number.parseFloat(style?.paddingTop || '0'),
+                    paddingRight: Number.parseFloat(style?.paddingRight || '0'),
+                    paddingBottom: Number.parseFloat(style?.paddingBottom || '0'),
+                    paddingLeft: Number.parseFloat(style?.paddingLeft || '0'),
+                };
+            });
+
+        if (panels.length < 2) {
+            return {
+                primaryPanelPadding: {
+                    present: false,
+                    tolerance,
+                    panels,
+                    mismatches: [],
+                },
+            };
+        }
+
+        const firstRowTop = panels[0].top;
+        const firstRowPanels = panels.filter((panel) => Math.abs(panel.top - firstRowTop) <= rowTolerance);
+
+        if (firstRowPanels.length < 2) {
+            return {
+                primaryPanelPadding: {
+                    present: false,
+                    tolerance,
+                    panels,
+                    mismatches: [],
+                },
+            };
+        }
+
+        // Only compare panels of the same variant type (table vs non-table)
+        const baseline = firstRowPanels[0];
+        const mismatches = firstRowPanels
+            .slice(1)
+            .filter((panel) => panel.isTableVariant === baseline.isTableVariant)
+            .filter((panel) => (
+                Math.abs(panel.paddingTop - baseline.paddingTop) > tolerance
+                || Math.abs(panel.paddingRight - baseline.paddingRight) > tolerance
+                || Math.abs(panel.paddingBottom - baseline.paddingBottom) > tolerance
+                || Math.abs(panel.paddingLeft - baseline.paddingLeft) > tolerance
+            ));
+
+        return {
+            primaryPanelPadding: {
+                present: true,
+                tolerance,
+                panels: firstRowPanels,
+                mismatches,
+            },
+        };
+    }
+
     function mobileSidebarFooterAnalyzer(constants = {}) {
         const isMobileViewport = window.innerWidth < Number(constants.LG_BREAKPOINT_PX ?? 992);
         const sidebar = document.querySelector('.app-sidebar');
@@ -723,6 +857,8 @@
         const contrast = contrastAnalyzer(constants);
         const footerGap = footerGapAnalyzer(constants);
         const sidebarFooterGap = mobileSidebarFooterAnalyzer(constants);
+        const pageShell = pageShellAnalyzer(constants);
+        const primaryPanelPadding = primaryPanelPaddingAnalyzer(constants);
         const state = stateAnalyzer();
         const components = componentAnalyzer();
         const modalTheme = modalThemeAnalyzer(constants);
@@ -744,6 +880,8 @@
             ...contrast,
             ...footerGap,
             ...sidebarFooterGap,
+            ...pageShell,
+            ...primaryPanelPadding,
             ...modalTheme,
 
             state,

@@ -14,6 +14,7 @@ import {
     KPI_ICON_MIN,
     KPI_ROW_VARIANCE_MAX,
     LAYOUT_SHIFT_THRESHOLD,
+    APP_PAGE_HEADER_CONTENT_GAP_MAX_PX,
     VISUAL_DRIFT_THRESHOLD,
 } from './constants.mjs';
 
@@ -118,6 +119,14 @@ export function summarizeFindings(result) {
     ensureObject(metrics, 'cardContainment', { cardsPastFooter: [] });
     ensureObject(metrics, 'footerViewportGap', { present: false, gapPx: null, minimum: 0, passesMinimum: true });
     ensureObject(metrics, 'sidebarFooterViewportGap', { present: false, gapPx: null, minimum: 0, passesMinimum: true, requiresScroll: false });
+    ensureObject(metrics, 'appPageLayout', { present: false, overflowY: null, locksVerticalOverflow: false });
+    ensureObject(metrics, 'primaryPanelPadding', { present: false, tolerance: 0, panels: [], mismatches: [] });
+    ensureObject(metrics, 'pageHeaderContentGap', {
+        present: false,
+        gapPx: null,
+        maximum: APP_PAGE_HEADER_CONTENT_GAP_MAX_PX,
+        passesMaximum: true,
+    });
     ensureObject(metrics, 'layoutShift', { value: 0 });
     ensureObject(metrics, 'state', { loadingWithoutDisabled: [], missingAriaBusy: [] });
     ensureObject(metrics, 'components', {
@@ -235,7 +244,19 @@ export function summarizeFindings(result) {
             : metrics.sidebarFooterViewportGap.gapPx;
         pushHard(`sidebarFooterViewportGap=${gapLabel}/${metrics.sidebarFooterViewportGap.minimum}`);
     }
+    if (metrics.appPageLayout.present && metrics.appPageLayout.locksVerticalOverflow) {
+        pushWarning(`appPageOverflow=${metrics.appPageLayout.overflowY}`);
+    }
     if (metrics.cardContainment.cardsPastFooter.length) pushWarning(`cardsPastFooter=${metrics.cardContainment.cardsPastFooter.length}`);
+    if (metrics.primaryPanelPadding.present && metrics.primaryPanelPadding.mismatches?.length) {
+        const first = metrics.primaryPanelPadding.mismatches[0];
+        pushWarning(
+            `primaryPanelPaddingMismatch=${first.paddingTop}/${first.paddingRight}/${first.paddingBottom}/${first.paddingLeft}`
+        );
+    }
+    if (metrics.pageHeaderContentGap.present && metrics.pageHeaderContentGap.passesMaximum === false) {
+        pushWarning(`pageHeaderContentGap=${metrics.pageHeaderContentGap.gapPx}/${metrics.pageHeaderContentGap.maximum}`);
+    }
 
     if (metrics.spacing.outlierVerticalGaps?.length) pushWarning(`outlierVerticalGaps=${metrics.spacing.outlierVerticalGaps.length}`);
     if (isMobile && metrics.spacing.mobileRowCardStackGaps?.length) {

@@ -28,9 +28,19 @@ class DeploymentStatus(enum.StrEnum):
     INVALID = "invalid"
     DEPLOYING = "deploying"
     DEPLOYED = "deployed"
+    SUPERSEDED = "superseded"
     FAILED = "failed"
     ROLLBACK_PENDING = "rollback_pending"
     ROLLED_BACK = "rolled_back"
+
+
+def _normalize_domain_name(value: str) -> str:
+    normalized = value.strip().lower()
+    if not normalized:
+        raise ValueError("domain name cannot be empty")
+    if len(normalized) > 253:
+        raise ValueError("domain name exceeds the DNS limit of 253 characters")
+    return normalized
 
 
 class User(TimestampMixin, Base):
@@ -95,6 +105,12 @@ class CaddyServer(TimestampMixin, Base):
             raise ValueError("api_url must not include a path, query, or fragment")
         return normalized.rstrip("/")
 
+    @validates("api_port")
+    def _validate_api_port(self, _key: str, value: int) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or not (1 <= value <= 65535):
+            raise ValueError("api_port must be an integer between 1 and 65535")
+        return value
+
     @validates("admin_api_path")
     def _validate_admin_api_path(self, _key: str, value: str) -> str:
         normalized = value.strip()
@@ -138,33 +154,6 @@ class ApiKey(TimestampMixin, Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
 
     user: Mapped[User] = relationship(back_populates="api_keys")
-
-
-class Domain(TimestampMixin, Base):
-    """Domain entry representing a site/hostname managed by Caddy."""
-
-    __tablename__ = "domains"
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-    server_id: Mapped[int | None] = mapped_column(ForeignKey("caddy_servers.id", ondelete="SET NULL"), nullable=True, index=True)
-    upstream: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    caddy_directives: Mapped[str | None] = mapped_column(Text, nullable=True)
-    ssl_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    ssl_provider: Mapped[str] = mapped_column(String(50), default="letsencrypt")
-    active: Mapped[bool] = mapped_column(Boolean, default=True)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    server: Mapped[CaddyServer | None] = relationship("CaddyServer", lazy="selectin")
-
-    @validates("name")
-    def _validate_name(self, _key: str, value: str) -> str:
-        normalized = value.strip().lower()
-        if not normalized:
-            raise ValueError("domain name cannot be empty")
-        if len(normalized) > 253:
-            raise ValueError("domain name exceeds the DNS limit of 253 characters")
-        return normalized
 
 
 class AuditLog(TimestampMixin, Base):
@@ -268,12 +257,7 @@ class Site(TimestampMixin, Base):
 
     @validates("domain")
     def _validate_domain(self, _key: str, value: str) -> str:
-        normalized = value.strip().lower()
-        if not normalized:
-            raise ValueError("site domain cannot be empty")
-        if len(normalized) > 253:
-            raise ValueError("site domain exceeds the DNS limit of 253 characters")
-        return normalized
+        return _normalize_domain_name(value)
 
 
 class Deployment(TimestampMixin, Base):
@@ -298,7 +282,7 @@ class Deployment(TimestampMixin, Base):
             "site_id",
             "server_id",
             unique=True,
-            sqlite_where=text("status = 'DEPLOYED'"),
+            sqlite_where=text(f"status = '{DeploymentStatus.DEPLOYED.value}'"),
         ),
     )
 
@@ -329,7 +313,7 @@ class Deployment(TimestampMixin, Base):
     site: Mapped[Site] = relationship(back_populates="deployments", lazy="selectin")
     server: Mapped[CaddyServer] = relationship(lazy="selectin")
     rollback_source: Mapped[Deployment | None] = relationship(
-        "Deployment", remote_side=[id], lazy="selectin"
+        "Deployment", remote_side=[id], foreign_keys=[rollback_deployment_id], lazy="selectin"
     )
 
     def _require_status(self, expected: DeploymentStatus, target: DeploymentStatus) -> None:

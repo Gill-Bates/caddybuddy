@@ -90,7 +90,9 @@ def _asset_integrity_cached(relative_path: str, mtime_ns: int, size: int) -> str
 
 def asset_integrity(relative_path: str) -> str:
     """Return a SHA-384 SRI value for a static asset under app/static."""
-    return _asset_integrity_live(relative_path)
+    if settings.reload:
+        return _asset_integrity_live(relative_path)
+    return _asset_integrity_by_path(relative_path)
 
 
 @cache

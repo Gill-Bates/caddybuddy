@@ -44,7 +44,7 @@ async def subscribe_events() -> StreamingResponse:
     Server-Sent Events endpoint for real-time resource updates.
 
     Clients connect via EventSource and receive JSON payloads when
-    servers, configs, domains, or other resources change.
+    servers, configs, sites, or other resources change.
     """
     try:
         events = event_bus.subscribe()

@@ -10,10 +10,19 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from sqlalchemy.exc import IntegrityError
 from app.models.entities import DeploymentStatus
 from app.services.caddy import CaddyServiceError
 from app.services.deployment_engine import DeploymentError, DeploymentResult, DeploymentEngine
 from sqlalchemy.orm.exc import StaleDataError
+
+
+class _AsyncNullContext:
+    async def __aenter__(self) -> None:
+        return None
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        return False
 
 
 class _FakeDeployment:
@@ -22,6 +31,8 @@ class _FakeDeployment:
         self.status = DeploymentStatus.PENDING
         self.site = site
         self.server = server
+        self.site_id = site.id
+        self.server_id = server.id
         self.validation_output = None
         self.deployment_error = None
         self.deployed_at = None
@@ -211,6 +222,40 @@ class DeploymentEngineImportTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(create_deployment.await_args.kwargs["deployed_by"], "alice")
 
+    async def test_create_deployment_rejects_excessive_import_depth(self) -> None:
+        engine = DeploymentEngine()
+        session = SimpleNamespace()
+        template_chain = {
+            f"snippet-{index}": SimpleNamespace(
+                name=f"snippet-{index}",
+                caddyfile=(f"import snippet-{index + 1}" if index < 10 else "respond ok"),
+                variables={},
+            )
+            for index in range(11)
+        }
+        root_template = SimpleNamespace(
+            name="root-template",
+            caddyfile="import snippet-0",
+            variables={},
+        )
+        site = SimpleNamespace(
+            id=1,
+            domain="example.com",
+            enabled=True,
+            variables={"upstream": "127.0.0.1:8080"},
+            ssl_enabled=True,
+            ssl_provider="letsencrypt",
+            config_template=root_template,
+        )
+        server = SimpleNamespace(id=2, name="srv-1", active=True)
+
+        with patch(
+            "app.services.deployment_engine.config_template_repository.get_by_name",
+            AsyncMock(side_effect=lambda _session, name: template_chain.get(name)),
+        ):
+            with self.assertRaisesRegex(DeploymentError, "Caddyfile import depth exceeded"):
+                await engine.create_deployment(session, site=site, server=server)
+
 
 class DeploymentEngineTemplateValidationTests(unittest.IsolatedAsyncioTestCase):
     async def test_validate_template_for_save_renders_full_config_before_adapt(self) -> None:
@@ -266,7 +311,7 @@ class DeploymentEngineTemplateValidationTests(unittest.IsolatedAsyncioTestCase):
 
 class DeploymentEngineExecutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_apply_state_transition_surfaces_concurrent_modification(self) -> None:
-        session = SimpleNamespace(flush=AsyncMock(side_effect=StaleDataError()))
+        session = SimpleNamespace(flush=AsyncMock(side_effect=StaleDataError()), begin_nested=lambda: _AsyncNullContext())
         deployment = SimpleNamespace(id=42, status=DeploymentStatus.PENDING)
 
         with self.assertRaisesRegex(DeploymentError, "Concurrent modification of deployment 42"):
@@ -275,6 +320,21 @@ class DeploymentEngineExecutionTests(unittest.IsolatedAsyncioTestCase):
                 deployment,
                 DeploymentStatus.DEPLOYING,
                 lambda: setattr(deployment, "status", DeploymentStatus.DEPLOYING),
+            )
+
+    async def test_apply_state_transition_surfaces_constraint_violation(self) -> None:
+        session = SimpleNamespace(
+            flush=AsyncMock(side_effect=IntegrityError("stmt", {}, Exception("boom"))),
+            begin_nested=lambda: _AsyncNullContext(),
+        )
+        deployment = SimpleNamespace(id=42, status=DeploymentStatus.DEPLOYING)
+
+        with self.assertRaisesRegex(DeploymentError, "Deployment constraint violation for deployment 42"):
+            await DeploymentEngine._apply_state_transition(
+                session,
+                deployment,
+                DeploymentStatus.DEPLOYED,
+                lambda: setattr(deployment, "status", DeploymentStatus.DEPLOYED),
             )
 
     async def test_execute_deployment_loads_complete_server_config(self) -> None:
@@ -352,6 +412,7 @@ class DeploymentEngineExecutionTests(unittest.IsolatedAsyncioTestCase):
             patch("app.services.deployment_engine.caddy_service.adapt_caddyfile_to_json", new=AsyncMock(return_value=managed_payload)) as adapt,
             patch("app.services.deployment_engine.caddy_service.fetch_config", new=AsyncMock(return_value=current_runtime_config)) as fetch_config,
             patch("app.services.deployment_engine.caddy_service.deploy_config", new=AsyncMock(return_value={"status": "ok"})) as deploy_config,
+            patch("app.services.deployment_engine.deployment_repository.get_active_deployment", new=AsyncMock(return_value=None)),
             patch("app.services.deployment_engine.publish_resource_event", new=AsyncMock()),
         ):
             result = await engine.execute_deployment(session, deployment, deployed_by="alice")
@@ -428,6 +489,7 @@ class DeploymentEngineExecutionTests(unittest.IsolatedAsyncioTestCase):
             patch("app.services.deployment_engine.caddy_service.adapt_caddyfile_to_json", new=AsyncMock(return_value=managed_payload)),
             patch("app.services.deployment_engine.caddy_service.fetch_config", new=AsyncMock(return_value=existing_runtime_config)),
             patch("app.services.deployment_engine.caddy_service.deploy_config", new=AsyncMock(return_value={"status": "ok"})) as deploy_config,
+            patch("app.services.deployment_engine.deployment_repository.get_active_deployment", new=AsyncMock(return_value=None)),
             patch("app.services.deployment_engine.publish_resource_event", new=AsyncMock()),
         ):
             result = await engine.execute_deployment(session, deployment, deployed_by="alice")
@@ -437,9 +499,9 @@ class DeploymentEngineExecutionTests(unittest.IsolatedAsyncioTestCase):
         deployed_bodies = [route["handle"][0]["body"] for route in deployed_routes]
         self.assertEqual(deployed_bodies, ["ui", "new-beta"])
 
-    async def test_execute_deployment_marks_failed_on_unexpected_render_exception(self) -> None:
+    async def test_execute_deployment_propagates_unexpected_render_exception(self) -> None:
         engine = DeploymentEngine()
-        session = SimpleNamespace(flush=AsyncMock())
+        session = SimpleNamespace(flush=AsyncMock(), begin_nested=lambda: _AsyncNullContext())
         server = SimpleNamespace(id=7, name="srv-1")
         current_site = SimpleNamespace(
             id=2,
@@ -459,11 +521,46 @@ class DeploymentEngineExecutionTests(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(side_effect=RuntimeError("boom")),
             ),
         ):
+            with self.assertRaisesRegex(RuntimeError, "boom"):
+                await engine.execute_deployment(session, deployment, deployed_by="alice")
+
+        self.assertEqual(deployment.status, DeploymentStatus.DEPLOYING)
+
+    async def test_execute_deployment_marks_failed_on_activation_constraint_violation(self) -> None:
+        engine = DeploymentEngine()
+        session = SimpleNamespace(
+            flush=AsyncMock(
+                side_effect=[
+                    None,
+                    IntegrityError("stmt", {}, Exception("boom")),
+                    None,
+                ]
+            ),
+        )
+        server = SimpleNamespace(id=7, name="srv-1")
+        current_site = SimpleNamespace(
+            id=2,
+            domain="beta.example.com",
+            config_template=SimpleNamespace(name="beta", caddyfile="respond beta", variables={}),
+            variables={},
+            ssl_enabled=True,
+            ssl_provider="letsencrypt",
+        )
+        deployment = _FakeDeployment(site=current_site, server=server)
+
+        with (
+            patch("app.services.deployment_engine.site_repository.get_deployed_sites", new=AsyncMock(return_value=[])),
+            patch("app.services.deployment_engine.caddy_service.adapt_caddyfile_to_json", new=AsyncMock(return_value={"apps": {}})),
+            patch("app.services.deployment_engine.caddy_service.fetch_config", new=AsyncMock(return_value={})),
+            patch("app.services.deployment_engine.caddy_service.extract_sites", return_value=set()),
+            patch("app.services.deployment_engine.caddy_service.merge_managed_config", return_value={"apps": {}}),
+            patch("app.services.deployment_engine.caddy_service.deploy_config", new=AsyncMock(return_value={"status": "ok"})),
+            patch("app.services.deployment_engine.deployment_repository.get_active_deployment", new=AsyncMock(return_value=None)),
+        ):
             result = await engine.execute_deployment(session, deployment, deployed_by="alice")
 
         self.assertFalse(result.success)
-        self.assertEqual(result.message, "Deployment failed")
-        self.assertEqual(result.error, "boom")
+        self.assertEqual(result.error, "Deployment constraint violation for deployment 99")
         self.assertEqual(deployment.status, DeploymentStatus.FAILED)
 
 

@@ -13,7 +13,8 @@ Valid transitions:
 - VALID -> DEPLOYING
 - INVALID -> PENDING
 - DEPLOYING -> DEPLOYED, FAILED
-- DEPLOYED -> ROLLBACK_PENDING
+- DEPLOYED -> ROLLBACK_PENDING, SUPERSEDED
+- SUPERSEDED -> terminal
 - FAILED -> PENDING
 - ROLLBACK_PENDING -> ROLLED_BACK, FAILED
 - ROLLED_BACK -> terminal
@@ -40,6 +41,7 @@ _FAILED_STATUSES: Final[frozenset[DeploymentStatus]] = frozenset({
 _NON_ACTIVE_STATUSES: Final[frozenset[DeploymentStatus]] = frozenset({
     DeploymentStatus.DEPLOYED,
     DeploymentStatus.ROLLED_BACK,
+    DeploymentStatus.SUPERSEDED,
 }) | _FAILED_STATUSES
 
 _TRANSITIONS: Final[Mapping[DeploymentStatus, frozenset[DeploymentStatus]]] = MappingProxyType({
@@ -48,7 +50,8 @@ _TRANSITIONS: Final[Mapping[DeploymentStatus, frozenset[DeploymentStatus]]] = Ma
     DeploymentStatus.VALID: frozenset({DeploymentStatus.DEPLOYING}),
     DeploymentStatus.INVALID: frozenset({DeploymentStatus.PENDING}),
     DeploymentStatus.DEPLOYING: frozenset({DeploymentStatus.DEPLOYED, DeploymentStatus.FAILED}),
-    DeploymentStatus.DEPLOYED: frozenset({DeploymentStatus.ROLLBACK_PENDING}),
+    DeploymentStatus.DEPLOYED: frozenset({DeploymentStatus.ROLLBACK_PENDING, DeploymentStatus.SUPERSEDED}),
+    DeploymentStatus.SUPERSEDED: frozenset(),
     DeploymentStatus.FAILED: frozenset({DeploymentStatus.PENDING}),
     DeploymentStatus.ROLLBACK_PENDING: frozenset({DeploymentStatus.ROLLED_BACK, DeploymentStatus.FAILED}),
     DeploymentStatus.ROLLED_BACK: frozenset(),
@@ -65,10 +68,6 @@ def _targets_for(current: DeploymentStatus) -> frozenset[DeploymentStatus]:
         return _TRANSITIONS[current]
     except KeyError as exc:
         raise ValueError(f"Unhandled deployment status: {current!r}") from exc
-
-
-def _deployment_id(deployment: Deployment) -> int | None:
-    return getattr(deployment, "id", None)
 
 
 class InvalidStateTransitionError(Exception):
@@ -156,7 +155,7 @@ class DeploymentStateMachine:
         self.validate_transition(
             deployment.status,
             DeploymentStatus.VALIDATING,
-            deployment_id=_deployment_id(deployment),
+            deployment_id=deployment.id,
         )
         deployment.status = DeploymentStatus.VALIDATING
         deployment.validation_output = None
@@ -166,7 +165,7 @@ class DeploymentStateMachine:
         self.validate_transition(
             deployment.status,
             DeploymentStatus.VALID,
-            deployment_id=_deployment_id(deployment),
+            deployment_id=deployment.id,
         )
         deployment.status = DeploymentStatus.VALID
         deployment.validation_output = output
@@ -177,7 +176,7 @@ class DeploymentStateMachine:
         self.validate_transition(
             deployment.status,
             DeploymentStatus.INVALID,
-            deployment_id=_deployment_id(deployment),
+            deployment_id=deployment.id,
         )
         deployment.status = DeploymentStatus.INVALID
         deployment.validation_output = error
@@ -187,7 +186,7 @@ class DeploymentStateMachine:
         self.validate_transition(
             deployment.status,
             DeploymentStatus.DEPLOYING,
-            deployment_id=_deployment_id(deployment),
+            deployment_id=deployment.id,
         )
         deployment.status = DeploymentStatus.DEPLOYING
 
@@ -196,11 +195,10 @@ class DeploymentStateMachine:
         self.validate_transition(
             deployment.status,
             DeploymentStatus.DEPLOYED,
-            deployment_id=_deployment_id(deployment),
+            deployment_id=deployment.id,
         )
         deployment.status = DeploymentStatus.DEPLOYED
-        if hasattr(deployment, "rendered_checksum"):
-            deployment.deployed_checksum = deployment.rendered_checksum
+        deployment.deployed_checksum = deployment.rendered_checksum
         deployment.deployed_at = datetime.now(UTC)
         deployment.deployed_by = deployed_by
         deployment.deployment_error = None
@@ -210,17 +208,26 @@ class DeploymentStateMachine:
         self.validate_transition(
             deployment.status,
             DeploymentStatus.FAILED,
-            deployment_id=_deployment_id(deployment),
+            deployment_id=deployment.id,
         )
         deployment.status = DeploymentStatus.FAILED
         deployment.deployment_error = error
+
+    def mark_superseded(self, deployment: Deployment) -> None:
+        """Mutate ``deployment`` in place to SUPERSEDED. Caller must persist it."""
+        self.validate_transition(
+            deployment.status,
+            DeploymentStatus.SUPERSEDED,
+            deployment_id=deployment.id,
+        )
+        deployment.status = DeploymentStatus.SUPERSEDED
 
     def start_rollback(self, deployment: Deployment) -> None:
         """Mutate ``deployment`` in place to ROLLBACK_PENDING. Caller must persist it."""
         self.validate_transition(
             deployment.status,
             DeploymentStatus.ROLLBACK_PENDING,
-            deployment_id=_deployment_id(deployment),
+            deployment_id=deployment.id,
         )
         deployment.status = DeploymentStatus.ROLLBACK_PENDING
 
@@ -229,7 +236,7 @@ class DeploymentStateMachine:
         self.validate_transition(
             deployment.status,
             DeploymentStatus.ROLLED_BACK,
-            deployment_id=_deployment_id(deployment),
+            deployment_id=deployment.id,
         )
         deployment.status = DeploymentStatus.ROLLED_BACK
         deployment.deployment_error = None
@@ -239,7 +246,7 @@ class DeploymentStateMachine:
         self.validate_transition(
             deployment.status,
             DeploymentStatus.PENDING,
-            deployment_id=_deployment_id(deployment),
+            deployment_id=deployment.id,
         )
         deployment.status = DeploymentStatus.PENDING
         deployment.validation_output = None

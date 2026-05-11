@@ -9,10 +9,10 @@
         </div>
     </div>
 
-    <div class="panel-card panel-card--table audit-logs-card flex-grow-1 d-flex flex-column">
+    <div class="panel-card panel-card--table audit-logs-card">
         <div class="panel-card__header flex-wrap">
             <h2 class="h5 mb-0">Latest events</h2>
-            <div class="audit-logs-filters d-flex flex-wrap gap-2 align-items-center ms-auto w-100">
+            <div class="audit-logs-filters d-flex flex-wrap gap-2 align-items-center ms-auto mt-3 mt-md-0">
                 <input type="text" id="filterSearch" class="form-control form-control-sm audit-logs-filter"
                     placeholder="Search..." aria-label="Search logs">
                 <select id="filterUsername" class="form-select form-select-sm audit-logs-filter"
@@ -30,7 +30,7 @@
                     class="btn btn-outline-secondary btn-sm audit-logs-filter-reset">Reset</button>
             </div>
         </div>
-        <div class="audit-logs-stream flex-grow-1" id="auditTableContainer">
+        <div class="audit-logs-stream" id="auditTableContainer">
             <div id="auditTableBody" class="audit-feed">
                 <div id="loadingRow" class="audit-feed__status">
                     <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>

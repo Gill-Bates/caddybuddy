@@ -303,76 +303,7 @@ class UiSitesTests(unittest.IsolatedAsyncioTestCase):
             [{"category": "danger", "message": "This Caddyfile requires an upstream target."}],
         )
 
-    async def test_deploy_site_propagates_unexpected_exceptions(self) -> None:
-        request = Request(
-            {
-                "type": "http",
-                "method": "POST",
-                "path": "/sites/9/deploy",
-                "headers": [],
-                "query_string": b"",
-                "session": {},
-                "client": ("127.0.0.1", 12345),
-            }
-        )
-        session = SimpleNamespace(rollback=AsyncMock())
-        current_user = SimpleNamespace(id=1, role="admin", username="alice")
-        site = SimpleNamespace(id=9, domain="secure.example.com")
-        server = SimpleNamespace(id=7, name="edge-1")
-
-        with (
-            patch("app.routers.ui.sites.require_admin", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.sites.validated_form", new=AsyncMock(return_value={"server_id": "7"})),
-            patch("app.routers.ui.sites.site_repository.get_by_id", new=AsyncMock(return_value=site)),
-            patch("app.routers.ui.sites.server_repository.get_by_id", new=AsyncMock(return_value=server)),
-            patch(
-                "app.routers.ui.sites.deployment_engine.deploy",
-                new=AsyncMock(side_effect=RuntimeError("boom")),
-            ),
-        ):
-            with self.assertRaisesRegex(RuntimeError, "boom"):
-                await sites.deploy_site(request, site_id=9, session=session)
-
-        session.rollback.assert_not_awaited()
-
-    async def test_deploy_site_flashes_actionable_message_for_missing_upstream(self) -> None:
-        request = Request(
-            {
-                "type": "http",
-                "method": "POST",
-                "path": "/sites/9/deploy",
-                "headers": [],
-                "query_string": b"",
-                "session": {},
-                "client": ("127.0.0.1", 12345),
-            }
-        )
-        session = SimpleNamespace(rollback=AsyncMock())
-        current_user = SimpleNamespace(id=1, role="admin", username="alice")
-        site = SimpleNamespace(id=9, domain="secure.example.com")
-        server = SimpleNamespace(id=7, name="edge-1")
-
-        with (
-            patch("app.routers.ui.sites.require_admin", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.sites.validated_form", new=AsyncMock(return_value={"server_id": "7"})),
-            patch("app.routers.ui.sites.site_repository.get_by_id", new=AsyncMock(return_value=site)),
-            patch("app.routers.ui.sites.server_repository.get_by_id", new=AsyncMock(return_value=server)),
-            patch(
-                "app.routers.ui.sites.deployment_engine.deploy",
-                new=AsyncMock(side_effect=sites.DeploymentError("Configuration rendering failed: upstream")),
-            ),
-        ):
-            response = await sites.deploy_site(request, site_id=9, session=session)
-
-        session.rollback.assert_awaited_once()
-        self.assertEqual(response.status_code, 303)
-        self.assertEqual(response.headers["location"], "/sites/9")
-        self.assertEqual(
-            request.session["flashes"],
-            [{"category": "danger", "message": "Deployment error: This Caddyfile requires an upstream target."}],
-        )
-
-    async def test_deploy_site_returns_navigation_page_on_success(self) -> None:
+    async def test_deploy_site_redirects_to_queue_with_preselected_server(self) -> None:
         request = Request(
             {
                 "type": "http",
@@ -388,26 +319,52 @@ class UiSitesTests(unittest.IsolatedAsyncioTestCase):
         current_user = SimpleNamespace(id=1, role="admin", username="alice")
         site = SimpleNamespace(id=9, domain="secure.example.com")
         server = SimpleNamespace(id=7, name="edge-1")
-        result = SimpleNamespace(success=True)
 
         with (
             patch("app.routers.ui.sites.require_admin", new=AsyncMock(return_value=current_user)),
             patch("app.routers.ui.sites.validated_form", new=AsyncMock(return_value={"server_id": "7"})),
             patch("app.routers.ui.sites.site_repository.get_by_id", new=AsyncMock(return_value=site)),
             patch("app.routers.ui.sites.server_repository.get_by_id", new=AsyncMock(return_value=server)),
-            patch("app.routers.ui.sites.deployment_engine.deploy", new=AsyncMock(return_value=result)),
-            patch("app.routers.ui.sites.audit_commit_and_flash", new=AsyncMock()) as audit_commit,
-            patch("app.routers.ui.sites.publish_resource_event", new=AsyncMock()) as publish_resource_event,
         ):
             response = await sites.deploy_site(request, site_id=9, session=session)
 
-        audit_commit.assert_awaited_once()
-        publish_resource_event.assert_awaited_once_with("site", "updated", "9")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers["cache-control"], "no-store")
-        body = response.body.decode("utf-8")
-        self.assertIn('http-equiv="refresh" content="0;url=/sites/9"', body)
-        self.assertIn('window.location.replace("/sites/9")', body)
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/queue?site_id=9&server_id=7")
+        self.assertEqual(
+            request.session["flashes"],
+            [{
+                "category": "info",
+                "message": "Review the queued deployment for 'secure.example.com' on 'edge-1' and confirm it from the queue.",
+            }],
+        )
+
+    async def test_deploy_site_rejects_missing_target_server_before_queue_redirect(self) -> None:
+        request = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/sites/9/deploy",
+                "headers": [],
+                "query_string": b"",
+                "session": {},
+                "client": ("127.0.0.1", 12345),
+            }
+        )
+        session = SimpleNamespace()
+        current_user = SimpleNamespace(id=1, role="admin", username="alice")
+
+        with (
+            patch("app.routers.ui.sites.require_admin", new=AsyncMock(return_value=current_user)),
+            patch("app.routers.ui.sites.validated_form", new=AsyncMock(return_value={"server_id": ""})),
+        ):
+            response = await sites.deploy_site(request, site_id=9, session=session)
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/sites/9")
+        self.assertEqual(
+            request.session["flashes"],
+            [{"category": "danger", "message": "Target server is required."}],
+        )
 
     def test_deployment_navigation_response_normalizes_non_local_target(self) -> None:
         response = sites._deployment_navigation_response("javascript:alert(1)")

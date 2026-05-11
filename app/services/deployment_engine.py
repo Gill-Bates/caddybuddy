@@ -21,12 +21,14 @@ Do NOT deploy configurations directly via CaddyService.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -65,6 +67,41 @@ _BUILTIN_IMPORT_SNIPPETS: dict[str, str] = {
     output stdout
 }""",
 }
+_MAX_TEMPLATE_IMPORT_DEPTH = 10
+
+
+@asynccontextmanager
+async def _optional_nested_transaction(session: AsyncSession):
+    begin_nested = getattr(session, "begin_nested", None)
+    if begin_nested is None:
+        yield
+        return
+
+    async with begin_nested():
+        yield
+
+
+def _deployment_transition_snapshot(deployment: Deployment) -> dict[str, object | None]:
+    snapshot: dict[str, object | None] = {}
+    for attr_name in (
+        "status",
+        "validation_output",
+        "deployment_error",
+        "deployed_checksum",
+        "deployed_at",
+        "deployed_by",
+    ):
+        if hasattr(deployment, attr_name):
+            snapshot[attr_name] = getattr(deployment, attr_name)
+    return snapshot
+
+
+def _restore_deployment_transition_snapshot(
+    deployment: Deployment,
+    snapshot: dict[str, object | None],
+) -> None:
+    for attr_name, value in snapshot.items():
+        setattr(deployment, attr_name, value)
 
 
 @dataclass(slots=True, frozen=True)
@@ -130,8 +167,12 @@ class DeploymentEngine:
         reserved_vars: dict[str, str],
         strict: bool = False,
         import_stack: tuple[str, ...] = (),
+        max_depth: int = _MAX_TEMPLATE_IMPORT_DEPTH,
     ) -> RenderResult:
         template_name = getattr(template, "name", "") or "<unnamed>"
+        if len(import_stack) >= max_depth:
+            chain = " -> ".join((*import_stack, template_name))
+            raise DeploymentError(f"Caddyfile import depth exceeded ({max_depth}): {chain}")
         if template_name in import_stack:
             cycle = " -> ".join((*import_stack, template_name))
             raise DeploymentError(f"Circular Caddyfile import detected: {cycle}")
@@ -179,6 +220,7 @@ class DeploymentEngine:
                 reserved_vars=reserved_vars,
                 strict=strict,
                 import_stack=(*import_stack, template_name),
+                max_depth=max_depth,
             )
             warnings.extend(imported_result.warnings)
             missing_vars.update(imported_result.missing_vars)
@@ -303,12 +345,25 @@ class DeploymentEngine:
         target: DeploymentStatus,
         transition: Callable[[], None],
     ) -> None:
-        transition()
+        del target
+        supports_nested_transaction = callable(getattr(session, "begin_nested", None))
+        snapshot = _deployment_transition_snapshot(deployment)
         try:
-            await session.flush()
+            async with _optional_nested_transaction(session):
+                transition()
+                await session.flush()
         except StaleDataError as exc:
+            if not supports_nested_transaction:
+                _restore_deployment_transition_snapshot(deployment, snapshot)
             raise DeploymentError(
-                f"Concurrent modification of deployment {getattr(deployment, 'id', None)}",
+                f"Concurrent modification of deployment {deployment.id}",
+                deployment=deployment,
+            ) from exc
+        except IntegrityError as exc:
+            if not supports_nested_transaction:
+                _restore_deployment_transition_snapshot(deployment, snapshot)
+            raise DeploymentError(
+                f"Deployment constraint violation for deployment {deployment.id}",
                 deployment=deployment,
             ) from exc
 
@@ -479,15 +534,6 @@ class DeploymentEngine:
                 message="Failed to render complete server configuration",
                 error_msg=error_msg,
             )
-        except Exception as exc:
-            error_msg = str(exc)
-            logger.exception("Deployment %s failed unexpectedly", getattr(deployment, "id", None))
-            return await self._transition_to_failed(
-                session,
-                deployment,
-                message="Deployment failed",
-                error_msg=error_msg,
-            )
 
         # Deploy to server via Caddy Admin API
         try:
@@ -507,28 +553,36 @@ class DeploymentEngine:
                 message="Deployment to server failed",
                 error_msg=error_msg,
             )
-        except Exception as exc:
-            error_msg = str(exc)
-            logger.exception("Deployment %s failed unexpectedly", getattr(deployment, "id", None))
-            return await self._transition_to_failed(
-                session,
-                deployment,
-                message="Deployment failed",
-                error_msg=error_msg,
-            )
 
         # Success
         try:
+            # The partial unique index is the concurrency backstop if two deployments
+            # race to become the active DEPLOYED row for the same site/server pair.
+            previous_deployment = await deployment_repository.get_active_deployment(
+                session, deployment.site_id, deployment.server_id
+            )
+            if previous_deployment and previous_deployment.id != deployment.id:
+                await self._apply_state_transition(
+                    session,
+                    previous_deployment,
+                    DeploymentStatus.SUPERSEDED,
+                    lambda: deployment_state_machine.mark_superseded(previous_deployment),
+                )
+
             await self._apply_state_transition(
                 session,
                 deployment,
                 DeploymentStatus.DEPLOYED,
                 lambda: deployment_state_machine.mark_deployed(deployment, deployed_by),
             )
-        except InvalidStateTransitionError as exc:
-            return self._failed_result(deployment, message=str(exc), error=str(exc))
-        except DeploymentError as exc:
-            return self._failed_result(deployment, message=str(exc), error=str(exc))
+        except (InvalidStateTransitionError, DeploymentError) as exc:
+            error_msg = str(exc)
+            return await self._transition_to_failed(
+                session,
+                deployment,
+                message=error_msg,
+                error_msg=error_msg,
+            )
 
         logger.info(
             "Deployment %d successfully deployed to server '%s'",

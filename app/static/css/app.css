@@ -228,6 +228,7 @@ body.app-body--menu-open {
 
 .app-footer {
     padding: 0 1.2rem 0.9rem;
+    margin-bottom: 0.5rem;
     font-size: 0.8rem;
     color: var(--cb-muted);
 }
@@ -499,6 +500,28 @@ body.app-body--menu-open {
     min-width: 0;
 }
 
+.cb-inline-history {
+    border-top: 1px solid rgba(21, 34, 46, 0.08);
+    padding-top: 1rem;
+}
+
+.cb-inline-history__summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    cursor: pointer;
+    list-style: none;
+}
+
+.cb-inline-history__summary::-webkit-details-marker {
+    display: none;
+}
+
+.cb-inline-history__card {
+    height: auto;
+}
+
 .table-responsive {
     width: 100%;
     max-width: 100%;
@@ -654,22 +677,17 @@ body.app-body--menu-open {
 /* ── Audit Logs: Feed layout ─────────────────────────────────────────── */
 
 .audit-logs-page {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow: hidden;
+    min-width: 0;
 }
 
 .audit-logs-card {
     min-width: 0;
-    min-height: 0;
-    max-height: 100%;
-    overflow: visible;
+    overflow: hidden;
 }
 
 .audit-logs-stream {
     min-width: 0;
-    min-height: 0;
-    max-height: 100%;
+    max-height: min(70dvh, 52rem);
     width: 100%;
     max-width: 100%;
     overflow-y: auto;
@@ -695,6 +713,7 @@ body.app-body--menu-open {
 
 .audit-logs-filters {
     min-width: 0;
+    row-gap: 0.5rem;
 }
 
 .audit-logs-filter {
@@ -704,7 +723,17 @@ body.app-body--menu-open {
 }
 
 .audit-logs-filter-reset {
-    flex: 0 0 auto;
+    flex: 0 1 auto;
+    white-space: nowrap;
+}
+
+.deployments-table-card {
+    overflow: hidden;
+}
+
+.deployments-table-scroll {
+    max-height: min(70dvh, 52rem);
+    overflow-y: auto;
 }
 
 /* ── Audit row ───────────────────────────────────────────────────────── */
@@ -889,19 +918,12 @@ body.app-body--menu-open {
 }
 
 @media (min-width: 992px) {
-    .audit-logs-page {
-        height: calc(100dvh - 5.8rem);
-    }
-
-    .audit-logs-card {
-        flex: 1 1 auto;
-        max-height: 100%;
-        overflow: hidden;
-    }
-
     .audit-logs-stream {
-        flex: 1 1 auto;
-        max-height: 100%;
+        max-height: min(74dvh, 60rem);
+    }
+
+    .deployments-table-scroll {
+        max-height: min(74dvh, 60rem);
     }
 }
 
@@ -1201,6 +1223,7 @@ body.app-body--menu-open {
 
     .app-page {
         gap: 0.9rem;
+        overflow-x: hidden;
     }
 
     .app-page__header {
@@ -1232,17 +1255,17 @@ body.app-body--menu-open {
         padding: 0 0.2rem 0.2rem;
     }
 
-    .audit-logs-page {
-        overflow: visible;
-    }
-
     .audit-logs-card {
         overflow: visible;
         max-height: none;
     }
 
     .audit-logs-stream {
-        max-height: calc(100dvh - 14rem);
+        max-height: none;
+    }
+
+    .deployments-table-scroll {
+        max-height: none;
     }
 
     .audit-logs-filters {

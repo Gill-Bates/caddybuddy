@@ -465,7 +465,7 @@ async def deploy_site(
     site_id: int,
     session: AsyncSession = Depends(get_db_session),
 ):
-    """Deploy a site to a server."""
+    """Send a site deployment request to the queue with a preselected target server."""
     current_user = await require_admin(request, session)
     if current_user is None:
         return redirect_to("/")
@@ -487,40 +487,12 @@ async def deploy_site(
         push_flash(request, "danger", "Target server not found.")
         return redirect_to(f"/sites/{site_id}")
 
-    try:
-        result = await deployment_engine.deploy(
-            session,
-            site=site,
-            server=server,
-            deployed_by=current_user.username,
-        )
-    except DeploymentError as exc:
-        await session.rollback()
-        message = str(exc)
-        if message == "Configuration rendering failed: upstream":
-            message = "This Caddyfile requires an upstream target."
-        push_flash(request, "danger", f"Deployment error: {message}")
-        return redirect_to(f"/sites/{site_id}")
-
-    if result.success:
-        await audit_commit_and_flash(
-            session,
-            request,
-            action="deploy",
-            resource_type="site",
-            resource_id=str(site_id),
-            actor=current_user,
-            flashes=(("success", f"Site '{site.domain}' deployed to '{server.name}' successfully."),),
-        )
-        await publish_resource_event("site", "updated", str(site_id))
-        return _deployment_navigation_response(f"/sites/{site_id}")
-    else:
-        # The deployment engine persists failed deployment state/history in-session,
-        # so the failure branch must commit those records explicitly.
-        await session.commit()
-        push_flash(request, "danger", f"Deployment failed: {result.error or result.message}")
-
-    return redirect_to(f"/sites/{site_id}")
+    push_flash(
+        request,
+        "info",
+        f"Review the queued deployment for '{site.domain}' on '{server.name}' and confirm it from the queue.",
+    )
+    return redirect_to(f"/queue?site_id={site.id}&server_id={server.id}")
 
 
 @router.post("/sites/preview")

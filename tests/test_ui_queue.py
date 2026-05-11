@@ -117,6 +117,39 @@ class QueueRouterTests(unittest.IsolatedAsyncioTestCase):
 
         list_pending.assert_awaited_once_with(session)
 
+    async def test_queue_page_prefills_selected_site_and_server_from_query_params(self) -> None:
+        from app.routers.ui import queue
+
+        request = Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/queue",
+                "headers": [],
+                "query_string": b"site_id=7&server_id=3",
+                "session": {},
+                "client": ("127.0.0.1", 12345),
+            }
+        )
+        session = AsyncMock()
+        current_user = SimpleNamespace(id=1, role="admin", username="alice")
+        pending_site = SimpleNamespace(id=7, domain="example.com", deployments=[])
+        server = SimpleNamespace(id=3, name="prod", active=True)
+
+        with (
+            patch("app.routers.ui.queue.require_user", new=AsyncMock(return_value=current_user)),
+            patch("app.routers.ui.queue.site_repository.list_pending_deployment", new=AsyncMock(return_value=[pending_site])),
+            patch("app.routers.ui.queue.server_repository.list_all", new=AsyncMock(return_value=[server])),
+            patch("app.routers.ui.queue.ensure_csrf_token", return_value="csrf-123"),
+            patch("app.routers.ui.queue.render_template", return_value="rendered") as render_template,
+        ):
+            response = await queue.queue_page(request, session=session)
+
+        self.assertEqual(response, "rendered")
+        render_context = render_template.call_args.kwargs["context"]
+        self.assertEqual(render_context["selected_site_id"], 7)
+        self.assertEqual(render_context["selected_server_id"], 3)
+
     def test_get_latest_deployment_returns_none_for_no_deployments(self) -> None:
         """Sites with no deployments should return None."""
         from app.routers.ui.queue import _get_latest_deployment

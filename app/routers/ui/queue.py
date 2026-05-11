@@ -130,6 +130,12 @@ async def queue_page(
 
     pending_sites = await site_repository.list_pending_deployment(session)
     servers = await server_repository.list_all(session, active_only=True)
+    requested_site_id = parse_int(request.query_params.get("site_id"))
+    requested_server_id = parse_int(request.query_params.get("server_id"))
+    pending_site_ids = {site.id for site in pending_sites}
+    active_server_ids = {server.id for server in servers}
+    selected_site_id = requested_site_id if requested_site_id in pending_site_ids else None
+    selected_server_id = requested_server_id if requested_server_id in active_server_ids else None
 
     # Enrich sites with deployment info
     sites_info = []
@@ -147,6 +153,8 @@ async def queue_page(
         "pending_count": len(pending_sites),
         "servers": servers,
         "has_servers": len(servers) > 0,
+        "selected_site_id": selected_site_id,
+        "selected_server_id": selected_server_id,
         "csrf_token": ensure_csrf_token(request),
     }
     return render_template(request, "queue.html", current_user=current_user, context=context)

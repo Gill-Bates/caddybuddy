@@ -78,11 +78,11 @@ The global Caddy config remains outside the app. This usually contains:
 - reusable snippets such as `(security_headers)` or `(default_log)`
 - the final `import /path/to/sites/*.caddy`
 
-Inside the UI, the `Caddyfile` section stores only the inner directives for a single site. The app combines those directives with the selected site domain and renders the outer site block automatically.
+Inside the UI, the `Caddyfile` section stores only the inner directives for a single site. The app combines those directives with the selected site's hostname and renders the outer site block automatically.
 
 Example UI input:
 
-`Domain`
+`Site Hostname`
 
 ```text
 example.com

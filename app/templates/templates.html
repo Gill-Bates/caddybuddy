@@ -11,7 +11,7 @@
 
     <div class="row app-grid">
         <div class="col-xl-5">
-            <div class="panel-card">
+            <div class="panel-card" id="form-panel">
                 <div class="panel-card__header">
                     <h2 class="h5 mb-0">{% if selected_template %}Edit Caddyfile{% else %}Create Caddyfile{% endif %}
                     </h2>
@@ -72,7 +72,7 @@
 
                     <div class="d-flex gap-2">
                         <button type="submit" class="btn btn-primary flex-grow-1">
-                            {% if selected_template %}Update Caddyfile{% else %}Create Caddyfile{% endif %}
+                            {% if selected_template %}Save Config{% else %}Create Caddyfile{% endif %}
                         </button>
                         {% if selected_template %}
                         <a href="{{ request.app.url_path_for('templates_page') }}"
@@ -105,6 +105,69 @@
                 </div>
                 {% endif %}
 
+                {% if revisions %}
+                <details class="cb-inline-history mt-4">
+                    <summary class="cb-inline-history__summary">
+                        <span class="fw-semibold">Caddyfile Revision History</span>
+                        <span class="badge text-bg-secondary">{{ revisions | length }}</span>
+                    </summary>
+                    <div class="panel-card panel-card--table cb-inline-history__card mt-3">
+                        <div class="panel-card__header">
+                            <h2 class="h5 mb-0">Caddyfile Revision History</h2>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table align-middle mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>Version</th>
+                                        <th>Summary</th>
+                                        <th>Created</th>
+                                        <th class="text-end">Checksum</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for revision in revisions %}
+                                    <tr {% if revision.checksum==selected_template.checksum %}class="table-active" {%
+                                        endif %}>
+                                        <td>
+                                            <span class="badge text-bg-secondary">v{{ revision.version }}</span>
+                                            {% if revision.checksum == selected_template.checksum %}
+                                            <span class="badge text-bg-primary">Current</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>{{ revision.change_summary or 'No summary' }}</td>
+                                        <td>
+                                            <div>{{ revision.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
+                                            {% if revision.created_by %}
+                                            <div class="small text-body-secondary">by {{ revision.created_by }}</div>
+                                            {% endif %}
+                                        </td>
+                                        <td class="text-end">
+                                            <code class="small">{{ revision.checksum[:8] }}</code>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </details>
+                {% endif %}
+
+                <hr class="my-4">
+                {% if selected_template.sites %}
+                <button type="button" class="btn btn-outline-danger w-100" disabled
+                    title="Cannot delete - Caddyfile is in use by {{ selected_template.sites | length }} site(s)">
+                    Delete Caddyfile
+                </button>
+                {% else %}
+                <form action="{{ request.app.url_path_for('delete_template', template_id=selected_template.id) }}"
+                    method="post" onsubmit="return confirm('Delete Caddyfile {{ selected_template.name }}?')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="btn btn-outline-danger w-100">Delete Caddyfile</button>
+                </form>
+                {% endif %}
+
                 {% endif %}
             </div>
         </div>
@@ -133,48 +196,6 @@
                 {% endif %}
                 <pre
                     class="mb-0 p-3 bg-dark text-light rounded cb-code-block cb-code-block--scroll-lg"><code>{{ reference_live_config_json }}</code></pre>
-            </div>
-            {% endif %}
-
-            {% if selected_template and revisions %}
-            <div class="panel-card panel-card--table mb-4">
-                <div class="panel-card__header">
-                    <h2 class="h5 mb-0">Caddyfile Revision History</h2>
-                </div>
-                <div class="table-responsive">
-                    <table class="table align-middle mb-0">
-                        <thead>
-                            <tr>
-                                <th>Version</th>
-                                <th>Summary</th>
-                                <th>Created</th>
-                                <th class="text-end">Checksum</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for revision in revisions %}
-                            <tr {% if revision.checksum==selected_template.checksum %}class="table-active" {% endif %}>
-                                <td>
-                                    <span class="badge text-bg-secondary">v{{ revision.version }}</span>
-                                    {% if revision.checksum == selected_template.checksum %}
-                                    <span class="badge text-bg-primary">Current</span>
-                                    {% endif %}
-                                </td>
-                                <td>{{ revision.change_summary or 'No summary' }}</td>
-                                <td>
-                                    <div>{{ revision.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
-                                    {% if revision.created_by %}
-                                    <div class="small text-body-secondary">by {{ revision.created_by }}</div>
-                                    {% endif %}
-                                </td>
-                                <td class="text-end">
-                                    <code class="small">{{ revision.checksum[:8] }}</code>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
             </div>
             {% endif %}
 
@@ -209,7 +230,7 @@
                                 </td>
                                 <td class="text-end">
                                     <div class="d-inline-flex gap-2 flex-wrap justify-content-end">
-                                        <a href="{{ request.app.url_path_for('templates_page', template_id=template.id) }}"
+                                        <a href="{{ request.app.url_path_for('templates_page', template_id=template.id) }}#form-panel"
                                             class="btn btn-sm btn-outline-primary">Edit</a>
                                         <form
                                             action="{{ request.app.url_path_for('delete_template', template_id=template.id) }}"

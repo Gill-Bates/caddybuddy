@@ -22,6 +22,7 @@ class DeploymentStatusEnum(str, Enum):
     INVALID = "invalid"
     DEPLOYING = "deploying"
     DEPLOYED = "deployed"
+    SUPERSEDED = "superseded"
     FAILED = "failed"
     ROLLBACK_PENDING = "rollback_pending"
     ROLLED_BACK = "rolled_back"

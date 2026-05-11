@@ -121,7 +121,8 @@
                         <select id="queue-site-id" name="site_id" class="form-select queue-touch-target" required
                             aria-describedby="queueSelectedSiteHint">
                             {% for info in sites_info %}
-                            <option value="{{ info.site.id }}" data-site-domain="{{ info.site.domain }}">
+                            <option value="{{ info.site.id }}" data-site-domain="{{ info.site.domain }}" {% if
+                                selected_site_id==info.site.id %}selected{% endif %}>
                                 {{ info.site.domain }}
                             </option>
                             {% endfor %}
@@ -133,7 +134,8 @@
                             required aria-label="Target server for the selected pending site">
                             <option value="">Select server...</option>
                             {% for server in servers %}
-                            <option value="{{ server.id }}">{{ server.name }}</option>
+                            <option value="{{ server.id }}" {% if selected_server_id==server.id %}selected{% endif %}>{{
+                                server.name }}</option>
                             {% endfor %}
                         </select>
                     </div>
