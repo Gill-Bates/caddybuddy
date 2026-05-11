@@ -1,3 +1,8 @@
+//
+// tools/ui-lint/visual/visual-regression.mjs
+// Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
+//
+
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

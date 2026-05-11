@@ -170,6 +170,8 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
         self.assertEqual(
             executed_sql,
             [
+                "ALTER TABLE config_templates ADD COLUMN version_id INTEGER NOT NULL DEFAULT 1",
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_config_templates_checksum ON config_templates (checksum)",
                 "ALTER TABLE config_templates DROP COLUMN syntax_valid",
                 "ALTER TABLE config_templates DROP COLUMN validation_error",
             ],

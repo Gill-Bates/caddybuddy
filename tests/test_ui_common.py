@@ -113,7 +113,7 @@ class UiCommonTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(context["servers"], ["server"])
         self.assertEqual(context["recent_logs"], ["log"])
         list_all.assert_awaited_once_with(session, limit=5)
-        list_recent.assert_awaited_once_with(session, limit=8)
+        list_recent.assert_awaited_once_with(session, limit=10)
 
     def test_safe_next_accepts_none(self) -> None:
         self.assertEqual(_common.safe_next(None), "/")

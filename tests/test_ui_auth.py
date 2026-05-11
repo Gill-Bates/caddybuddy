@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
+#
+# tests/test_ui_auth.py
+# Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
+#
 
 from __future__ import annotations
 
 import unittest
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from starlette.requests import Request

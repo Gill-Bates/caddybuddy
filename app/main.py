@@ -115,7 +115,6 @@ def create_app() -> FastAPI:
     """Construct and configure the FastAPI application."""
     settings = get_settings()
     static_dir: Path = settings.base_dir / "app" / "static"
-    favicon_path: Path = static_dir / "img" / "favicon.svg"
     app = FastAPI(title=settings.app_name, lifespan=lifespan)
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _handle_rate_limit_exceeded)

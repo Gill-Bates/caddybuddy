@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from starlette.requests import Request
 from sqlalchemy.exc import IntegrityError
@@ -135,7 +135,8 @@ class UiServersTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_create_server_imports_live_config_and_redirects_to_templates_reference(self) -> None:
         request = _build_request()
-        session = object()
+        session = AsyncMock()
+        session.begin_nested = MagicMock()
         current_user = SimpleNamespace(id=1, role="admin", username="alice")
         config_payload = {"apps": {"http": {"servers": {}}}}
         created_server = SimpleNamespace(id=7, name="edge-1", last_pinged=None)
@@ -199,7 +200,8 @@ class UiServersTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_sync_server_config_marks_active_snapshot_and_redirects_to_templates_reference(self) -> None:
         request = _build_request("/servers/7/sync")
-        session = object()
+        session = AsyncMock()
+        session.begin_nested = MagicMock()
         current_user = SimpleNamespace(id=1, role="admin", username="alice")
         server = SimpleNamespace(id=7, name="edge-1", active_config_id=None)
         config = SimpleNamespace(id=11)
@@ -244,7 +246,8 @@ class UiServersTests(unittest.IsolatedAsyncioTestCase):
     async def test_create_server_reuses_existing_template_with_identical_caddyfile(self) -> None:
         request = _build_request()
         request.scope["client"] = ("127.0.0.2", 12345)
-        session = object()
+        session = AsyncMock()
+        session.begin_nested = MagicMock()
         current_user = SimpleNamespace(id=1, role="admin", username="alice")
         config_payload = {"apps": {"http": {"servers": {}}}}
         created_server = SimpleNamespace(id=7, name="edge-1", last_pinged=None)
@@ -305,7 +308,8 @@ class UiServersTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_create_server_reports_import_conflicts_separately_from_duplicate_name(self) -> None:
         request = _build_request()
-        session = SimpleNamespace(rollback=AsyncMock())
+        session = AsyncMock()
+        session.begin_nested = MagicMock()
         current_user = SimpleNamespace(id=1, role="admin", username="alice")
         config_payload = {"apps": {"http": {"servers": {}}}}
         created_server = SimpleNamespace(id=7, name="edge-1", last_pinged=None)
@@ -333,15 +337,20 @@ class UiServersTests(unittest.IsolatedAsyncioTestCase):
         ):
             response = await servers.create_server(request, session=session)
 
-        session.rollback.assert_awaited_once()
         self.assertEqual(response.status_code, 303)
-        self.assertEqual(response.headers["location"], "/servers")
+        self.assertEqual(response.headers["location"], "/templates?server_id=7")
         self.assertEqual(
             request.session["flashes"],
-            [{
-                "category": "danger",
-                "message": "A site or Caddyfile conflict occurred during import.",
-            }],
+            [
+                {
+                    "category": "warning",
+                    "message": "A site or Caddyfile conflict occurred during import; server was created without sites.",
+                },
+                {
+                    "category": "success",
+                    "message": "Server 'edge-1' created and imported 0 site(s).",
+                },
+            ],
         )
 
     async def test_sync_server_config_rolls_back_then_persists_only_offline_status(self) -> None:

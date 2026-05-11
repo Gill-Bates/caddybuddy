@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 

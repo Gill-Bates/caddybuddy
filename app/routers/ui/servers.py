@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import httpx
 from datetime import datetime
 from dataclasses import dataclass
 from fastapi import APIRouter, Depends, Request

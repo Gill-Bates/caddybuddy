@@ -23,7 +23,12 @@ export function createDevicePagePool({
     }
 
     async function createResource(device) {
-        const baseOptions = deviceContextOptions.get(device) || deviceContextOptions.get('desktop') || {};
+        const baseOptions = { ...(deviceContextOptions.get(device) || deviceContextOptions.get('desktop') || {}) };
+        
+        if (browser.browserType().name() === 'firefox') {
+            delete baseOptions.isMobile;
+        }
+
         const context = await browser.newContext(buildContextOptions({
             ...baseOptions,
             storageState,

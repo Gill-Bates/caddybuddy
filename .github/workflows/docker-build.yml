@@ -2,13 +2,21 @@ name: Docker Build
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:  # Manual trigger (won't tag as :latest)
 
 # Minimal permissions - only what's needed
 permissions:
   contents: write  # Required for creating releases
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
@@ -21,8 +29,38 @@ jobs:
         with:
           fetch-depth: 0  # Full history for robust changelog/release notes handling
 
+      - name: Set up Python for Tests & Linting
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+          cache-dependency-path: 'requirements.txt'
+
+      - name: Install Dependencies
+        run: |
+          python -m venv .venv
+          ./.venv/bin/pip install --upgrade pip
+          ./.venv/bin/pip install -r requirements.txt
+          ./.venv/bin/pip install pytest==8.3.4 pytest-asyncio==0.25.0 ruff==0.9.0
+
+      - name: Lint with Ruff
+        run: ./.venv/bin/ruff check app/ tests/ --output-format=github
+        continue-on-error: true
+
+      - name: Run Unit Tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          export CADDYBUDDY_SECRET_KEY=$(python -c 'import secrets; print(secrets.token_hex(32))')
+          export CADDYBUDDY_ADMIN_PASSWORD=$(python -c 'import secrets; print(secrets.token_urlsafe(24))')
+          ./.venv/bin/pytest tests/ -v --tb=short
+
       - name: Generate BUILD_INFO
         run: git rev-parse HEAD > BUILD_INFO
+
+      # Required for arm64 builds on GitHub runners
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -68,7 +106,7 @@ jobs:
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Build for local smoke test
+      - name: Build for local smoke test (amd64 only)
         run: |
           set -euo pipefail
           docker buildx build \
@@ -139,7 +177,7 @@ jobs:
           severity: 'CRITICAL,HIGH'
           timeout: '5m'
 
-      - name: Trivy vulnerability scan
+      - name: Trivy vulnerability scan (amd64)
         uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: 'caddybuddy:test'
@@ -151,27 +189,56 @@ jobs:
           timeout: '10m'
           trivyignores: '.trivyignore'
 
-      - name: Build & push image
+      - name: Build for security scan (arm64)
+        run: |
+          set -euo pipefail
+          docker buildx build \
+            --platform linux/arm64 \
+            --target runtime \
+            --load \
+            --cache-from type=gha,scope=arm64 \
+            --cache-to type=gha,mode=max,scope=arm64 \
+            --build-arg "APP_VERSION=${{ steps.meta.outputs.tag }}" \
+            --build-arg "BUILD_DATE=${{ steps.meta.outputs.build_date }}" \
+            --build-arg "GIT_SHA=${{ github.sha }}" \
+            -t caddybuddy:test-arm64 \
+            -f docker/Dockerfile \
+            .
+
+      - name: Trivy vulnerability scan (arm64)
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: 'caddybuddy:test-arm64'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+          timeout: '10m'
+          trivyignores: '.trivyignore'
+
+      - name: Build & push multi-arch image (amd64 + arm64)
         run: |
           set -euo pipefail
           
           # Build tags array to prevent shell injection
           TAGS=()
-          TAGS+=("-t" "${{ secrets.DOCKERHUB_USERNAME }}/caddybuddy:${{ steps.meta.outputs.tag }}")
+          TAGS+=("-t" "giiibates/caddybuddy:${{ steps.meta.outputs.tag }}")
           
           # Only tag :latest on actual tag pushes (not workflow_dispatch)
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            TAGS+=("-t" "${{ secrets.DOCKERHUB_USERNAME }}/caddybuddy:latest")
+            TAGS+=("-t" "giiibates/caddybuddy:latest")
             echo "Building release: tagging as :latest"
           else
             echo "Manual build: NOT tagging as :latest"
           fi
           
-          # Build and push
+          # Build and push (use both arch caches)
           docker buildx build \
-            --platform linux/amd64 \
+            --platform linux/amd64,linux/arm64 \
             --target runtime \
             --cache-from type=gha,scope=amd64 \
+            --cache-from type=gha,scope=arm64 \
             --cache-to type=gha,mode=max,scope=final \
             --build-arg "APP_VERSION=${{ steps.meta.outputs.tag }}" \
             --build-arg "BUILD_DATE=${{ steps.meta.outputs.build_date }}" \

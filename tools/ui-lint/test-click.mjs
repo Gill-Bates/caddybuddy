@@ -1,3 +1,8 @@
+//
+// tools/ui-lint/test-click.mjs
+// Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
+//
+
 import { webkit } from 'playwright';
 
 (async () => {

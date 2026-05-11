@@ -26,7 +26,6 @@ from app.models.entities import DeploymentStatus, Site
 from app.repositories.servers import server_repository
 from app.repositories.sites import site_repository
 from app.services.deployment_engine import DeploymentError, deployment_engine
-from app.services.events import publish_resource_event
 
 from ._common import (
     audit_commit_and_flash,

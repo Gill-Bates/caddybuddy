@@ -1,11 +1,27 @@
-# CaddyBuddy
+<p align="center">
+  <img src=".github/img/caddybuddy_black.svg#gh-light-mode-only" width="400">
+  <img src=".github/img/caddybuddy_white.svg#gh-dark-mode-only" width="400">
+</p>
+
+<h2 align="center">Manage your Caddy servers with ease!</h2>
+
+<p align="center">
+  <a href="https://github.com/Gill-Bates/caddybuddy/releases"><img src="https://img.shields.io/github/v/release/Gill-Bates/caddybuddy?logo=github&logoColor=white" alt="GitHub Release"></a>
+  <a href="https://hub.docker.com/r/giiibates/caddybuddy"><img src="https://img.shields.io/docker/pulls/giiibates/caddybuddy?logo=docker&logoColor=white" alt="Docker Pulls"></a>
+  <a href="https://hub.docker.com/r/giiibates/caddybuddy"><img src="https://img.shields.io/docker/image-size/giiibates/caddybuddy?logo=docker&logoColor=white" alt="Docker Image Size"></a>
+  <br>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg" alt="License"></a>
+  <a href="#overview"><img src="https://img.shields.io/badge/Docs-README-green?logo=readthedocs&logoColor=white" alt="Documentation"></a>
+  <img src="https://img.shields.io/badge/Platform-linux%2Famd64%20|%20linux%2Farm64-lightgrey?logo=linux&logoColor=white" alt="Platform">
+</p>
+
+<p align="center">
+  <a href="#overview">📚 Documentation</a> •
+  <a href="#quick-start">🚀 Quick Start</a> •
+  <a href="CHANGELOG.md">📋 Changelog</a>
+</p>
 
 > A lightweight control plane for managing Caddy servers, reusable Caddyfile snippets, sites, deployments, and access control from one web UI.
-
-[![Python 3.13](https://img.shields.io/badge/Python-3.13-blue.svg)](https://www.python.org/downloads/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.136-009688.svg)](https://fastapi.tiangolo.com/)
-[![Docker](https://img.shields.io/badge/Docker-ready-2496ED.svg)](https://www.docker.com/)
-[![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57.svg)](https://www.sqlite.org/)
 
 CaddyBuddy combines a server-rendered FastAPI UI, an async SQLite backend, and secure operational defaults into a compact management application for Caddy-based environments. It is designed for teams that want to track servers, assign site definitions, reuse Caddyfile snippets, deploy configurations, and audit administrative changes without building a larger control plane first.
 

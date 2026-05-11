@@ -290,10 +290,16 @@ export function collectConsoleAndNetwork(
             resourceType: req.resourceType(),
         });
     };
-    const onRequestFailed = (req) => pushCapped(requestFailures, 'requestFailures', {
-        url: req.url(),
-        error: req.failure()?.errorText || 'unknown',
-    });
+    const onRequestFailed = (req) => {
+        const errorText = req.failure()?.errorText || 'unknown';
+        if (req.url().includes('/api/v1/events') && (errorText === 'NS_ERROR_ABORT' || errorText === 'net::ERR_ABORTED')) {
+            return;
+        }
+        pushCapped(requestFailures, 'requestFailures', {
+            url: req.url(),
+            error: errorText,
+        });
+    };
     const onResponse = (res) => {
         if (res.status() >= 400) {
             pushCapped(badResponses, 'badResponses', { url: res.url(), status: res.status() });

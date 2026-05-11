@@ -184,13 +184,11 @@ class QueueRouterTests(unittest.IsolatedAsyncioTestCase):
             patch("app.routers.ui.queue.server_repository.get_by_id", new=AsyncMock(return_value=server)),
             patch("app.routers.ui.queue.deployment_engine.deploy", new=AsyncMock(return_value=result)),
             patch("app.routers.ui.queue.audit_commit_and_flash", new=AsyncMock()) as audit_commit,
-            patch("app.routers.ui.queue.publish_resource_event", new=AsyncMock()) as publish_event,
         ):
             response = await queue.deploy_single_site(request, site_id=7, session=session)
 
         get_site.assert_awaited_once_with(session, 7, for_update=True)
         audit_commit.assert_awaited_once()
-        publish_event.assert_not_awaited()
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/queue")
 
@@ -226,7 +224,6 @@ class QueueRouterTests(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(side_effect=[success_result, failed_result]),
             ),
             patch("app.routers.ui.queue.audit_commit_and_flash", new=AsyncMock()) as audit_commit,
-            patch("app.routers.ui.queue.publish_resource_event", new=AsyncMock()) as publish_event,
         ):
             response = await queue.deploy_all_pending(request, session=session)
 
@@ -238,7 +235,6 @@ class QueueRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(audit_details["success_count"], 1)
         self.assertEqual(audit_details["error_count"], 1)
         self.assertEqual(audit_details["errors"], ["fail.example: caddy failed"])
-        publish_event.assert_not_awaited()
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/queue")
         self.assertEqual(

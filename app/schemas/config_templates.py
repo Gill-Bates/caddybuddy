@@ -6,7 +6,6 @@
 
 """Pydantic schemas for ConfigTemplate entities."""
 
-from datetime import datetime
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
 

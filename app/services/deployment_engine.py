@@ -27,7 +27,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 
-import httpx
 from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -304,7 +303,6 @@ class DeploymentEngine:
         target: DeploymentStatus,
         transition: Callable[[], None],
     ) -> None:
-        source = deployment.status
         transition()
         try:
             await session.flush()

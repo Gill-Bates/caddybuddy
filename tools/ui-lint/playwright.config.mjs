@@ -1,3 +1,8 @@
+//
+// tools/ui-lint/playwright.config.mjs
+// Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
+//
+
 import { defineConfig, devices } from '@playwright/test';
 
 

@@ -180,6 +180,7 @@ const REQUIRED_SECURITY_HEADERS = [
     'x-frame-options',
     'x-content-type-options',
 ];
+const BASE_URL_CHECK_TIMEOUT_MS = 5000;
 
 const DEVICE_CONTEXT_OPTIONS = new Map([
     ['desktop', { viewport: { width: 1440, height: 1100 } }],
@@ -260,6 +261,31 @@ function buildContextOptions(overrides = {}) {
 
 function delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function assertBaseUrlReachable() {
+    const loginUrl = new URL('/login', BASE_URL).toString();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), BASE_URL_CHECK_TIMEOUT_MS);
+
+    try {
+        const response = await fetch(loginUrl, {
+            method: 'GET',
+            redirect: 'manual',
+            signal: controller.signal,
+        });
+        if (!response.ok && (response.status < 300 || response.status >= 400)) {
+            throw new Error(`HTTP ${response.status} from ${loginUrl}`);
+        }
+    } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(
+            `UI_LINT_BASE_URL is unreachable at ${loginUrl}. Start the app first, for example: cd /opt/caddybuddy && source .venv/bin/activate && python run.py. Underlying error: ${detail}`,
+            { cause: error instanceof Error ? error : undefined },
+        );
+    } finally {
+        clearTimeout(timeoutId);
+    }
 }
 
 async function pathExists(targetPath) {
@@ -397,7 +423,10 @@ function requiredSecurityHeadersForResponse(response) {
 }
 
 function collectSecurityHeaders(response) {
-    const headers = response?.headers?.() || {};
+    const rawHeaders = response?.headers?.() || {};
+    const headers = Object.fromEntries(
+        Object.entries(rawHeaders).map(([key, value]) => [String(key).toLowerCase(), value]),
+    );
     const requiredHeaders = response ? requiredSecurityHeadersForResponse(response) : REQUIRED_SECURITY_HEADERS;
     return {
         missing: requiredHeaders.filter((header) => !headers[header]),
@@ -701,7 +730,7 @@ async function auditLoginFailureView(page, view) {
             await page.fill('#username', username);
             await page.fill('#password', invalidPassword);
 
-            const [loginResponse] = await Promise.all([
+            const [loginResponse, redirectResponse] = await Promise.all([
                 page.waitForResponse((response) => {
                     try {
                         return new URL(response.url()).pathname === '/login' && response.request().method() === 'POST';
@@ -709,6 +738,16 @@ async function auditLoginFailureView(page, view) {
                         return false;
                     }
                 }, { timeout: 30000 }),
+                page.waitForResponse((response) => {
+                    try {
+                        const url = new URL(response.url());
+                        return url.pathname === '/login'
+                            && response.request().method() === 'GET'
+                            && response.request().resourceType() === 'document';
+                    } catch {
+                        return false;
+                    }
+                }, { timeout: 30000 }).catch(() => null),
                 page.locator('form[action="/login"] button[type="submit"]').first().click(),
             ]);
 
@@ -748,7 +787,7 @@ async function auditLoginFailureView(page, view) {
             return {
                 metricsPatch: { loginFailure },
                 resultFields: { loginResponseStatus: loginResponse.status() },
-                securityResponse: loginResponse,
+                securityResponse: redirectResponse || loginResponse,
                 loginResponse,
             };
         },
@@ -774,7 +813,7 @@ async function auditLoginFailureView(page, view) {
     });
 }
 
-function buildLoginRateLimitResult({ attempts, response, reached429 }) {
+function buildLoginRateLimitResult({ attempts, response, reached429, securityResponse = response }) {
     const status = response?.status?.() ?? null;
     const redirectedWithout429 = status >= 300 && status < 400 && status !== 429;
     const rateLimitHandled = reached429 || status === 429 || redirectedWithout429;
@@ -799,7 +838,7 @@ function buildLoginRateLimitResult({ attempts, response, reached429 }) {
             requests: [],
             duplicateRequests: [],
         },
-        securityHeaders: collectSecurityHeaders(response),
+        securityHeaders: collectSecurityHeaders(securityResponse),
         findings: [],
         hardFindings: [],
         warnings: [],
@@ -824,13 +863,14 @@ async function auditLoginRateLimit(browser) {
         const page = await context.newPage();
         let attempts = 0;
         let lastResponse = null;
+        let lastSecurityResponse = null;
 
         for (; attempts < 6; attempts += 1) {
             await page.goto(`${BASE_URL}/login`, { waitUntil: 'domcontentloaded', timeout: 10000 });
             await page.fill('#username', RATE_LIMIT_USERNAME);
             await page.fill('#password', randomBytes(24).toString('hex'));
 
-            const [response] = await Promise.all([
+            const [response, redirectResponse] = await Promise.all([
                 page.waitForResponse((candidate) => {
                     try {
                         return new URL(candidate.url()).pathname === '/login' && candidate.request().method() === 'POST';
@@ -838,15 +878,27 @@ async function auditLoginRateLimit(browser) {
                         return false;
                     }
                 }, { timeout: 30000 }),
+                page.waitForResponse((candidate) => {
+                    try {
+                        const url = new URL(candidate.url());
+                        return url.pathname === '/login'
+                            && candidate.request().method() === 'GET'
+                            && candidate.request().resourceType() === 'document';
+                    } catch {
+                        return false;
+                    }
+                }, { timeout: 30000 }).catch(() => null),
                 page.locator('form[action="/login"] button[type="submit"]').first().click(),
             ]);
 
             lastResponse = response;
+            lastSecurityResponse = redirectResponse || response;
             if (response.status() === 429) {
                 return buildLoginRateLimitResult({
                     attempts: attempts + 1,
                     response,
                     reached429: true,
+                    securityResponse: redirectResponse || response,
                 });
             }
         }
@@ -855,6 +907,7 @@ async function auditLoginRateLimit(browser) {
             attempts,
             response: lastResponse,
             reached429: false,
+            securityResponse: lastSecurityResponse || lastResponse,
         });
     } finally {
         await context.close();
@@ -989,6 +1042,7 @@ async function main() {
     const playwrightBrowsers = { chromium, firefox, webkit };
 
     await loadCredentials();
+    await assertBaseUrlReachable();
     await prepareOutputDirs();
 
     const results = [];

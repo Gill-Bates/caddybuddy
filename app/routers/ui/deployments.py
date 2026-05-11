@@ -17,13 +17,11 @@ from app.dependencies.web import push_flash, redirect_to, render_template
 from app.models.entities import DeploymentStatus
 from app.repositories.deployments import deployment_repository
 from app.repositories.servers import server_repository
-from app.repositories.sites import site_repository
 from app.services.deployment_engine import deployment_engine
 from app.services.deployment_state import deployment_state_machine
 
 from ._common import (
     audit_commit_and_flash,
-    parse_int,
     require_admin,
     require_user,
     validated_form,

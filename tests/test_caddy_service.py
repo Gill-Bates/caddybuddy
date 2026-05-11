@@ -13,7 +13,6 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-import httpx
 
 from app.services.caddy import CaddyService, CaddyServiceError, caddy_service
 

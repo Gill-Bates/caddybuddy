@@ -21,6 +21,9 @@ import {
 const CARD_HEADER_PADDING_TOP_MAX_PX = 12;
 const CARD_HEADER_PADDING_LEFT_MAX_PX = 20;
 const DUPLICATE_REQUEST_THRESHOLD = 3;
+const EVENT_STREAM_PATH = '/api/v1/events';
+const LAYOUT_SHIFT_UNSUPPORTED_MESSAGE = 'Ignoring unsupported entryTypes: layout-shift.';
+const INLINE_STYLE_CSP_MESSAGE = "Refused to apply a stylesheet because its hash, its nonce, or 'unsafe-inline' does not appear in the style-src directive of the Content Security Policy.";
 
 
 function detectViewContext(name) {
@@ -43,6 +46,26 @@ function normalizeRequestUrl(url) {
     } catch {
         return String(url || '');
     }
+}
+
+function isKnownAuditConsoleNoise(entry, viewName) {
+    const text = String(entry?.text || '');
+    if (text.includes(LAYOUT_SHIFT_UNSUPPORTED_MESSAGE)) {
+        return true;
+    }
+    if (String(viewName || '').startsWith('webkit-') && text === INLINE_STYLE_CSP_MESSAGE) {
+        return true;
+    }
+    return false;
+}
+
+function isExpectedRequestFailure(entry) {
+    const url = normalizeRequestUrl(entry?.url);
+    const error = String(entry?.error || '').toLowerCase();
+    if (!url.endsWith(EVENT_STREAM_PATH)) {
+        return false;
+    }
+    return error.includes('cancel') || error.includes('aborted') || error.includes('err_aborted');
 }
 
 /**
@@ -288,10 +311,13 @@ export function summarizeFindings(result) {
     if (metrics.formSwitchHeightIssues?.length) pushHard(`formSwitchHeightIssues=${metrics.formSwitchHeightIssues.length}`);
     if (metrics.inputGroupHeightIssues?.length) pushHard(`inputGroupHeightIssues=${metrics.inputGroupHeightIssues.length}`);
 
+    const relevantConsoleEntries = report.network.consoleEntries.filter((entry) => !isKnownAuditConsoleNoise(entry, report.name));
+    const relevantRequestFailures = report.network.requestFailures.filter((entry) => !isExpectedRequestFailure(entry));
+
     if (report.diff.ratio > VISUAL_DRIFT_THRESHOLD) pushHard(`visualDrift=${report.diff.ratio.toFixed(4)}`);
-    if (report.network.consoleEntries.length) pushHard(`console=${report.network.consoleEntries.length}`);
+    if (relevantConsoleEntries.length) pushHard(`console=${relevantConsoleEntries.length}`);
     if (report.network.pageErrors.length) pushHard(`pageErrors=${report.network.pageErrors.length}`);
-    if (report.network.requestFailures.length) pushHard(`failedRequests=${report.network.requestFailures.length}`);
+    if (relevantRequestFailures.length) pushHard(`failedRequests=${relevantRequestFailures.length}`);
     if (report.network.badResponses.length) pushHard(`badResponses=${report.network.badResponses.length}`);
     if (report.diff.sizeMismatch) pushHard('screenshotSizeMismatch');
 

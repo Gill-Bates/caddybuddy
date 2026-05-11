@@ -18,7 +18,5 @@ tools/ui-lint/test-results/
 
 # Dev
 Caddyfile
-run.py
 setup.conf
 tests/
-docker/

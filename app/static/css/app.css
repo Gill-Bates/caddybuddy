@@ -251,7 +251,11 @@ body.app-body--menu-open {
     transition: color 0.15s ease-in-out;
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 0.3rem;
+    min-height: 2.75rem;
+    padding: 0.4rem 0.35rem;
+    border-radius: 999px;
 }
 
 .cb-footer-link:hover,

@@ -131,6 +131,8 @@ class WebTemplateRenderingTests(unittest.TestCase):
     def test_login_template_uses_compact_public_shell_container(self) -> None:
         class _AppStub:
             def url_path_for(self, name: str, **path_params: str) -> str:
+                if name == "login_action":
+                    return "/login"
                 if name != "static":
                     raise AssertionError(f"Unexpected route lookup: {name}")
                 return f"/static/{path_params['path']}"

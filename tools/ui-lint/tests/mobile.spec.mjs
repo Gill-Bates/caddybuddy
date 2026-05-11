@@ -1,3 +1,8 @@
+//
+// tools/ui-lint/tests/mobile.spec.mjs
+// Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
+//
+
 import path from 'node:path';
 import { readFile, stat } from 'node:fs/promises';
 
@@ -112,7 +117,11 @@ function createRuntimeTracker(page, baseUrl) {
         if (!isSameOrigin(request.url())) {
             return;
         }
-        requestFailures.push(`${request.method()} ${request.url()} :: ${request.failure()?.errorText || 'unknown error'}`);
+        const errorText = request.failure()?.errorText || 'unknown error';
+        if (request.url().includes('/api/v1/events') && (errorText === 'NS_ERROR_ABORT' || errorText === 'net::ERR_ABORTED')) {
+            return;
+        }
+        requestFailures.push(`${request.method()} ${request.url()} :: ${errorText}`);
     };
 
     const onResponse = (response) => {

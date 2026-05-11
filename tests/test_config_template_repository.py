@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models.base import Base
-from app.models.entities import ConfigRevision, ConfigTemplate
+from app.models.entities import ConfigRevision
 from app.repositories.config_templates import (
     ConcurrentTemplateUpdateError,
     TemplateAlreadyExistsError,
