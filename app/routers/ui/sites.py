@@ -6,7 +6,7 @@
 
 """UI Router for Site management.
 
-Sites are the fachliche Einheit (business unit):
+Sites are the business unit:
 - One domain (UNIQUE constraint at DB level)
 - One configuration template
 - Zero or more deployments to servers
@@ -17,6 +17,8 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 import html
+import ipaddress
+import json
 import os
 import re
 import ssl
@@ -56,13 +58,19 @@ router = APIRouter()
 
 _MAX_DOMAIN_LENGTH = 253
 _TLS_PROBE_TIMEOUT_SECONDS = 3.0
+_TLS_PROBE_CONCURRENCY = 5
+_SSL_PROVIDERS = ("letsencrypt", "zerossl", "manual", "none")
+_ALLOWED_SSL_PROVIDERS = frozenset(_SSL_PROVIDERS)
 _DOMAIN_RE = re.compile(
     r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
 )
 
 
 def _deployment_navigation_response(target_path: str) -> HTMLResponse:
+    if not target_path.startswith("/"):
+        target_path = "/"
     escaped_target = html.escape(target_path, quote=True)
+    js_target = json.dumps(target_path)
     content = f"""<!DOCTYPE html>
 <html lang=\"en\">
 <head>
@@ -73,7 +81,7 @@ def _deployment_navigation_response(target_path: str) -> HTMLResponse:
 <body>
     <p>Deployment complete. <a href=\"{escaped_target}\">Continue</a>.</p>
     <script>
-        window.location.replace({escaped_target!r});
+        window.location.replace({js_target});
     </script>
 </body>
 </html>
@@ -82,6 +90,12 @@ def _deployment_navigation_response(target_path: str) -> HTMLResponse:
 
 
 async def _fetch_site_certificate_expiry(domain: str) -> datetime | None:
+    try:
+        ipaddress.ip_address(domain)
+        return None
+    except ValueError:
+        pass
+
     try:
         async with asyncio.timeout(_TLS_PROBE_TIMEOUT_SECONDS):
             reader, writer = await asyncio.open_connection(
@@ -115,7 +129,7 @@ async def _fetch_site_certificate_expiry(domain: str) -> datetime | None:
         not_after = peer_cert.get("notAfter") if isinstance(peer_cert, dict) else None
         if not isinstance(not_after, str) or not not_after:
             peer_cert_der = ssl_object.getpeercert(binary_form=True)
-            not_after = _extract_not_after_from_der_certificate(peer_cert_der)
+            not_after = await _extract_not_after_from_der_certificate(peer_cert_der)
         if not isinstance(not_after, str) or not not_after:
             return None
         return datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=UTC)
@@ -127,7 +141,11 @@ async def _fetch_site_certificate_expiry(domain: str) -> datetime | None:
         del reader
 
 
-def _extract_not_after_from_der_certificate(certificate_der: bytes | None) -> str | None:
+async def _extract_not_after_from_der_certificate(certificate_der: bytes | None) -> str | None:
+    return await asyncio.to_thread(_sync_extract_not_after_from_der_certificate, certificate_der)
+
+
+def _sync_extract_not_after_from_der_certificate(certificate_der: bytes | None) -> str | None:
     if not certificate_der:
         return None
 
@@ -153,13 +171,14 @@ async def _load_site_certificate_expiries(sites: list) -> dict[int, datetime | N
     if not ssl_sites:
         return {}
 
-    expiries = await asyncio.gather(
-        *(_fetch_site_certificate_expiry(site.domain) for site in ssl_sites),
-    )
-    return {
-        site.id: expires_at
-        for site, expires_at in zip(ssl_sites, expiries, strict=True)
-    }
+    semaphore = asyncio.Semaphore(_TLS_PROBE_CONCURRENCY)
+
+    async def fetch_expiry(site) -> tuple[int, datetime | None]:
+        async with semaphore:
+            return site.id, await _fetch_site_certificate_expiry(site.domain)
+
+    results = await asyncio.gather(*(fetch_expiry(site) for site in ssl_sites))
+    return {site_id: expires_at for site_id, expires_at in results}
 
 
 def _read_site_form(form: FormData) -> dict:
@@ -188,7 +207,13 @@ def _merge_site_variables(existing: dict | None, *, upstream: str | None) -> dic
 
 
 def _is_valid_domain_name(domain: str) -> bool:
-    return bool(domain and _DOMAIN_RE.fullmatch(domain))
+    if not (domain and _DOMAIN_RE.fullmatch(domain)):
+        return False
+    try:
+        ipaddress.ip_address(domain)
+        return False
+    except ValueError:
+        return True
 
 
 def _site_render_validation_message(
@@ -254,7 +279,7 @@ async def sites_page(
         "deployments": deployments,
         "site_preview": preview,
         "site_certificate_expiries": site_certificate_expiries,
-        "ssl_providers": ["letsencrypt", "zerossl", "manual", "none"],
+        "ssl_providers": list(_SSL_PROVIDERS),
     }
     return render_template(request, "sites.html", current_user=current_user, context=context)
 
@@ -274,6 +299,7 @@ async def save_site(
     form_data = _read_site_form(form)
 
     domain = form_data["domain"]
+    ssl_provider = form_data["ssl_provider"]
     if not domain:
         push_flash(request, "danger", "Domain name is required.")
         return redirect_to("/sites")
@@ -283,6 +309,9 @@ async def save_site(
     if not _is_valid_domain_name(domain):
         push_flash(request, "danger", "Enter a valid domain name.")
         return redirect_to("/sites")
+    if ssl_provider not in _ALLOWED_SSL_PROVIDERS:
+        push_flash(request, "danger", "Invalid SSL provider selected.")
+        return redirect_to(f"/sites/{form_data['site_id_raw']}" if form_data["site_id_raw"] else "/sites")
 
     template_id = form_data["config_template_id"]
     if template_id is None:
@@ -300,7 +329,7 @@ async def save_site(
     validation_message = _site_render_validation_message(
         domain=domain,
         ssl_enabled=form_data["ssl_enabled"],
-        ssl_provider=form_data["ssl_provider"],
+        ssl_provider=ssl_provider,
         variables=site_variables,
         template=template,
     )
@@ -335,7 +364,7 @@ async def save_site(
                 description=form_data["description"],
                 variables=site_variables,
                 ssl_enabled=form_data["ssl_enabled"],
-                ssl_provider=form_data["ssl_provider"],
+                ssl_provider=ssl_provider,
             )
 
             await audit_commit_and_flash(
@@ -364,7 +393,7 @@ async def save_site(
                 description=form_data["description"],
                 variables=site_variables,
                 ssl_enabled=form_data["ssl_enabled"],
-                ssl_provider=form_data["ssl_provider"],
+                ssl_provider=ssl_provider,
             )
 
             await audit_commit_and_flash(
@@ -405,7 +434,16 @@ async def delete_site(
         return redirect_to("/sites")
 
     domain = site.domain
-    await site_repository.delete(session, site)
+    try:
+        await site_repository.delete(session, site)
+    except IntegrityError:
+        await session.rollback()
+        push_flash(
+            request,
+            "danger",
+            "Cannot delete site: existing deployments or related records must be removed first.",
+        )
+        return redirect_to("/sites")
 
     await audit_commit_and_flash(
         session,
@@ -463,10 +501,6 @@ async def deploy_site(
             message = "This Caddyfile requires an upstream target."
         push_flash(request, "danger", f"Deployment error: {message}")
         return redirect_to(f"/sites/{site_id}")
-    except Exception as exc:
-        await session.rollback()
-        push_flash(request, "danger", f"Deployment error: {exc}")
-        return redirect_to(f"/sites/{site_id}")
 
     if result.success:
         await audit_commit_and_flash(
@@ -508,21 +542,22 @@ async def preview_site(
 
     if template_id is None:
         return JSONResponse({"preview": "# Select a configuration template", "errors": []})
+    if ssl_provider not in _ALLOWED_SSL_PROVIDERS:
+        return JSONResponse({"preview": "# Invalid SSL provider", "errors": ["Invalid SSL provider selected"]}, status_code=400)
 
     template = await config_template_repository.get_by_id(session, template_id)
     if template is None:
         return JSONResponse({"preview": "# Template not found", "errors": ["Template not found"]})
 
     # Create a mock site for preview
-    from app.models.entities import Site
-    mock_site = Site(
+    mock_site = SimpleNamespace(
         domain=domain,
         config_template_id=template_id,
         ssl_enabled=ssl_enabled,
         ssl_provider=ssl_provider,
         variables=_merge_site_variables(None, upstream=upstream),
+        config_template=template,
     )
-    mock_site.config_template = template
 
     render_result = config_renderer.render_site_config(mock_site, template)
 

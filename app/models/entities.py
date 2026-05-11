@@ -47,6 +47,10 @@ class User(TimestampMixin, Base):
     api_keys: Mapped[list[ApiKey]] = relationship(back_populates="user", cascade="all, delete-orphan")
     audit_logs: Mapped[list[AuditLog]] = relationship(back_populates="user")
 
+    @property
+    def is_admin(self) -> bool:
+        return self.role == "admin"
+
 
 class CaddyConfigServerLink(Base):
     __tablename__ = "caddy_config_servers"

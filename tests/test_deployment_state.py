@@ -43,6 +43,51 @@ class DeploymentStateMachineTests(unittest.TestCase):
         ):
             deployment_state_machine.start_deployment(deployment)
 
+    def test_mark_deployed_sets_consistent_deployment_fields(self) -> None:
+        deployment = SimpleNamespace(
+            id=7,
+            status=DeploymentStatus.DEPLOYING,
+            rendered_checksum="abc123",
+            deployed_checksum=None,
+            deployed_at=None,
+            deployed_by=None,
+            deployment_error="old error",
+        )
+
+        deployment_state_machine.mark_deployed(deployment, deployed_by="alice")
+
+        self.assertEqual(deployment.status, DeploymentStatus.DEPLOYED)
+        self.assertEqual(deployment.deployed_checksum, "abc123")
+        self.assertEqual(deployment.deployed_by, "alice")
+        self.assertIsNotNone(deployment.deployed_at)
+        self.assertIsNone(deployment.deployment_error)
+
+    def test_reset_for_retry_clears_validation_and_error_fields(self) -> None:
+        deployment = SimpleNamespace(
+            id=8,
+            status=DeploymentStatus.FAILED,
+            validation_output="bad config",
+            deployment_error="connection failed",
+        )
+
+        deployment_state_machine.reset_for_retry(deployment)
+
+        self.assertEqual(deployment.status, DeploymentStatus.PENDING)
+        self.assertIsNone(deployment.validation_output)
+        self.assertIsNone(deployment.deployment_error)
+
+    def test_start_validation_clears_stale_validation_output(self) -> None:
+        deployment = SimpleNamespace(
+            id=9,
+            status=DeploymentStatus.PENDING,
+            validation_output="old output",
+        )
+
+        deployment_state_machine.start_validation(deployment)
+
+        self.assertEqual(deployment.status, DeploymentStatus.VALIDATING)
+        self.assertIsNone(deployment.validation_output)
+
 
 if __name__ == "__main__":
     unittest.main()

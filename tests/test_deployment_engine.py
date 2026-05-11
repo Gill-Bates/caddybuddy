@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, patch
 from app.models.entities import DeploymentStatus
 from app.services.caddy import CaddyServiceError
 from app.services.deployment_engine import DeploymentError, DeploymentResult, DeploymentEngine
+from sqlalchemy.orm.exc import StaleDataError
 
 
 class _FakeDeployment:
@@ -185,6 +186,31 @@ class DeploymentEngineImportTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Strict-Transport-Security", rendered_config)
         self.assertIn("reverse_proxy 127.0.0.1:8080", rendered_config)
 
+    async def test_create_deployment_forwards_deployed_by_to_repository(self) -> None:
+        engine = DeploymentEngine()
+        session = SimpleNamespace()
+        template = SimpleNamespace(
+            name="app-site",
+            caddyfile="respond ok",
+            variables={},
+        )
+        site = SimpleNamespace(
+            id=1,
+            domain="example.com",
+            enabled=True,
+            variables={},
+            ssl_enabled=True,
+            ssl_provider="letsencrypt",
+            config_template=template,
+        )
+        server = SimpleNamespace(id=2, name="srv-1", active=True)
+        deployment = SimpleNamespace(id=3)
+
+        with patch("app.services.deployment_engine.deployment_repository.create", AsyncMock(return_value=deployment)) as create_deployment:
+            await engine.create_deployment(session, site=site, server=server, deployed_by="alice")
+
+        self.assertEqual(create_deployment.await_args.kwargs["deployed_by"], "alice")
+
 
 class DeploymentEngineTemplateValidationTests(unittest.IsolatedAsyncioTestCase):
     async def test_validate_template_for_save_renders_full_config_before_adapt(self) -> None:
@@ -239,6 +265,18 @@ class DeploymentEngineTemplateValidationTests(unittest.IsolatedAsyncioTestCase):
 
 
 class DeploymentEngineExecutionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_apply_state_transition_surfaces_concurrent_modification(self) -> None:
+        session = SimpleNamespace(flush=AsyncMock(side_effect=StaleDataError()))
+        deployment = SimpleNamespace(id=42, status=DeploymentStatus.PENDING)
+
+        with self.assertRaisesRegex(DeploymentError, "Concurrent modification of deployment 42"):
+            await DeploymentEngine._apply_state_transition(
+                session,
+                deployment,
+                DeploymentStatus.DEPLOYING,
+                lambda: setattr(deployment, "status", DeploymentStatus.DEPLOYING),
+            )
+
     async def test_execute_deployment_loads_complete_server_config(self) -> None:
         engine = DeploymentEngine()
         session = SimpleNamespace(flush=AsyncMock())
@@ -398,6 +436,35 @@ class DeploymentEngineExecutionTests(unittest.IsolatedAsyncioTestCase):
         deployed_routes = deploy_config.await_args.args[1]["apps"]["http"]["servers"]["srv0"]["routes"]
         deployed_bodies = [route["handle"][0]["body"] for route in deployed_routes]
         self.assertEqual(deployed_bodies, ["ui", "new-beta"])
+
+    async def test_execute_deployment_marks_failed_on_unexpected_render_exception(self) -> None:
+        engine = DeploymentEngine()
+        session = SimpleNamespace(flush=AsyncMock())
+        server = SimpleNamespace(id=7, name="srv-1")
+        current_site = SimpleNamespace(
+            id=2,
+            domain="beta.example.com",
+            config_template=SimpleNamespace(name="beta", caddyfile="respond beta", variables={}),
+            variables={},
+            ssl_enabled=True,
+            ssl_provider="letsencrypt",
+        )
+        deployment = _FakeDeployment(site=current_site, server=server)
+
+        with (
+            patch.object(engine, "_render_server_config", new=AsyncMock(return_value="beta.example.com { respond beta }")),
+            patch("app.services.deployment_engine.caddy_service.adapt_caddyfile_to_json", new=AsyncMock(return_value={"apps": {}})),
+            patch(
+                "app.services.deployment_engine.caddy_service.fetch_config",
+                new=AsyncMock(side_effect=RuntimeError("boom")),
+            ),
+        ):
+            result = await engine.execute_deployment(session, deployment, deployed_by="alice")
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.message, "Deployment failed")
+        self.assertEqual(result.error, "boom")
+        self.assertEqual(deployment.status, DeploymentStatus.FAILED)
 
 
 if __name__ == "__main__":

@@ -1,3 +1,6 @@
+# Agents
+.omx/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -31,6 +34,7 @@ MANIFEST
 #   before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+*.backup
 
 # Installer logs
 pip-log.txt
@@ -88,10 +92,7 @@ data/
 # Node / UI lint local artifacts
 node_modules/
 tools/ui-lint/node_modules/
-tools/ui-lint/screenshots/
-tools/ui-lint/ui-lint-summary.json
-tools/ui-lint/visual/current/
-tools/ui-lint/visual/diff/
+tools/ui-lint/test-results/
 !tools/ui-lint/lib/
 !tools/ui-lint/lib/**
 full_codebase*

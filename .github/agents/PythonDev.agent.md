@@ -22,6 +22,7 @@ Target platform:
 * Python 3.13+
 * Linux
 * modern evergreen browsers
+* Always use the local .venv for testing and analysis (if applicable)
 
 The application is newly developed.
 No backward compatibility or legacy support is required.

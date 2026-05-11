@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 import hashlib
 
 from sqlalchemy import and_, func, select
@@ -188,6 +189,7 @@ class DeploymentRepository:
         rendered_config: str,
         status: DeploymentStatus = DeploymentStatus.PENDING,
         rollback_deployment_id: int | None = None,
+        deployed_by: str | None = None,
     ) -> Deployment:
         if status == DeploymentStatus.DEPLOYED:
             raise ValueError("Deployments cannot be created directly in DEPLOYED status")
@@ -200,6 +202,38 @@ class DeploymentRepository:
             rendered_checksum=rendered_checksum,
             status=status,
             rollback_deployment_id=rollback_deployment_id,
+            deployed_by=deployed_by,
+        )
+        session.add(deployment)
+        await session.flush()
+        return deployment
+
+    async def create_imported(
+        self,
+        session: AsyncSession,
+        *,
+        site_id: int,
+        server_id: int,
+        rendered_config: str,
+        deployed_by: str | None = None,
+    ) -> Deployment:
+        """Create a deployment record for a site that is already live on the server.
+
+        Unlike ``create``, this sets the deployment directly to DEPLOYED status
+        with matching rendered/deployed checksums so the site does NOT appear in
+        the deployment queue.
+        """
+        rendered_checksum = hashlib.sha256(rendered_config.encode("utf-8")).hexdigest()
+        now = datetime.now(UTC)
+        deployment = Deployment(
+            site_id=site_id,
+            server_id=server_id,
+            rendered_config=rendered_config,
+            rendered_checksum=rendered_checksum,
+            deployed_checksum=rendered_checksum,
+            status=DeploymentStatus.DEPLOYED,
+            deployed_at=now,
+            deployed_by=deployed_by,
         )
         session.add(deployment)
         await session.flush()

@@ -17,6 +17,7 @@ from . import (
     dashboard,
     deployments,
     profile,
+    queue,
     servers,
     sites,
     templates,
@@ -31,6 +32,7 @@ router.include_router(servers.router)
 router.include_router(sites.router)
 router.include_router(templates.router)
 router.include_router(deployments.router)
+router.include_router(queue.router)
 router.include_router(api_keys.router)
 router.include_router(users.router)
 router.include_router(audit_logs.router)

@@ -10,3 +10,15 @@ data/*.db
 data/*.db-*
 node_modules/
 _caddymanager-main/
+tools/ui-lint/node_modules/
+tools/ui-lint/visual/artifacts/
+tools/ui-lint/ui-lint-summary.json
+tools/ui-lint/playwright-report/
+tools/ui-lint/test-results/
+
+# Dev
+Caddyfile
+run.py
+setup.conf
+tests/
+docker/

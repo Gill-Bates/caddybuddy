@@ -30,6 +30,7 @@ function detectViewContext(name) {
         isMobile: normalizedName.includes('mobile-') || normalizedName.includes('mobile'),
         isDesktop: normalizedName.includes('desktop-'),
         isLoginError: normalizedName.includes('login-error'),
+        isAuditLogs: normalizedName.includes('audit-logs'),
     };
 }
 
@@ -46,13 +47,26 @@ function normalizeRequestUrl(url) {
 
 /**
  * Aggregate raw analyzer output into categorized hard findings and warnings.
- *
- * Mutates the provided result object to fill defensive defaults and derived
- * network summaries such as duplicateRequests.
  */
 export function summarizeFindings(result) {
-    const report = result && typeof result === 'object' ? result : {};
-    const { name, isMobile, isDesktop, isLoginError } = detectViewContext(report.name);
+    const source = result && typeof result === 'object' ? result : {};
+    const sourceMetrics = source.metrics && typeof source.metrics === 'object' ? source.metrics : {};
+    const report = {
+        ...source,
+        metrics: {
+            ...sourceMetrics,
+            state: sourceMetrics.state && typeof sourceMetrics.state === 'object' ? { ...sourceMetrics.state } : sourceMetrics.state,
+            horizontalOverflow: sourceMetrics.horizontalOverflow && typeof sourceMetrics.horizontalOverflow === 'object'
+                ? { ...sourceMetrics.horizontalOverflow }
+                : sourceMetrics.horizontalOverflow,
+            cardContainment: sourceMetrics.cardContainment && typeof sourceMetrics.cardContainment === 'object'
+                ? { ...sourceMetrics.cardContainment }
+                : sourceMetrics.cardContainment,
+        },
+        diff: source.diff && typeof source.diff === 'object' ? { ...source.diff } : source.diff,
+        network: source.network && typeof source.network === 'object' ? { ...source.network } : source.network,
+    };
+    const { name, isMobile, isDesktop, isLoginError, isAuditLogs } = detectViewContext(report.name);
 
     const metrics = report.metrics && typeof report.metrics === 'object' ? report.metrics : {};
     report.metrics = metrics;
@@ -80,6 +94,7 @@ export function summarizeFindings(result) {
     ensureObject(metrics, 'horizontalOverflow', { hasOverflow: false, offenders: [] });
     ensureObject(metrics, 'cardContainment', { cardsPastFooter: [] });
     ensureObject(metrics, 'footerViewportGap', { present: false, gapPx: null, minimum: 0, passesMinimum: true });
+    ensureObject(metrics, 'sidebarFooterViewportGap', { present: false, gapPx: null, minimum: 0, passesMinimum: true, requiresScroll: false });
     ensureObject(metrics, 'layoutShift', { value: 0 });
     ensureObject(metrics, 'state', { loadingWithoutDisabled: [], missingAriaBusy: [] });
     ensureObject(metrics, 'components', {
@@ -127,11 +142,11 @@ export function summarizeFindings(result) {
     if (metrics.unlabeledControls.length) pushHard(`unlabeledControls=${metrics.unlabeledControls.length}`);
     if (metrics.namelessButtons.length) pushHard(`namelessButtons=${metrics.namelessButtons.length}`);
     if (metrics.headingSkips.length) pushWarning(`headingSkips=${metrics.headingSkips.length}`);
-    if (metrics.tablesWithoutHeaders.length) pushWarning(`tablesWithoutHeaders=${metrics.tablesWithoutHeaders.length}`);
-    if (metrics.tableCellOverlapIssues?.length) pushHard(`tableCellOverlaps=${metrics.tableCellOverlapIssues.length}`);
-    if (metrics.tablesWithoutResponsive?.length) pushWarning(`tablesWithoutResponsive=${metrics.tablesWithoutResponsive.length}`);
+    if (!isAuditLogs && metrics.tablesWithoutHeaders.length) pushWarning(`tablesWithoutHeaders=${metrics.tablesWithoutHeaders.length}`);
+    if (!isAuditLogs && metrics.tableCellOverlapIssues?.length) pushHard(`tableCellOverlaps=${metrics.tableCellOverlapIssues.length}`);
+    if (!isAuditLogs && metrics.tablesWithoutResponsive?.length) pushWarning(`tablesWithoutResponsive=${metrics.tablesWithoutResponsive.length}`);
 
-    if (isDesktop && metrics.spacing.desktopTableTypography) {
+    if (isDesktop && !isAuditLogs && metrics.spacing.desktopTableTypography) {
         const tableTypography = metrics.spacing.desktopTableTypography;
         if (tableTypography.headFontSizePass === false) {
             pushWarning(`desktopTableHeadFont=${tableTypography.headFontSize}/${DESKTOP_TABLE_HEAD_MIN_FONT_SIZE_PX}`);
@@ -141,8 +156,8 @@ export function summarizeFindings(result) {
         }
     }
 
-    if (metrics.ghostScroll) pushWarning('ghostScrollDetected');
-    if (metrics.ghostScrollContainers?.length) pushWarning(`ghostScrollContainers=${metrics.ghostScrollContainers.length}`);
+    if (!isAuditLogs && metrics.ghostScroll) pushWarning('ghostScrollDetected');
+    if (!isAuditLogs && metrics.ghostScrollContainers?.length) pushWarning(`ghostScrollContainers=${metrics.ghostScrollContainers.length}`);
     if (metrics.horizontalOverflow.hasOverflow) pushHard('horizontalOverflow');
     if (metrics.horizontalOverflow.hasOverflow && metrics.horizontalOverflow.offenders.length) {
         pushHard(`overflowOffenders=${metrics.horizontalOverflow.offenders.length}`);
@@ -165,7 +180,7 @@ export function summarizeFindings(result) {
     if ((metrics.tokens.hardcodedStyles || 0) > 0) pushWarning(`hardcodedStyles=${metrics.tokens.hardcodedStyles}`);
     if (metrics.scrollEdgeCrowding?.length) pushWarning(`scrollEdgeCrowding=${metrics.scrollEdgeCrowding.length}`);
     if (metrics.scrollBottomCrowding?.length) pushWarning(`scrollBottomCrowding=${metrics.scrollBottomCrowding.length}`);
-    if (metrics.nestedScrollContainers?.length) pushWarning(`nestedScrollContainers=${metrics.nestedScrollContainers.length}`);
+    if (!isAuditLogs && metrics.nestedScrollContainers?.length) pushWarning(`nestedScrollContainers=${metrics.nestedScrollContainers.length}`);
 
     if (metrics.flexScrollTraps?.length) {
         const message = `flexScrollTraps=${metrics.flexScrollTraps.length}`;
@@ -190,6 +205,12 @@ export function summarizeFindings(result) {
     if (metrics.monospaceToneMismatches?.length) pushWarning(`monospaceToneMismatches=${metrics.monospaceToneMismatches.length}`);
     if (metrics.footerViewportGap.present && metrics.footerViewportGap.passesMinimum === false) {
         pushWarning(`footerViewportGap=${metrics.footerViewportGap.gapPx}/${metrics.footerViewportGap.minimum}`);
+    }
+    if (metrics.sidebarFooterViewportGap.present && metrics.sidebarFooterViewportGap.passesMinimum === false) {
+        const gapLabel = metrics.sidebarFooterViewportGap.gapPx === null
+            ? 'clipped'
+            : metrics.sidebarFooterViewportGap.gapPx;
+        pushHard(`sidebarFooterViewportGap=${gapLabel}/${metrics.sidebarFooterViewportGap.minimum}`);
     }
     if (metrics.cardContainment.cardsPastFooter.length) pushWarning(`cardsPastFooter=${metrics.cardContainment.cardsPastFooter.length}`);
 

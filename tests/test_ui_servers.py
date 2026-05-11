@@ -169,6 +169,7 @@ class UiServersTests(unittest.IsolatedAsyncioTestCase):
             patch("app.routers.ui.servers.caddy_service.extract_site_definitions", return_value=[imported_definition]),
             patch("app.routers.ui.servers.server_repository.create", new=AsyncMock(return_value=created_server)) as create_server,
             patch("app.routers.ui.servers.config_template_repository.get_by_name", new=AsyncMock(return_value=None)),
+            patch("app.routers.ui.servers.config_template_repository.get_by_caddyfile", new=AsyncMock(return_value=None)),
             patch("app.routers.ui.servers.config_template_repository.create", new=AsyncMock(return_value=template)) as create_template,
             patch("app.routers.ui.servers.site_repository.get_by_domain", new=AsyncMock(return_value=None)),
             patch("app.routers.ui.servers.site_repository.create", new=AsyncMock(return_value=site)) as create_site,
@@ -220,6 +221,7 @@ class UiServersTests(unittest.IsolatedAsyncioTestCase):
             patch("app.routers.ui.servers.caddy_service.fetch_config", new=AsyncMock(return_value=config_payload)),
             patch("app.routers.ui.servers.caddy_service.extract_site_definitions", return_value=[imported_definition]),
             patch("app.routers.ui.servers.config_template_repository.get_by_name", new=AsyncMock(return_value=None)),
+            patch("app.routers.ui.servers.config_template_repository.get_by_caddyfile", new=AsyncMock(return_value=None)),
             patch("app.routers.ui.servers.config_template_repository.create", new=AsyncMock(return_value=template)) as create_template,
             patch("app.routers.ui.servers.site_repository.get_by_domain", new=AsyncMock(return_value=None)),
             patch("app.routers.ui.servers.site_repository.create", new=AsyncMock(return_value=site)) as create_site,
@@ -236,6 +238,68 @@ class UiServersTests(unittest.IsolatedAsyncioTestCase):
         update_server.assert_awaited_once_with(session, server, active_config_id=11)
         audit_commit.assert_awaited_once()
         publish_resource_event.assert_awaited_once_with("site", "created", "17")
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/templates?server_id=7")
+
+    async def test_create_server_reuses_existing_template_with_identical_caddyfile(self) -> None:
+        request = _build_request()
+        request.scope["client"] = ("127.0.0.2", 12345)
+        session = object()
+        current_user = SimpleNamespace(id=1, role="admin", username="alice")
+        config_payload = {"apps": {"http": {"servers": {}}}}
+        created_server = SimpleNamespace(id=7, name="edge-1", last_pinged=None)
+        config = SimpleNamespace(id=11)
+        imported_definition = SimpleNamespace(
+            domain="caddy.sv2.cirrio.de",
+            template_name="edge-1 (caddy.sv2.cirrio.de)",
+            caddyfile="reverse_proxy {{upstream}}",
+            upstream="10.30.0.140:8000",
+            ssl_enabled=True,
+        )
+        existing_template = SimpleNamespace(id=23, name="shared-template")
+        site = SimpleNamespace(id=17)
+
+        with (
+            patch("app.routers.ui.servers.require_admin", new=AsyncMock(return_value=current_user)),
+            patch(
+                "app.routers.ui.servers.validated_form",
+                new=AsyncMock(
+                    return_value={
+                        "name": "edge-1",
+                        "api_url": "http://10.30.0.1",
+                        "api_port": "2019",
+                        "admin_api_path": "/config/",
+                        "active": "on",
+                        "tags": "prod",
+                    }
+                ),
+            ),
+            patch("app.routers.ui.servers.caddy_service.test_connection", new=AsyncMock(return_value=config_payload)),
+            patch("app.routers.ui.servers.caddy_service.extract_site_definitions", return_value=[imported_definition]),
+            patch("app.routers.ui.servers.server_repository.create", new=AsyncMock(return_value=created_server)),
+            patch("app.routers.ui.servers.config_template_repository.get_by_name", new=AsyncMock(return_value=None)),
+            patch("app.routers.ui.servers.config_template_repository.get_by_caddyfile", new=AsyncMock(return_value=existing_template)),
+            patch("app.routers.ui.servers.config_template_repository.create", new=AsyncMock()) as create_template,
+            patch("app.routers.ui.servers.site_repository.get_by_domain", new=AsyncMock(return_value=None)),
+            patch("app.routers.ui.servers.site_repository.create", new=AsyncMock(return_value=site)) as create_site,
+            patch("app.routers.ui.servers.config_repository.create", new=AsyncMock(return_value=config)),
+            patch("app.routers.ui.servers.server_repository.update", new=AsyncMock()),
+            patch("app.routers.ui.servers.audit_commit_and_flash", new=AsyncMock()),
+            patch("app.routers.ui.servers.publish_resource_event", new=AsyncMock()),
+        ):
+            response = await servers.create_server(request, session=session)
+
+        create_template.assert_not_awaited()
+        create_site.assert_awaited_once_with(
+            session,
+            domain="caddy.sv2.cirrio.de",
+            config_template_id=23,
+            enabled=True,
+            description="Imported from server 'edge-1'.",
+            variables={"upstream": "10.30.0.140:8000"},
+            ssl_enabled=True,
+            ssl_provider="letsencrypt",
+        )
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/templates?server_id=7")
 

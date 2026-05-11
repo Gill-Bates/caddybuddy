@@ -45,6 +45,7 @@ class UiCommonTests(unittest.IsolatedAsyncioTestCase):
         session = SimpleNamespace(
             commit=AsyncMock(side_effect=SQLAlchemyError("commit failed")),
             rollback=AsyncMock(),
+            is_active=True,
         )
         request = object()
 
@@ -64,6 +65,25 @@ class UiCommonTests(unittest.IsolatedAsyncioTestCase):
         log_action.assert_awaited_once()
         session.rollback.assert_awaited_once()
         push_flash.assert_not_called()
+
+    async def test_audit_commit_and_flash_skips_rollback_for_inactive_session(self) -> None:
+        session = SimpleNamespace(
+            commit=AsyncMock(side_effect=SQLAlchemyError("commit failed")),
+            rollback=AsyncMock(),
+            is_active=False,
+        )
+        request = object()
+
+        with patch("app.routers.ui._common.audit_service.log_action", new=AsyncMock()):
+            with self.assertRaisesRegex(SQLAlchemyError, "commit failed"):
+                await _common.audit_commit_and_flash(
+                    session,
+                    request,
+                    action="user.login",
+                    resource_type="user",
+                )
+
+        session.rollback.assert_not_awaited()
 
     async def test_load_dashboard_context_uses_count_star_queries(self) -> None:
         row = SimpleNamespace(
@@ -97,6 +117,18 @@ class UiCommonTests(unittest.IsolatedAsyncioTestCase):
 
     def test_safe_next_accepts_none(self) -> None:
         self.assertEqual(_common.safe_next(None), "/")
+
+    def test_safe_next_rejects_control_characters(self) -> None:
+        self.assertEqual(_common.safe_next("/foo\nbar"), "/")
+        self.assertEqual(_common.safe_next("/foo\tbar"), "/")
+
+    def test_safe_next_rejects_backslashes(self) -> None:
+        self.assertEqual(_common.safe_next("/%5Cevil.example"), "/")
+        self.assertEqual(_common.safe_next("/\\evil.example"), "/")
+        self.assertEqual(_common.safe_next("/foo\\bar"), "/")
+
+    def test_safe_next_rejects_encoded_control_characters(self) -> None:
+        self.assertEqual(_common.safe_next("/%0aevil"), "/")
 
 
 if __name__ == "__main__":

@@ -30,6 +30,7 @@ from ._common import audit_commit_and_flash, logger, safe_next, validated_form
 
 router = APIRouter()
 
+_MAX_USERNAME_LENGTH = 50
 _MAX_PASSWORD_LENGTH = 128
 
 
@@ -44,7 +45,13 @@ async def login_page(request: Request, session: AsyncSession = Depends(get_db_se
     current_user = await get_session_user(request, session)
     if current_user is not None:
         return redirect_to("/")
-    return render_template(request, "login.html", current_user=None)
+    next_url = safe_next(str(request.query_params.get("next", "/")) or "/")
+    return render_template(
+        request,
+        "login.html",
+        current_user=None,
+        context={"next_url": next_url},
+    )
 
 
 @router.post("/login")
@@ -54,6 +61,18 @@ async def login_action(request: Request, session: AsyncSession = Depends(get_db_
     username = str(form.get("username", "")).strip()
     password = str(form.get("password", ""))
     next_path = str(form.get("next", "/")) or "/"
+    if len(username) > _MAX_USERNAME_LENGTH:
+        logger.warning("Rejected login attempt due to excessive username length (%d chars)", len(username))
+        await audit_commit_and_flash(
+            session,
+            request,
+            action="login_failed",
+            resource_type="user",
+            details={"reason": "excessive_username_length"},
+            status_code=400,
+            flashes=(("danger", "Invalid credentials."),),
+        )
+        return redirect_to("/login")
     if len(password) > _MAX_PASSWORD_LENGTH:
         logger.warning("Rejected login attempt due to excessive password length (%d chars)", len(password))
         await audit_commit_and_flash(
@@ -80,7 +99,7 @@ async def login_action(request: Request, session: AsyncSession = Depends(get_db_
             flashes=(("danger", "Invalid credentials."),),
         )
         return redirect_to("/login")
-    initialize_user_session(request, user.id)
+    initialize_user_session(request, user.id, user.password_hash)
     await audit_commit_and_flash(
         session,
         request,

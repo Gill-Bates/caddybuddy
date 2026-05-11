@@ -1,23 +1,21 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<section class="d-grid gap-4">
-    <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-end">
-        <div>
+<section class="app-page">
+    <div class="app-page__header">
+        <div class="app-page__lede">
             <p class="eyebrow mb-2">Caddy inventory</p>
-            <h1 class="page-title mb-2">Servers</h1>
-            <p class="text-body-secondary mb-0">Register admin API endpoints, keep their health badges current in the
-                background, and import live configurations into the local SQLite catalog.</p>
+            <h1 class="page-title mb-0">Servers</h1>
         </div>
     </div>
 
-    <div class="row g-4 align-items-start">
+    <div class="row app-grid">
         <div class="col-xl-4">
             <div class="panel-card">
                 <div class="panel-card__header">
                     <h2 class="h5 mb-0">Add server</h2>
                 </div>
-                <form action="/servers" method="post" class="d-grid gap-3">
+                <form action="{{ request.app.url_path_for('create_server') }}" method="post" class="d-grid gap-3">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <div>
                         <label class="form-label" for="server-name">Name</label>
@@ -56,7 +54,7 @@
         </div>
 
         <div class="col-xl-8">
-            <div class="panel-card">
+            <div class="panel-card panel-card--table">
                 <div class="panel-card__header">
                     <h2 class="h5 mb-0">Registered endpoints</h2>
                 </div>
@@ -90,15 +88,20 @@
                                 </td>
                                 <td class="text-end">
                                     <div class="d-inline-flex flex-wrap gap-2 justify-content-end">
-                                        <form action="/servers/{{ server.id }}/sync" method="post">
+                                        <form
+                                            action="{{ request.app.url_path_for('sync_server_config', server_id=server.id) }}"
+                                            method="post">
                                             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                             <button type="submit" class="btn btn-sm btn-outline-secondary">Sync
                                                 live</button>
                                         </form>
-                                        <form action="/servers/{{ server.id }}/delete" method="post">
+                                        <form
+                                            action="{{ request.app.url_path_for('delete_server', server_id=server.id) }}"
+                                            method="post">
                                             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                             <button type="submit" class="btn btn-sm btn-outline-danger js-confirm"
-                                                data-confirm="Delete this server?">Delete</button>
+                                                data-confirm="Delete this server?"
+                                                data-confirm-btn-class="btn-danger">Delete</button>
                                         </form>
                                     </div>
                                 </td>

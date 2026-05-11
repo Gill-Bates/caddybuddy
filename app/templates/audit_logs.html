@@ -1,15 +1,15 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<section class="audit-logs-page d-flex flex-column gap-4">
-    <div class="mb-3">
-        <p class="eyebrow mb-2">Traceability</p>
-        <h1 class="page-title mb-2">Audit Logs</h1>
-        <p class="text-body-secondary mb-0">Review the latest actions across authentication, user administration, server
-            operations, and configuration deploys.</p>
+<section class="app-page audit-logs-page">
+    <div class="app-page__header">
+        <div class="app-page__lede">
+            <p class="eyebrow mb-2">Traceability</p>
+            <h1 class="page-title mb-0">Audit Logs</h1>
+        </div>
     </div>
 
-    <div class="panel-card audit-logs-card flex-grow-1 d-flex flex-column overflow-hidden">
+    <div class="panel-card panel-card--table audit-logs-card flex-grow-1 d-flex flex-column">
         <div class="panel-card__header flex-wrap">
             <h2 class="h5 mb-0">Latest events</h2>
             <div class="audit-logs-filters d-flex flex-wrap gap-2 align-items-center ms-auto w-100">
@@ -30,31 +30,18 @@
                     class="btn btn-outline-secondary btn-sm audit-logs-filter-reset">Reset</button>
             </div>
         </div>
-        <div class="table-responsive audit-logs-table-wrap flex-grow-1 overflow-auto" id="auditTableContainer">
-            <table class="table align-middle mb-0 table-hover" id="auditTable">
-                <thead class="sticky-top bg-body">
-                    <tr>
-                        <th class="audit-col-timestamp">Timestamp</th>
-                        <th class="audit-col-action">Action</th>
-                        <th class="audit-col-user">User</th>
-                        <th class="audit-col-resource">Resource</th>
-                        <th>Details</th>
-                    </tr>
-                </thead>
-                <tbody id="auditTableBody">
-                    <tr id="loadingRow">
-                        <td colspan="5" class="text-body-secondary text-center py-4">
-                            <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                            Loading entries...
-                        </td>
-                    </tr>
-                </tbody>
-            </table>
+        <div class="audit-logs-stream flex-grow-1" id="auditTableContainer">
+            <div id="auditTableBody" class="audit-feed">
+                <div id="loadingRow" class="audit-feed__status">
+                    <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                    Loading entries...
+                </div>
+            </div>
             <div id="loadMoreSentinel" class="py-3 text-center d-none" aria-hidden="true">
                 <span class="spinner-border spinner-border-sm text-muted" role="status" aria-hidden="true"></span>
             </div>
         </div>
-        <div class="border-top pt-2 mt-auto">
+        <div class="border-top pt-2 mt-auto px-3 pb-2">
             <small class="text-body-secondary">
                 Showing <span id="visibleCount">0</span> of <span id="totalCount">0</span> entries
             </small>

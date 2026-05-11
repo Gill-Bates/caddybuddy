@@ -5,8 +5,8 @@ httpx==0.28.1
 itsdangerous==2.2.0
 jinja2==3.1.6
 pydantic==2.13.4
-pydantic-settings==2.14.0
-python-multipart==0.0.27
+pydantic-settings==2.14.1
+python-multipart==0.0.28
 slowapi==0.1.9
 sqlalchemy==2.0.49
 uvicorn[standard]==0.46.0

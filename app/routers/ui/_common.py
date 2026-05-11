@@ -7,8 +7,10 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from urllib.parse import unquote
 
 from fastapi import Request
 from sqlalchemy import func, select
@@ -24,6 +26,8 @@ from app.repositories.servers import server_repository
 from app.services.audit import audit_service
 
 logger = logging.getLogger(__name__)
+
+_UNSAFE_NEXT_PATH_RE = re.compile(r"[\x00-\x1f\x7f\\]")
 
 
 async def require_user(request: Request, session: AsyncSession) -> User | None:
@@ -55,11 +59,18 @@ async def validated_form(request: Request) -> FormData:
 
 def safe_next(next_path: str | None) -> str:
     """Sanitize the 'next' redirect path to prevent open redirects."""
+    decoded_path = unquote(next_path) if next_path else None
     if (
         not next_path
         or not next_path.startswith("/")
         or next_path.startswith("//")
         or next_path.startswith("/\\")
+        or decoded_path is None
+        or not decoded_path.startswith("/")
+        or decoded_path.startswith("//")
+        or decoded_path.startswith("/\\")
+        or _UNSAFE_NEXT_PATH_RE.search(next_path) is not None
+        or _UNSAFE_NEXT_PATH_RE.search(decoded_path) is not None
     ):
         return "/"
     return next_path
@@ -104,14 +115,15 @@ async def audit_commit_and_flash(
             action,
             resource_type,
         )
-        try:
-            await session.rollback()
-        except SQLAlchemyError:
-            logger.exception(
-                "Failed to roll back audit action '%s' for resource type '%s'",
-                action,
-                resource_type,
-            )
+        if getattr(session, "is_active", False):
+            try:
+                await session.rollback()
+            except SQLAlchemyError:
+                logger.exception(
+                    "Failed to roll back audit action '%s' for resource type '%s'",
+                    action,
+                    resource_type,
+                )
         raise
     for category, message in flashes:
         push_flash(request, category, message)
@@ -135,7 +147,7 @@ async def load_dashboard_context(session: AsyncSession) -> dict[str, object]:
         "api_key_count": int(counts.api_key_count),
         "audit_count": int(counts.audit_count),
         "servers": await server_repository.list_all(session, limit=5),
-        "recent_logs": await audit_log_repository.list_recent(session, limit=8),
+        "recent_logs": await audit_log_repository.list_recent(session, limit=10),
     }
 
 

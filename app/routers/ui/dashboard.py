@@ -4,9 +4,7 @@
 # Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
 #
 
-# Dashboard route.
-# Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
-#
+"""Dashboard route."""
 
 from __future__ import annotations
 
@@ -16,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.session import get_db_session
 from app.dependencies.web import redirect_to, render_template
+from app.models.entities import User
 
 from ._common import load_dashboard_context, require_user
 
@@ -23,9 +22,15 @@ router = APIRouter()
 
 
 @router.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request, session: AsyncSession = Depends(get_db_session)):
-    current_user = await require_user(request, session)
+async def dashboard(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+) -> HTMLResponse:
+    current_user: User | None = await require_user(request, session)
     if current_user is None:
         return redirect_to("/login")
-    context = {"page_title": "Dashboard", **(await load_dashboard_context(session))}
+    context: dict[str, object] = {
+        "page_title": "Dashboard",
+        **(await load_dashboard_context(session)),
+    }
     return render_template(request, "dashboard.html", current_user=current_user, context=context)

@@ -29,6 +29,7 @@ _FORBIDDEN_HOSTS = frozenset({"169.254.169.254", "metadata.google.internal"})
 _FORBIDDEN_IPS = frozenset({ip_address("169.254.169.254")})
 _CADDY_ADAPT_TIMEOUT = 10.0
 _CADDY_KILL_TIMEOUT = 2.0
+_DNS_RESOLUTION_TIMEOUT = 5.0
 _SECURITY_HEADERS = {
     "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
     "X-Content-Type-Options": "nosniff",
@@ -325,12 +326,26 @@ class CaddyService:
         except asyncio.TimeoutError as exc:
             await self._kill_process(process)
             raise CaddyServiceError(f"Caddy command timed out after {timeout}s") from exc
+        except BaseException:
+            await self._kill_process(process)
+            raise
 
         return (
             process.returncode or 0,
             stdout.decode("utf-8", errors="replace"),
             stderr.decode("utf-8", errors="replace"),
         )
+
+    @staticmethod
+    def _write_temp_caddyfile(caddyfile: str) -> Path:
+        with NamedTemporaryFile(
+            mode="w",
+            suffix=".caddyfile",
+            delete=False,
+            encoding="utf-8",
+        ) as tmp:
+            tmp.write(caddyfile)
+            return Path(tmp.name)
 
     @staticmethod
     def _parse_caddy_errors(stderr: str) -> tuple[str, ...]:
@@ -350,21 +365,14 @@ class CaddyService:
         return tuple(errors) if errors else (stderr.strip(),)
 
     async def adapt_caddyfile_to_json(self, caddyfile: str) -> dict:
-        with NamedTemporaryFile(
-            mode="w",
-            suffix=".caddyfile",
-            delete=False,
-            encoding="utf-8",
-        ) as tmp:
-            tmp.write(caddyfile)
-            tmp_path = Path(tmp.name)
+        tmp_path = await asyncio.to_thread(self._write_temp_caddyfile, caddyfile)
 
         try:
             return_code, stdout, stderr = await self._run_caddy_command(
                 ["adapt", "--config", str(tmp_path), "--adapter", "caddyfile"],
             )
         finally:
-            tmp_path.unlink(missing_ok=True)
+            await asyncio.to_thread(tmp_path.unlink, missing_ok=True)
 
         if return_code != 0:
             error_text = "\n".join(self._parse_caddy_errors(stderr)) or "Failed to adapt Caddyfile."
@@ -439,6 +447,21 @@ class CaddyService:
         return urljoin(f"{CaddyService._base_url(server)}/", "load")
 
     @staticmethod
+    def _pinned_base_url(server: CaddyServer, validated_ip: ResolvedIPAddress) -> str:
+        parsed = urlsplit(CaddyService._base_url(server))
+        host = str(validated_ip)
+        if ":" in host:
+            host = f"[{host}]"
+        return urlunsplit((parsed.scheme, f"{host}:{parsed.port}", "", "", ""))
+
+    @staticmethod
+    def _request_host_header(server: CaddyServer) -> str:
+        parsed = urlsplit(CaddyService._base_url(server))
+        if not parsed.hostname:
+            raise ValueError("Caddy admin URL must include a host.")
+        return parsed.hostname
+
+    @staticmethod
     def _normalize_resolved_ip(target_ip: ResolvedIPAddress) -> ResolvedIPAddress:
         return getattr(target_ip, "ipv4_mapped", None) or target_ip
 
@@ -453,13 +476,18 @@ class CaddyService:
         except ValueError:
             loop = asyncio.get_running_loop()
             try:
-                address_info = await loop.getaddrinfo(
-                    host,
-                    port,
-                    family=socket.AF_UNSPEC,
-                    type=socket.SOCK_STREAM,
-                    proto=socket.IPPROTO_TCP,
+                address_info = await asyncio.wait_for(
+                    loop.getaddrinfo(
+                        host,
+                        port,
+                        family=socket.AF_UNSPEC,
+                        type=socket.SOCK_STREAM,
+                        proto=socket.IPPROTO_TCP,
+                    ),
+                    timeout=_DNS_RESOLUTION_TIMEOUT,
                 )
+            except asyncio.TimeoutError as exc:
+                raise ValueError(f"DNS resolution timed out for Caddy admin host: {host!r}") from exc
             except OSError as exc:
                 raise ValueError(f"Failed to resolve Caddy admin host: {host!r}") from exc
 
@@ -472,45 +500,66 @@ class CaddyService:
             raise ValueError(f"Failed to resolve Caddy admin host: {host!r}")
         return resolved_ips
 
-    async def _validate_target(self, server: CaddyServer) -> None:
-        # This is a best-effort SSRF guard. httpx resolves DNS again when opening
-        # the socket, so a hostile resolver can still exploit a DNS TOCTOU gap.
-        # Keep this limitation documented here unless request transport is pinned
-        # to the validated IP address explicitly.
+    async def _validate_target(self, server: CaddyServer) -> ResolvedIPAddress:
         parsed = urlsplit(self._base_url(server))
         host = (parsed.hostname or "").lower()
         if host in _FORBIDDEN_HOSTS:
             raise ValueError(f"Blocked Caddy admin target: {host!r}")
 
         resolved_ips = await self._resolve_target_ips(host, parsed.port)
+        validated_ip: ResolvedIPAddress | None = None
         for target_ip in resolved_ips:
             if self._is_forbidden_resolved_ip(target_ip):
                 raise ValueError(
                     f"Link-local or metadata Caddy admin targets are not allowed: {target_ip!s}"
                 )
+            if validated_ip is None:
+                validated_ip = target_ip
+
+        if validated_ip is None:
+            raise ValueError(f"Failed to resolve Caddy admin host: {host!r}")
+        return validated_ip
 
     async def test_connection(self, server: CaddyServer) -> dict:
         return await self.fetch_config(server)
 
     async def fetch_config(self, server: CaddyServer) -> dict:
-        await self._validate_target(server)
+        validated_ip = await self._validate_target(server)
+        endpoint = urljoin(f"{self._pinned_base_url(server, validated_ip)}/", self._relative_admin_api_path(server))
+        headers = {"Host": self._request_host_header(server)}
         client = self._get_client()
         try:
-            response = await client.get(self._endpoint(server))
+            response = await client.get(endpoint, headers=headers)
             response.raise_for_status()
         except httpx.HTTPError as exc:
             raise CaddyServiceError(f"Caddy API request failed: {exc}") from exc
-        return response.json()
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise CaddyServiceError(f"Non-JSON response from Caddy API: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise CaddyServiceError("Caddy API response must be a JSON object.")
+        return payload
 
     async def deploy_config(self, server: CaddyServer, config_payload: dict) -> dict:
-        await self._validate_target(server)
+        validated_ip = await self._validate_target(server)
+        endpoint = urljoin(f"{self._pinned_base_url(server, validated_ip)}/", "load")
+        headers = {"Host": self._request_host_header(server)}
         client = self._get_client()
         try:
-            response = await client.post(self._load_endpoint(server), json=config_payload)
+            response = await client.post(endpoint, json=config_payload, headers=headers)
             response.raise_for_status()
         except httpx.HTTPError as exc:
             raise CaddyServiceError(f"Caddy API request failed: {exc}") from exc
-        return response.json() if response.content else {"status": "ok"}
+        if not response.content:
+            return {"status": "ok"}
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise CaddyServiceError(f"Non-JSON response from Caddy API: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise CaddyServiceError("Caddy API response must be a JSON object.")
+        return payload
 
     @staticmethod
     def mark_server_online(server: CaddyServer) -> None:

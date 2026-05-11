@@ -1,9 +1,4 @@
-//
-// tools/ui-lint/visual/visual-regression.mjs
-// Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
-//
-
-import fs from 'node:fs';
+import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,9 +7,10 @@ import { PNG } from 'pngjs';
 
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const VISUAL_BASE_DIR = MODULE_DIR;
+const VISUAL_ARTIFACTS_DIR = path.join(VISUAL_BASE_DIR, '..', 'test-results', 'visual');
 const BASELINE_DIR = path.join(VISUAL_BASE_DIR, 'baselines');
-const CURRENT_DIR = path.join(VISUAL_BASE_DIR, 'current');
-const DIFF_DIR = path.join(VISUAL_BASE_DIR, 'diff');
+const CURRENT_DIR = path.join(VISUAL_ARTIFACTS_DIR, 'current');
+const DIFF_DIR = path.join(VISUAL_ARTIFACTS_DIR, 'diff');
 
 const DEFAULT_THRESHOLD_PERCENT = 0.5;
 const DEFAULT_PIXEL_THRESHOLD = 0.1;
@@ -35,8 +31,9 @@ const GLOBAL_DYNAMIC_SELECTORS = [
 
 const VIEW_DYNAMIC_SELECTORS = {
     dashboard: [
-        '.timeline-list',
-        '.timeline-item .small',
+        '.audit-feed',
+        '.audit-row__time',
+        '.audit-row__user',
         '.table tbody td:last-child',
     ],
     servers: [
@@ -48,14 +45,30 @@ const VIEW_DYNAMIC_SELECTORS = {
         '.history-stack',
         '.history-item',
     ],
+    sites: [
+        '.table tbody td:nth-child(3)',
+        '.table tbody .badge',
+        '.cb-code-block',
+    ],
+    deployments: [
+        '.table tbody td:nth-child(5)',
+        '.table tbody .badge',
+        '.cb-code-block',
+    ],
+    queue: [
+        '.table tbody td:nth-child(4)',
+        '.table tbody .badge',
+        '#queueSelectedSiteHint',
+    ],
     'api-keys': [
         '.status-pill',
         '.table tbody td code',
         '.table tbody td:nth-child(5)',
     ],
     'audit-logs': [
-        '.audit-details',
-        '.table tbody td:first-child',
+        '.audit-row__time',
+        '.audit-row__summary',
+        '.audit-row__details',
     ],
     users: [
         '.table tbody td:last-child',
@@ -88,7 +101,19 @@ const sanitizeVisualName = (name) =>
 const inferViewScope = (name) => {
     const safeName = sanitizeVisualName(name);
     if (!safeName) return null;
-    const scopes = ['dashboard', 'servers', 'configs', 'api-keys', 'audit-logs', 'users', 'profile', 'login-error'];
+    const scopes = [
+        'dashboard',
+        'servers',
+        'configs',
+        'sites',
+        'deployments',
+        'queue',
+        'api-keys',
+        'audit-logs',
+        'users',
+        'profile',
+        'login-error',
+    ];
     return scopes.find((scope) => safeName.includes(`-${scope}-`) || safeName.startsWith(`${scope}-`) || safeName.includes(scope)) || null;
 };
 
@@ -99,8 +124,7 @@ const buildMaskSelectors = (name, config) => {
     return [...new Set(merged)];
 };
 
-const readPng = (filePath) => PNG.sync.read(fs.readFileSync(filePath));
-const writePng = (filePath, png) => fs.writeFileSync(filePath, PNG.sync.write(png));
+const readPng = (buffer) => PNG.sync.read(buffer);
 
 const inferDeviceFromName = (name) => {
     if (name.startsWith('mobile-')) return 'mobile';
@@ -141,18 +165,17 @@ export function getVisualRegressionConfig() {
     };
 }
 
-export function ensureVisualRegressionDirs(config = getVisualRegressionConfig()) {
+export async function ensureVisualRegressionDirs(config = getVisualRegressionConfig()) {
     for (const dir of [config.baselineDir, config.currentDir, config.diffDir]) {
-        fs.mkdirSync(dir, { recursive: true });
+        await fs.mkdir(dir, { recursive: true });
     }
 }
 
 export async function stabilizeVisualSnapshot(page, config = getVisualRegressionConfig()) {
-    await page.waitForLoadState('domcontentloaded', { timeout: 30000 }).catch(() => { });
-    await page.waitForLoadState('load', { timeout: 30000 }).catch(() => { });
-    await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => { });
+    await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+    await page.waitForLoadState('load', { timeout: 30000 });
+    await page.waitForLoadState('networkidle', { timeout: 10000 });
 
-    // Disable animations and transitions to reduce flakiness.
     await page.addStyleTag({
         content: `
             html {
@@ -187,13 +210,13 @@ export async function stabilizeVisualSnapshot(page, config = getVisualRegression
                 background: transparent !important;
             }
         `,
-    }).catch(() => { });
+    });
 
     await page.evaluate(async ({ disableResizeObserver, fixedNowIso }) => {
         window.__UI_LINT__ = true;
 
         const fixedNow = new Date(fixedNowIso).valueOf();
-        if (Number.isFinite(fixedNow)) {
+        if (Number.isFinite(fixedNow) && !window.__UI_LINT_DATE_FIXED__) {
             const NativeDate = Date;
             class FixedDate extends NativeDate {
                 constructor(...args) {
@@ -211,6 +234,7 @@ export async function stabilizeVisualSnapshot(page, config = getVisualRegression
 
             Object.defineProperty(FixedDate, 'name', { value: 'Date' });
             window.Date = FixedDate;
+            window.__UI_LINT_DATE_FIXED__ = true;
         }
 
         window.requestAnimationFrame = (cb) => setTimeout(() => cb(performance.now()), 16);
@@ -226,7 +250,6 @@ export async function stabilizeVisualSnapshot(page, config = getVisualRegression
         try {
             await document.fonts.ready;
         } catch {
-            // Ignore fonts API failures in older engines.
         }
 
         const images = [...document.images];
@@ -238,7 +261,6 @@ export async function stabilizeVisualSnapshot(page, config = getVisualRegression
             });
         }));
 
-        // Normalize known dynamic placeholders when explicitly marked.
         document.querySelectorAll('[data-dynamic], [data-ui-lint-dynamic]').forEach((el) => {
             if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
                 el.value = '—';
@@ -258,19 +280,16 @@ export async function stabilizeVisualSnapshot(page, config = getVisualRegression
             document.querySelectorAll(':hover').forEach((el) => {
                 el.blur?.();
             });
-        } catch {
-            // Ignore unsupported selector behavior in older engines.
-        }
+        } catch { }
 
         document.activeElement?.blur?.();
-
         window.scrollTo(0, 0);
     }, {
         disableResizeObserver: Boolean(config.disableResizeObserver),
         fixedNowIso: config.fixedNowIso,
-    }).catch(() => { });
+    });
 
-    await page.mouse.move(0, 0).catch(() => { });
+    await page.mouse.move(0, 0);
     await page.waitForTimeout(120);
 }
 
@@ -282,8 +301,7 @@ async function applySmartMasking(page, selectors = []) {
         const isMaskable = (el) => {
             if (!(el instanceof HTMLElement)) return false;
             const tag = el.tagName.toLowerCase();
-            if (['html', 'body', 'main'].includes(tag)) return false;
-            return true;
+            return !['html', 'body', 'main'].includes(tag);
         };
 
         for (const selector of selectors) {
@@ -291,9 +309,7 @@ async function applySmartMasking(page, selectors = []) {
                 document.querySelectorAll(selector).forEach((el) => {
                     if (isMaskable(el)) candidateNodes.add(el);
                 });
-            } catch {
-                // Ignore invalid custom selectors from env input.
-            }
+            } catch { }
         }
 
         candidateNodes.forEach((el) => {
@@ -303,7 +319,6 @@ async function applySmartMasking(page, selectors = []) {
             el.setAttribute(maskStyleAttr, previousInlineStyle ?? '');
             el.setAttribute(maskFlagAttr, '1');
 
-            // Keep geometry but hide volatile rendering.
             el.style.setProperty('visibility', 'hidden', 'important');
             el.style.setProperty('caret-color', 'transparent', 'important');
         });
@@ -311,7 +326,7 @@ async function applySmartMasking(page, selectors = []) {
         selectors,
         maskStyleAttr: MASK_STYLE_ATTR,
         maskFlagAttr: MASK_FLAG_ATTR,
-    }).catch(() => { });
+    });
 }
 
 async function restoreSmartMasking(page) {
@@ -337,7 +352,7 @@ async function restoreSmartMasking(page) {
     }, {
         maskStyleAttr: MASK_STYLE_ATTR,
         maskFlagAttr: MASK_FLAG_ATTR,
-    }).catch(() => { });
+    });
 }
 
 export async function captureVisualSnapshot(page, name, config = getVisualRegressionConfig()) {
@@ -347,9 +362,14 @@ export async function captureVisualSnapshot(page, name, config = getVisualRegres
     }
 
     const currentPath = path.join(config.currentDir, `${safeName}.png`);
-    const viewport = getViewportForName(safeName, config);
 
-    await page.setViewportSize(viewport).catch(() => { });
+    const pageViewport = page.viewportSize();
+    const fallback = getViewportForName(safeName, config);
+    const viewport = {
+        width: pageViewport?.width ?? fallback.width,
+        height: pageViewport?.height ?? fallback.height,
+    };
+
     await stabilizeVisualSnapshot(page, config);
     const maskSelectors = buildMaskSelectors(safeName, config);
     await applySmartMasking(page, maskSelectors);
@@ -363,7 +383,7 @@ export async function captureVisualSnapshot(page, name, config = getVisualRegres
                 x: 0,
                 y: 0,
                 width: viewport.width,
-                height: viewport.height,
+                height: Math.min(viewport.height, config.screenshotHeight),
             },
         });
     } finally {
@@ -376,17 +396,16 @@ export async function captureVisualSnapshot(page, name, config = getVisualRegres
     };
 }
 
-export function compareVisualSnapshot(name, config = getVisualRegressionConfig()) {
+export async function compareVisualSnapshot(name, config = getVisualRegressionConfig()) {
     const safeName = sanitizeVisualName(name);
     const baselinePath = path.join(config.baselineDir, `${safeName}.png`);
     const currentPath = path.join(config.currentDir, `${safeName}.png`);
     const diffPath = path.join(config.diffDir, `${safeName}.diff.png`);
 
-    if (fs.existsSync(diffPath)) {
-        fs.rmSync(diffPath, { force: true });
-    }
+    await fs.rm(diffPath, { force: true }).catch(() => { });
 
-    if (!fs.existsSync(currentPath)) {
+    const currentExists = await fs.access(currentPath).then(() => true).catch(() => false);
+    if (!currentExists) {
         return {
             name: safeName,
             pass: false,
@@ -397,9 +416,12 @@ export function compareVisualSnapshot(name, config = getVisualRegressionConfig()
         };
     }
 
-    if (!fs.existsSync(baselinePath)) {
+    const baselineBuf = await fs.readFile(baselinePath).catch(() => null);
+    const currentBuf = await fs.readFile(currentPath);
+
+    if (!baselineBuf) {
         if (config.updateBaselines) {
-            fs.copyFileSync(currentPath, baselinePath);
+            await fs.copyFile(currentPath, baselinePath);
             return {
                 name: safeName,
                 pass: true,
@@ -423,8 +445,21 @@ export function compareVisualSnapshot(name, config = getVisualRegressionConfig()
         };
     }
 
-    const baseline = readPng(baselinePath);
-    const current = readPng(currentPath);
+    let baseline, current;
+    try {
+        baseline = readPng(baselineBuf);
+        current = readPng(currentBuf);
+    } catch (err) {
+        return {
+            name: safeName,
+            pass: false,
+            reason: 'decode-error',
+            error: err.message,
+            baselinePath,
+            currentPath,
+            diffPath,
+        };
+    }
 
     if (baseline.width !== current.width || baseline.height !== current.height) {
         return {
@@ -458,10 +493,8 @@ export function compareVisualSnapshot(name, config = getVisualRegressionConfig()
     const roundedPercent = Number(percent.toFixed(3));
     const pass = roundedPercent <= config.thresholdPercent;
 
-    if (pass) {
-        fs.rmSync(diffPath, { force: true });
-    } else {
-        writePng(diffPath, diff);
+    if (!pass) {
+        await fs.writeFile(diffPath, PNG.sync.write(diff));
     }
 
     return {

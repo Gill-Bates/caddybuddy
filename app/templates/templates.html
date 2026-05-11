@@ -1,24 +1,22 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<section class="d-grid gap-4">
-    <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-end">
-        <div>
+<section class="app-page">
+    <div class="app-page__header">
+        <div class="app-page__lede">
             <p class="eyebrow mb-2">Caddyfile</p>
-            <h1 class="page-title mb-2">Caddyfile</h1>
-            <p class="text-body-secondary mb-0">Reusable Caddy configurations. Caddyfiles are referenced by Sites and
-                rendered with site-specific variables during deployment.</p>
+            <h1 class="page-title mb-0">Caddyfile</h1>
         </div>
     </div>
 
-    <div class="row g-4 align-items-start">
+    <div class="row app-grid">
         <div class="col-xl-5">
             <div class="panel-card">
                 <div class="panel-card__header">
                     <h2 class="h5 mb-0">{% if selected_template %}Edit Caddyfile{% else %}Create Caddyfile{% endif %}
                     </h2>
                 </div>
-                <form action="/templates" method="post" class="d-grid gap-3">
+                <form action="{{ request.app.url_path_for('save_template') }}" method="post" class="d-grid gap-3">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     {% if reference_server %}
                     <input type="hidden" name="reference_server_id" value="{{ reference_server.id }}">
@@ -77,7 +75,8 @@
                             {% if selected_template %}Update Caddyfile{% else %}Create Caddyfile{% endif %}
                         </button>
                         {% if selected_template %}
-                        <a href="/templates" class="btn btn-outline-secondary">Cancel</a>
+                        <a href="{{ request.app.url_path_for('templates_page') }}"
+                            class="btn btn-outline-secondary">Cancel</a>
                         {% endif %}
                     </div>
                 </form>
@@ -96,7 +95,8 @@
                 <div class="alert alert-info mb-3">
                     <strong>Used by {{ selected_template.sites | length }} site(s):</strong>
                     {% for site in selected_template.sites[:5] %}
-                    <a href="/sites/{{ site.id }}" class="text-decoration-none">{{ site.domain }}</a>{% if not loop.last
+                    <a href="{{ request.app.url_path_for('sites_page', site_id=site.id) }}"
+                        class="text-decoration-none">{{ site.domain }}</a>{% if not loop.last
                     %}, {% endif %}
                     {% endfor %}
                     {% if selected_template.sites | length > 5 %}
@@ -137,7 +137,7 @@
             {% endif %}
 
             {% if selected_template and revisions %}
-            <div class="panel-card mb-4">
+            <div class="panel-card panel-card--table mb-4">
                 <div class="panel-card__header">
                     <h2 class="h5 mb-0">Caddyfile Revision History</h2>
                 </div>
@@ -178,7 +178,7 @@
             </div>
             {% endif %}
 
-            <div class="panel-card">
+            <div class="panel-card panel-card--table">
                 <div class="panel-card__header">
                     <h2 class="h5 mb-0">All Caddyfiles</h2>
                 </div>
@@ -209,16 +209,17 @@
                                 </td>
                                 <td class="text-end">
                                     <div class="d-inline-flex gap-2 flex-wrap justify-content-end">
-                                        <a href="/templates/{{ template.id }}"
+                                        <a href="{{ request.app.url_path_for('templates_page', template_id=template.id) }}"
                                             class="btn btn-sm btn-outline-primary">Edit</a>
-                                        <form action="/templates/{{ template.id }}/delete" method="post"
-                                            class="d-inline">
+                                        <form
+                                            action="{{ request.app.url_path_for('delete_template', template_id=template.id) }}"
+                                            method="post" class="d-inline">
                                             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                             <button type="submit" class="btn btn-sm btn-outline-danger js-confirm"
                                                 data-confirm="Delete Caddyfile {{ template.name }}?"
-                                                data-confirm-title="Delete Caddyfile" data-confirm-accept="Delete" {% if
-                                                template.sites %}disabled title="Cannot delete - template is in use" {%
-                                                endif %}>
+                                                data-confirm-title="Delete Caddyfile" data-confirm-accept="Delete"
+                                                data-confirm-btn-class="btn-danger" {% if template.sites %}disabled
+                                                title="Cannot delete - template is in use" {% endif %}>
                                                 Delete
                                             </button>
                                         </form>

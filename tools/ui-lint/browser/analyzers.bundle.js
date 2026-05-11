@@ -19,6 +19,12 @@
         cache.boundingRect = new WeakMap();
     }
 
+    function invalidateCacheFor(el) {
+        if (!el) return;
+        cache.computedStyle.delete(el);
+        cache.boundingRect.delete(el);
+    }
+
     function styleOf(el) {
         if (!el) return null;
         let style = cache.computedStyle.get(el);
@@ -162,7 +168,7 @@
     }
 
     // ---------------- Accessibility ----------------
-    function accessibilityAnalyzer() {
+    function accessibilityAnalyzer(constants = {}) {
         // Query only image tags directly instead of scanning entire DOM
         const imgsWithoutAlt = Array.from(document.querySelectorAll('img'))
             .filter(isVisible)
@@ -179,30 +185,42 @@
 
         function isFocusIndicatorMissing(el) {
             const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+            const controller = new AbortController();
+
+            // Suppress event propagation to prevent application state mutation
+            const listeners = (event) => event.stopImmediatePropagation();
+            const target = el.closest('form') || el.closest('[tabindex]') || document;
+            const eventTypes = ['focusin', 'focus', 'focusout', 'blur'];
+            for (const type of eventTypes) {
+                target.addEventListener(type, listeners, { capture: true, signal: controller.signal });
+            }
 
             try {
                 el.focus({ preventScroll: true });
+                invalidateCacheFor(el);
+                invalidateCacheFor(previousActive);
+
+                const focused = document.activeElement === el;
+                const missing = !focused || !hasVisibleFocusIndicator(el);
+
+                if (previousActive && previousActive !== el) {
+                    try {
+                        previousActive.focus({ preventScroll: true });
+                    } catch {
+                        previousActive.blur?.();
+                    }
+                } else if (focused) {
+                    el.blur?.();
+                }
+
+                invalidateCacheFor(el);
+                invalidateCacheFor(previousActive);
+                return missing;
             } catch {
                 return true;
+            } finally {
+                controller.abort();
             }
-
-            resetRunCache();
-
-            const focused = document.activeElement === el;
-            const missing = !focused || !hasVisibleFocusIndicator(el);
-
-            if (previousActive && previousActive !== el) {
-                try {
-                    previousActive.focus({ preventScroll: true });
-                } catch {
-                    previousActive.blur?.();
-                }
-            } else if (focused) {
-                el.blur?.();
-            }
-
-            resetRunCache();
-            return missing;
         }
 
         const interactive = Array.from(document.querySelectorAll('button, a, input, select, textarea'));
@@ -217,11 +235,14 @@
             .filter((el) => el.hasAttribute('aria-label') && !String(el.getAttribute('aria-label') || '').trim())
             .map((el) => ({ tag: el.tagName }));
 
-        const focusIndicatorMissing = interactive
-            .filter(isVisible)
-            .filter((el) => isFocusIndicatorMissing(el))
-            .slice(0, 20)
-            .map((el) => ({ tag: el.tagName }));
+        let focusIndicatorMissing = [];
+        if (constants.ENABLE_FOCUS_LINTING) {
+            focusIndicatorMissing = interactive
+                .filter(isVisible)
+                .filter((el) => isFocusIndicatorMissing(el))
+                .slice(0, 20)
+                .map((el) => ({ tag: el.tagName }));
+        }
 
         return {
             imgsWithoutAlt,
@@ -234,11 +255,130 @@
     // ---------------- Layout ----------------
     function layoutAnalyzer(constants) {
         const doc = document.documentElement;
+        const tolerance = Number(constants.OVERFLOW_TOLERANCE_PX || 0);
+        const bootstrapGridIssues = Array.from(document.querySelectorAll('.row'))
+            .filter(isVisible)
+            .filter((row) => !isVisuallyHidden(row))
+            .filter((row) => {
+                const rect = rectOf(row);
+                return rect.left < (0 - tolerance) || rect.right > (window.innerWidth + tolerance);
+            })
+            .slice(0, 20)
+            .map((row) => ({
+                className: row.className || '',
+                left: roundTo(rectOf(row).left, 2),
+                right: roundTo(rectOf(row).right, 2),
+                viewportWidth: window.innerWidth,
+            }));
+
+        const bootstrapColumnsOutsideRows = Array.from(document.querySelectorAll('[class*="col-"]'))
+            .filter(isVisible)
+            .filter((el) => !el.closest('.row'))
+            .slice(0, 20)
+            .map((el) => ({
+                tag: el.tagName,
+                className: el.className || '',
+            }));
 
         return {
             horizontalOverflow: {
                 hasOverflow: doc.scrollWidth > window.innerWidth + (constants.OVERFLOW_TOLERANCE_PX || 0),
             },
+            bootstrapGridIssues,
+            bootstrapColumnsOutsideRows,
+        };
+    }
+
+    function scrollContainmentAnalyzer(constants = {}, scope = '') {
+        const tolerance = Number(constants.OVERFLOW_TOLERANCE_PX || 0);
+        const isRootScroller = (el) => el === document.documentElement || el === document.body;
+        const isAuditLogsScope = scope === 'audit-logs';
+        const isAllowedAuditLogsScroller = (el) => {
+            if (!isAuditLogsScope || !(el instanceof Element)) {
+                return false;
+            }
+            return el.matches('.audit-logs-stream, #auditTableContainer, .audit-row__details');
+        };
+        const axisOverflow = (el, axis) => {
+            if (axis === 'x') {
+                return el.scrollWidth > el.clientWidth + tolerance;
+            }
+            return el.scrollHeight > el.clientHeight + tolerance;
+        };
+
+        const baseCandidates = Array.from(document.querySelectorAll('*'))
+            .filter(isVisible)
+            .filter((el) => !isRootScroller(el))
+            .filter((el) => !isVisuallyHidden(el))
+            .filter((el) => !isAllowedAuditLogsScroller(el));
+
+        const scrollContainers = baseCandidates.filter((el) => {
+            const style = styleOf(el);
+            const overflowX = style?.overflowX || '';
+            const overflowY = style?.overflowY || '';
+            return (['auto', 'scroll'].includes(overflowX) && axisOverflow(el, 'x'))
+                || (['auto', 'scroll'].includes(overflowY) && axisOverflow(el, 'y'));
+        });
+
+        const nestedScrollContainers = scrollContainers
+            .filter((el) => scrollContainers.some((candidate) => candidate !== el && el.contains(candidate)))
+            .slice(0, 20)
+            .map((el) => ({ tag: el.tagName, className: el.className || '' }));
+
+        const ghostScrollContainers = baseCandidates
+            .filter((el) => {
+                const style = styleOf(el);
+                const overflowX = style?.overflowX || '';
+                const overflowY = style?.overflowY || '';
+                const clipsX = ['hidden', 'clip'].includes(overflowX) && axisOverflow(el, 'x');
+                const clipsY = ['hidden', 'clip'].includes(overflowY) && axisOverflow(el, 'y');
+                if (!clipsX && !clipsY) {
+                    return false;
+                }
+                const textOverflow = style?.textOverflow || '';
+                const whiteSpace = style?.whiteSpace || '';
+                if (clipsX && textOverflow === 'ellipsis' && whiteSpace === 'nowrap' && !clipsY) {
+                    return false;
+                }
+                return !scrollContainers.some((candidate) => candidate !== el && el.contains(candidate));
+            })
+            .slice(0, 20)
+            .map((el) => ({ tag: el.tagName, className: el.className || '' }));
+
+        const flexScrollTraps = baseCandidates
+            .filter((el) => {
+                const style = styleOf(el);
+                if (!['flex', 'inline-flex'].includes(style?.display || '')) {
+                    return false;
+                }
+                const overflowX = style?.overflowX || '';
+                const overflowY = style?.overflowY || '';
+                const clipsOverflow = ['hidden', 'clip'].includes(overflowX) || ['hidden', 'clip'].includes(overflowY);
+                if (!clipsOverflow) {
+                    return false;
+                }
+                const rect = el.getBoundingClientRect();
+                const trapTolerance = Math.max(tolerance, 4);
+                return scrollContainers.some((candidate) => {
+                    if (candidate === el || !el.contains(candidate)) {
+                        return false;
+                    }
+                    const candidateRect = candidate.getBoundingClientRect();
+                    const clipsX = ['hidden', 'clip'].includes(overflowX)
+                        && candidateRect.right > rect.right + trapTolerance;
+                    const clipsY = ['hidden', 'clip'].includes(overflowY)
+                        && candidateRect.bottom > rect.bottom + trapTolerance;
+                    return clipsX || clipsY;
+                });
+            })
+            .slice(0, 20)
+            .map((el) => ({ tag: el.tagName, className: el.className || '' }));
+
+        return {
+            ghostScroll: ghostScrollContainers.length > 0,
+            ghostScrollContainers,
+            nestedScrollContainers,
+            flexScrollTraps,
         };
     }
 
@@ -264,15 +404,12 @@
             .map((el) => {
                 const style = styleOf(el);
                 const display = style?.display || '';
+                const hasFlexDisplay = display === 'flex' || display === 'inline-flex';
+                if (!hasFlexDisplay) return null;
+
                 const alignItems = style?.alignItems || '';
                 const justifyContent = style?.justifyContent || '';
-                const hasFlexDisplay = display === 'flex' || display === 'inline-flex';
-                const verticallyCentered = alignItems === 'center';
-                const horizontallyCentered = justifyContent === 'center';
-
-                if (hasFlexDisplay && verticallyCentered && horizontallyCentered) {
-                    return null;
-                }
+                if (alignItems === 'center' && justifyContent === 'center') return null;
 
                 return {
                     tag: el.tagName,
@@ -375,6 +512,7 @@
     }
 
     function modalThemeAnalyzer(constants = {}) {
+        resetRunCache();
         const theme = document.documentElement.getAttribute('data-bs-theme') || 'light';
         const openModal = getOpenModalOverlay();
         if (theme !== 'dark' || !openModal || !isVisible(openModal)) {
@@ -443,17 +581,23 @@
     }
 
     function loginFailureAnalyzer() {
-        const banner = document.getElementById('login-error-banner');
-        const bannerTextEl = document.getElementById('login-error-banner-text');
-        const submitBtn = document.getElementById('submit-btn');
-        const passwordInput = document.getElementById('password');
-        const loginCard = document.getElementById('login-card');
+        const loginForm = document.querySelector('form[action="/login"]');
+        const banner = document.getElementById('login-error-banner')
+            || loginForm?.querySelector('.alert[role="alert"]');
+        const bannerTextEl = document.getElementById('login-error-banner-text')
+            || banner;
+        const submitBtn = document.getElementById('submit-btn')
+            || loginForm?.querySelector('button[type="submit"]');
+        const passwordInput = document.getElementById('password')
+            || loginForm?.querySelector('input[type="password"]');
+        const loginCard = document.getElementById('login-card')
+            || loginForm?.closest('.login-card, .card');
 
         const bannerVisible = Boolean(
             banner
             && isVisible(banner)
             && banner.getAttribute('aria-hidden') !== 'true'
-            && (banner.classList.contains('is-visible') || banner.style.visibility !== 'hidden')
+            && (banner.classList.contains('is-visible') || banner.style.visibility !== 'hidden' || banner.classList.contains('show'))
         );
 
         const bannerText = (bannerTextEl?.textContent || banner?.textContent || '').trim();
@@ -470,6 +614,7 @@
         }
 
         return {
+            selectorsFound: Boolean(banner && submitBtn),
             alertVisible: bannerVisible,
             errorText: bannerText,
             submitButtonDisabled,
@@ -521,14 +666,63 @@
         };
     }
 
+    function mobileSidebarFooterAnalyzer(constants = {}) {
+        const isMobileViewport = window.innerWidth < Number(constants.LG_BREAKPOINT_PX ?? 992);
+        const sidebar = document.querySelector('.app-sidebar');
+        const sidebarFooter = document.querySelector('.sidebar-footer');
+        const minimum = Number(constants.SIDEBAR_FOOTER_VIEWPORT_CLEARANCE_MIN_PX ?? 0);
+
+        if (!isMobileViewport || !sidebar || !sidebarFooter || !isVisible(sidebar) || !isVisible(sidebarFooter)) {
+            return {
+                sidebarFooterViewportGap: {
+                    present: false,
+                    gapPx: null,
+                    minimum,
+                    passesMinimum: true,
+                    requiresScroll: false,
+                },
+            };
+        }
+
+        const footerRect = rectOf(sidebarFooter);
+        const sidebarRequiresScroll = sidebar.scrollHeight > sidebar.clientHeight + 1;
+        const fullyVisibleInViewport = footerRect.top < window.innerHeight && footerRect.bottom <= window.innerHeight;
+
+        if (!fullyVisibleInViewport) {
+            return {
+                sidebarFooterViewportGap: {
+                    present: true,
+                    gapPx: null,
+                    minimum,
+                    passesMinimum: false,
+                    requiresScroll: sidebarRequiresScroll,
+                },
+            };
+        }
+
+        const gapPx = Math.max(0, window.innerHeight - footerRect.bottom);
+
+        return {
+            sidebarFooterViewportGap: {
+                present: true,
+                gapPx: roundTo(gapPx, 2),
+                minimum,
+                passesMinimum: gapPx >= minimum,
+                requiresScroll: sidebarRequiresScroll,
+            },
+        };
+    }
+
     function runAll({ scope, constants = {}, selectors = {} } = {}) {
         resetRunCache();
 
-        const accessibility = accessibilityAnalyzer();
+        const accessibility = accessibilityAnalyzer(constants);
         const layout = layoutAnalyzer(constants);
+        const scrollContainment = scrollContainmentAnalyzer(constants, scope);
         const interaction = interactionAnalyzer(constants, selectors);
         const contrast = contrastAnalyzer(constants);
         const footerGap = footerGapAnalyzer(constants);
+        const sidebarFooterGap = mobileSidebarFooterAnalyzer(constants);
         const state = stateAnalyzer();
         const components = componentAnalyzer();
         const modalTheme = modalThemeAnalyzer(constants);
@@ -538,14 +732,18 @@
             // Preserve the mixed nested + flat metrics contract for existing findings consumers.
             accessibility,
             layout,
+            scrollContainment,
             interaction,
             contrast,
 
             // Expose flattened keys expected by findings.
             ...accessibility,
+            ...layout,
+            ...scrollContainment,
             ...interaction,
             ...contrast,
             ...footerGap,
+            ...sidebarFooterGap,
             ...modalTheme,
 
             state,

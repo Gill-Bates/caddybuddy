@@ -26,8 +26,10 @@ def parse_json_object(raw_value: str, field_name: str) -> dict[str, Any]:
         raise ValueError(f"{field_name} exceeds the {_MAX_JSON_BYTES} byte limit.")
     try:
         parsed = json.loads(raw_value)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"{field_name} must be valid JSON.") from exc
+    except (json.JSONDecodeError, RecursionError) as exc:
+        raise ValueError(
+            f"{field_name} must be valid JSON and must not exceed the maximum nesting depth."
+        ) from exc
     if not isinstance(parsed, dict):
         raise ValueError(f"{field_name} must be a JSON object.")
     return parsed

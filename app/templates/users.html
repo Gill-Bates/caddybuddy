@@ -1,20 +1,21 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<section class="d-grid gap-4">
-    <div>
-        <p class="eyebrow mb-2">Admin area</p>
-        <h1 class="page-title mb-2">Users</h1>
-        <p class="text-body-secondary mb-0">Create application users and review account status.</p>
+<section class="app-page">
+    <div class="app-page__header">
+        <div class="app-page__lede">
+            <p class="eyebrow mb-2">Admin area</p>
+            <h1 class="page-title mb-0">Users</h1>
+        </div>
     </div>
 
-    <div class="row g-4 align-items-start">
+    <div class="row app-grid">
         <div class="col-xl-4">
             <div class="panel-card">
                 <div class="panel-card__header">
                     <h2 class="h5 mb-0">Add user</h2>
                 </div>
-                <form action="/users" method="post" class="d-grid gap-3">
+                <form action="{{ request.app.url_path_for('create_user') }}" method="post" class="d-grid gap-3">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <div>
                         <label class="form-label" for="user-username">Username</label>
@@ -42,7 +43,7 @@
         </div>
 
         <div class="col-xl-8">
-            <div class="panel-card">
+            <div class="panel-card panel-card--table">
                 <div class="panel-card__header">
                     <h2 class="h5 mb-0">Directory</h2>
                 </div>

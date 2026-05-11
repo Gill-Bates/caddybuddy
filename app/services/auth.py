@@ -13,6 +13,7 @@ from hashlib import sha256
 from secrets import token_urlsafe
 
 import bcrypt
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import get_settings
@@ -37,6 +38,10 @@ def _secret_key_bytes() -> bytes:
 
 class WeakPasswordError(ValueError):
     """Raised when a password does not satisfy the minimum policy."""
+
+
+class AuthorizationError(Exception):
+    """Raised when an actor lacks required privileges for an action."""
 
 
 class AuthService:
@@ -96,12 +101,12 @@ class AuthService:
     @staticmethod
     def _require_admin(actor: User) -> None:
         if actor.role != "admin":
-            raise PermissionError("Administrator privileges are required.")
+            raise AuthorizationError("Administrator privileges are required.")
 
     @staticmethod
     def _require_self_or_admin(actor: User, subject_user_id: int) -> None:
         if actor.role != "admin" and actor.id != subject_user_id:
-            raise PermissionError("Insufficient privileges for this action.")
+            raise AuthorizationError("Insufficient privileges for this action.")
 
     @staticmethod
     def _validate_api_key_request(
@@ -161,13 +166,17 @@ class AuthService:
             self._validate_password_strength(password)
         if await user_repository.count(session) > 0:
             return None
-        return await user_repository.create(
-            session,
-            username=username,
-            email=email,
-            password_hash=await self.hash_password(password),
-            role="admin",
-        )
+        try:
+            return await user_repository.create(
+                session,
+                username=username,
+                email=email,
+                password_hash=await self.hash_password(password),
+                role="admin",
+            )
+        except IntegrityError:
+            await session.rollback()
+            return None
 
     async def create_user(
         self,

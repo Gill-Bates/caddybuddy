@@ -161,6 +161,10 @@ class ConfigTemplateRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_by_caddyfile(self, session: AsyncSession, caddyfile: str) -> ConfigTemplate | None:
+        checksum = await _compute_checksum(caddyfile)
+        return await self.get_by_checksum(session, checksum)
+
     async def create(
         self,
         session: AsyncSession,

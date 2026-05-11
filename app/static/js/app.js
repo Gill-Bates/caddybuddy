@@ -154,6 +154,318 @@ const initializeLiveUpdates = () => {
 
 initializeLiveUpdates();
 
+/**
+ * Mobile sidebar slide-in menu.
+ * Opens/closes the sidebar on mobile via hamburger button, backdrop click, or nav link selection.
+ */
+const initializeMobileMenu = () => {
+    const toggle = document.getElementById("mobileMenuToggle");
+    const sidebar = document.getElementById("appSidebar");
+    const backdrop = document.getElementById("sidebarBackdrop");
+
+    if (
+        !(toggle instanceof HTMLButtonElement) ||
+        !(sidebar instanceof HTMLElement) ||
+        !(backdrop instanceof HTMLElement)
+    ) {
+        return;
+    }
+
+    const openMenu = () => {
+        sidebar.classList.add("is-open");
+        backdrop.classList.add("is-visible");
+        toggle.classList.add("is-active");
+        toggle.setAttribute("aria-expanded", "true");
+        toggle.setAttribute("aria-label", "Close menu");
+        document.body.classList.add("app-body--menu-open");
+    };
+
+    const closeMenu = () => {
+        sidebar.classList.remove("is-open");
+        backdrop.classList.remove("is-visible");
+        toggle.classList.remove("is-active");
+        toggle.setAttribute("aria-expanded", "false");
+        toggle.setAttribute("aria-label", "Open menu");
+        document.body.classList.remove("app-body--menu-open");
+    };
+
+    const toggleMenu = () => {
+        if (sidebar.classList.contains("is-open")) {
+            closeMenu();
+        } else {
+            openMenu();
+        }
+    };
+
+    toggle.addEventListener("click", toggleMenu);
+    backdrop.addEventListener("click", closeMenu);
+
+    // Close menu when a nav link is clicked
+    sidebar.addEventListener("click", (event) => {
+        if (!(event.target instanceof HTMLElement)) {
+            return;
+        }
+        const link = event.target.closest("a.app-nav__link, button[type='submit']");
+        if (link !== null) {
+            closeMenu();
+        }
+    });
+
+    // Close menu on Escape key
+    document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && sidebar.classList.contains("is-open")) {
+            closeMenu();
+            toggle.focus();
+        }
+    });
+
+    // Close menu when resizing to desktop viewport
+    const mediaQuery = window.matchMedia("(min-width: 992px)");
+    mediaQuery.addEventListener("change", (event) => {
+        if (event.matches && sidebar.classList.contains("is-open")) {
+            closeMenu();
+        }
+    });
+};
+
+initializeMobileMenu();
+
+/**
+ * Queue badge counter.
+ * Fetches the pending deployment count and updates the sidebar badge.
+ */
+const initializeQueueBadge = () => {
+    const badge = document.getElementById("queueBadge");
+    if (!(badge instanceof HTMLElement)) {
+        return;
+    }
+
+    const refreshInterval = 60000;
+    const requestTimeout = 10000;
+    let intervalId = null;
+    let updateInFlight = false;
+    let activeRequestController = null;
+
+    const startRefreshLoop = () => {
+        if (intervalId !== null) {
+            return;
+        }
+        intervalId = window.setInterval(() => {
+            void updateBadge();
+        }, refreshInterval);
+    };
+
+    const stopRefreshLoop = () => {
+        if (intervalId !== null) {
+            window.clearInterval(intervalId);
+            intervalId = null;
+        }
+    };
+
+    const updateBadge = async () => {
+        if (updateInFlight) {
+            return;
+        }
+
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), requestTimeout);
+        updateInFlight = true;
+        activeRequestController = controller;
+
+        try {
+            const response = await fetch("/api/v1/queue/count", {
+                credentials: "same-origin",
+                signal: controller.signal,
+            });
+            if (!response.ok) {
+                badge.hidden = true;
+                return;
+            }
+            const data = await response.json();
+            const count = Number(data.count) || 0;
+            if (count > 0) {
+                badge.textContent = count > 99 ? "99+" : String(count);
+                badge.hidden = false;
+            } else {
+                badge.hidden = true;
+            }
+        } catch {
+            badge.hidden = true;
+        } finally {
+            window.clearTimeout(timeoutId);
+            if (activeRequestController === controller) {
+                activeRequestController = null;
+            }
+            updateInFlight = false;
+        }
+    };
+
+    void updateBadge();
+    startRefreshLoop();
+
+    document.addEventListener("visibilitychange", () => {
+        if (document.hidden) {
+            activeRequestController?.abort();
+            stopRefreshLoop();
+        } else {
+            void updateBadge();
+            startRefreshLoop();
+        }
+    });
+};
+
+initializeQueueBadge();
+
+const initializeQueueDeploySelection = () => {
+    const siteSelect = document.getElementById("queue-site-id");
+    const serverSelect = document.getElementById("queue-server-id");
+    const selectedSiteName = document.getElementById("queueSelectedSiteName");
+    const rowButtons = document.querySelectorAll(".js-queue-select-site");
+
+    if (
+        !(siteSelect instanceof HTMLSelectElement) ||
+        !(serverSelect instanceof HTMLSelectElement) ||
+        !(selectedSiteName instanceof HTMLElement)
+    ) {
+        return;
+    }
+
+    const syncSelectedSiteLabel = () => {
+        const selectedOption = siteSelect.selectedOptions.item(0);
+        if (!(selectedOption instanceof HTMLOptionElement)) {
+            return;
+        }
+        selectedSiteName.textContent = selectedOption.dataset.siteDomain || selectedOption.textContent?.trim() || "selected site";
+    };
+
+    siteSelect.addEventListener("change", syncSelectedSiteLabel);
+
+    for (const button of rowButtons) {
+        if (!(button instanceof HTMLButtonElement)) {
+            continue;
+        }
+
+        button.addEventListener("click", () => {
+            const siteId = button.dataset.siteId;
+            if (typeof siteId !== "string" || !siteId) {
+                return;
+            }
+
+            siteSelect.value = siteId;
+            syncSelectedSiteLabel();
+            siteSelect.scrollIntoView({ behavior: "smooth", block: "center" });
+            serverSelect.focus();
+        });
+    }
+
+    syncSelectedSiteLabel();
+};
+
+initializeQueueDeploySelection();
+
+const initializeLoadingSubmitForms = () => {
+    const forms = document.querySelectorAll("form[data-loading-submit-form]");
+
+    for (const form of forms) {
+        if (!(form instanceof HTMLFormElement)) {
+            continue;
+        }
+
+        form.addEventListener("submit", (event) => {
+            if (event.defaultPrevented) {
+                return;
+            }
+
+            const submitter = event.submitter;
+            if (
+                !(submitter instanceof HTMLElement) ||
+                !submitter.matches("button, input[type='submit'], input[type='image']")
+            ) {
+                return;
+            }
+
+            const button = submitter.matches("[data-loading-submit-button]")
+                ? submitter
+                : submitter.closest("[data-loading-submit-button]");
+            if (!(button instanceof HTMLElement) || ("disabled" in button && button.disabled)) {
+                return;
+            }
+
+            const spinner = button.querySelector("[data-loading-submit-spinner]");
+            const label = button.querySelector("[data-loading-submit-label]");
+            const loadingText = button.dataset.loadingLabel || button.textContent?.trim() || "Processing...";
+
+            if ("disabled" in button) {
+                button.disabled = true;
+            }
+            button.setAttribute("aria-disabled", "true");
+            button.setAttribute("aria-busy", "true");
+
+            if (spinner instanceof HTMLElement) {
+                spinner.classList.remove("d-none");
+            }
+
+            if (label instanceof HTMLElement) {
+                label.textContent = loadingText;
+            } else if (button instanceof HTMLInputElement && button.type === "submit") {
+                button.value = loadingText;
+            }
+        });
+    }
+};
+
+initializeLoadingSubmitForms();
+
+const initializeAutoDismissAlerts = () => {
+    const alerts = document.querySelectorAll("[data-auto-dismiss-alert]");
+
+    for (const alertElement of alerts) {
+        if (!(alertElement instanceof HTMLElement)) {
+            continue;
+        }
+
+        const delayValue = Number.parseInt(alertElement.dataset.autoDismissDelay || "5000", 10);
+        const delay = Number.isFinite(delayValue) && delayValue > 0 ? delayValue : 5000;
+        let timeoutId = null;
+
+        const clearDismissTimeout = () => {
+            if (timeoutId !== null) {
+                window.clearTimeout(timeoutId);
+                timeoutId = null;
+            }
+        };
+
+        const dismissAlert = () => {
+            clearDismissTimeout();
+
+            if (window.bootstrap?.Alert) {
+                window.bootstrap.Alert.getOrCreateInstance(alertElement).close();
+                return;
+            }
+
+            alertElement.classList.remove("show");
+            window.setTimeout(() => {
+                alertElement.remove();
+            }, 150);
+        };
+
+        const scheduleDismiss = () => {
+            clearDismissTimeout();
+            timeoutId = window.setTimeout(dismissAlert, delay);
+        };
+
+        alertElement.addEventListener("mouseenter", clearDismissTimeout);
+        alertElement.addEventListener("mouseleave", scheduleDismiss);
+        alertElement.addEventListener("focusin", clearDismissTimeout);
+        alertElement.addEventListener("focusout", scheduleDismiss);
+        alertElement.addEventListener("closed.bs.alert", clearDismissTimeout);
+
+        scheduleDismiss();
+    }
+};
+
+initializeAutoDismissAlerts();
+
 const clearJsonEditorErrorState = (editor) => {
     editor.classList.remove("is-invalid");
     editor.removeAttribute("aria-invalid");
@@ -183,6 +495,7 @@ const confirmModalElement = document.getElementById("confirmActionModal");
 const confirmModalMessageElement = document.getElementById("confirmActionModalMessage");
 const confirmModalTitleElement = document.getElementById("confirmActionModalLabel");
 const confirmModalAcceptButton = document.getElementById("confirmActionModalAccept");
+const DEFAULT_CONFIRM_ACCEPT_CLASS = "btn btn-primary";
 
 let confirmActionModal = null;
 let pendingConfirmElement = null;
@@ -209,6 +522,7 @@ const resetPendingConfirm = () => {
     }
     if (confirmModalAcceptButton instanceof HTMLButtonElement) {
         confirmModalAcceptButton.textContent = "Continue";
+        confirmModalAcceptButton.className = DEFAULT_CONFIRM_ACCEPT_CLASS;
     }
 };
 
@@ -291,6 +605,7 @@ document.addEventListener("click", (event) => {
         confirmModalMessageElement.textContent = message;
     }
     if (confirmModalAcceptButton instanceof HTMLButtonElement) {
+        confirmModalAcceptButton.className = `btn ${button.getAttribute("data-confirm-btn-class") || "btn-primary"}`;
         confirmModalAcceptButton.textContent = button.getAttribute("data-confirm-accept") || button.textContent?.trim() || "Continue";
     }
 
@@ -373,7 +688,7 @@ const initializeAuditLogFilters = () => {
         const year = Number.parseInt(match[1], 10);
         const month = Number.parseInt(match[2], 10) - 1;
         const day = Number.parseInt(match[3], 10);
-        return new Date(
+        return Date.UTC(
             year,
             month,
             day,
@@ -381,7 +696,7 @@ const initializeAuditLogFilters = () => {
             endOfDay ? 59 : 0,
             endOfDay ? 59 : 0,
             endOfDay ? 999 : 0,
-        ).getTime();
+        );
     };
 
     const normalizeText = (value) => String(value || "").toLowerCase().trim();
@@ -403,6 +718,11 @@ const initializeAuditLogFilters = () => {
             username: row.dataset.username || "",
         };
     });
+
+    if (rows.length > 2000) {
+        console.warn("Client-side audit log filtering disabled: row count exceeds safe threshold");
+        return;
+    }
 
     const usernames = [...new Set(rows.map((row) => row.username).filter(Boolean))].sort();
     const existingOptions = new Set(Array.from(usernameSelect.options, (option) => option.value));
@@ -656,6 +976,11 @@ const initializeDomainPreview = () => {
 
         activeRequestController?.abort();
         activeRequestController = new AbortController();
+        let previewTimedOut = false;
+        const timeoutId = window.setTimeout(() => {
+            previewTimedOut = true;
+            activeRequestController?.abort();
+        }, 10000);
 
         try {
             const response = await fetch(previewUrl, {
@@ -679,11 +1004,13 @@ const initializeDomainPreview = () => {
                 : previewOutput.textContent;
             renderErrors(Array.isArray(payload.errors) ? payload.errors : []);
         } catch (error) {
-            if (error instanceof DOMException && error.name === "AbortError") {
+            if (error instanceof DOMException && error.name === "AbortError" && !previewTimedOut) {
                 return;
             }
 
             renderErrors(["Live preview is temporarily unavailable. You can still save once the form validates."]);
+        } finally {
+            window.clearTimeout(timeoutId);
         }
     };
 
@@ -761,6 +1088,8 @@ const initializeTagInputs = () => {
         const list = document.createElement("div");
         list.className = "tag-input__list";
         list.setAttribute("aria-live", "polite");
+        list.setAttribute("role", "list");
+        list.setAttribute("aria-label", "Selected tags");
 
         const editor = document.createElement("input");
         editor.type = "text";
@@ -783,6 +1112,7 @@ const initializeTagInputs = () => {
             for (const tag of tags) {
                 const item = document.createElement("span");
                 item.className = "tag-input__token";
+                item.setAttribute("role", "listitem");
 
                 const label = document.createElement("span");
                 label.textContent = tag;
@@ -837,6 +1167,11 @@ const initializeTagInputs = () => {
             addTagsFromValue(rawValue);
             editor.value = "";
         };
+
+        const form = field.form;
+        if (form instanceof HTMLFormElement) {
+            form.addEventListener("submit", commitEditorValue);
+        }
 
         editor.addEventListener("keydown", (event) => {
             const shouldCommit = event.key === "Tab" || event.key === "," || event.key === " ";

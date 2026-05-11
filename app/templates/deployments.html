@@ -1,16 +1,14 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<section class="d-grid gap-4">
-    <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-end">
-        <div>
+<section class="app-page">
+    <div class="app-page__header">
+        <div class="app-page__lede">
             <p class="eyebrow mb-2">Deployment Management</p>
-            <h1 class="page-title mb-2">Deployments</h1>
-            <p class="text-body-secondary mb-0">Track deployment status, deploy configurations, and manage rollbacks.
-                Each deployment links a Site to a Server.</p>
+            <h1 class="page-title mb-0">Deployments</h1>
         </div>
         {% if status_counts %}
-        <div class="d-flex gap-2 flex-wrap">
+        <div class="app-page__actions d-flex gap-2 flex-wrap">
             {% for status, count in status_counts.items() %}
             <span class="badge 
                 {% if status == 'deployed' %}text-bg-success
@@ -24,7 +22,7 @@
         {% endif %}
     </div>
 
-    <div class="row g-4 align-items-start">
+    <div class="row app-grid">
         {% if selected_deployment %}
         <div class="col-xl-4">
             <div class="panel-card">
@@ -36,7 +34,8 @@
                         <label class="form-label text-body-secondary">Site</label>
                         <div class="fw-semibold">
                             {% if selected_deployment.site %}
-                            <a href="/sites/{{ selected_deployment.site.id }}" class="text-decoration-none">
+                            <a href="{{ request.app.url_path_for('sites_page', site_id=selected_deployment.site.id) }}"
+                                class="text-decoration-none">
                                 {{ selected_deployment.site.domain }}
                             </a>
                             {% else %}
@@ -114,21 +113,27 @@
 
                 <div class="d-grid gap-2">
                     {% if selected_deployment.status.value in ['pending', 'valid'] %}
-                    <form action="/deployments/{{ selected_deployment.id }}/deploy" method="post">
+                    <form
+                        action="{{ request.app.url_path_for('execute_deployment', deployment_id=selected_deployment.id) }}"
+                        method="post">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <button type="submit" class="btn btn-success w-100">Deploy</button>
                     </form>
                     {% endif %}
 
                     {% if can_retry %}
-                    <form action="/deployments/{{ selected_deployment.id }}/retry" method="post">
+                    <form
+                        action="{{ request.app.url_path_for('retry_deployment', deployment_id=selected_deployment.id) }}"
+                        method="post">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <button type="submit" class="btn btn-warning w-100">Retry</button>
                     </form>
                     {% endif %}
 
                     {% if can_rollback %}
-                    <form action="/deployments/{{ selected_deployment.id }}/rollback" method="post">
+                    <form
+                        action="{{ request.app.url_path_for('rollback_deployment', deployment_id=selected_deployment.id) }}"
+                        method="post">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <button type="submit" class="btn btn-outline-danger w-100"
                             data-confirm="Rollback this deployment? This will deploy the previous configuration."
@@ -136,12 +141,13 @@
                     </form>
                     {% endif %}
 
-                    <a href="/deployments" class="btn btn-outline-secondary">Back to list</a>
+                    <a href="{{ request.app.url_path_for('deployments_page') }}" class="btn btn-outline-secondary">Back
+                        to list</a>
                 </div>
             </div>
 
             {% if history and history | length > 1 %}
-            <div class="panel-card mt-4">
+            <div class="panel-card panel-card--table mt-4">
                 <div class="panel-card__header">
                     <h2 class="h5 mb-0">Deployment History</h2>
                 </div>
@@ -158,7 +164,8 @@
                             {% for h in history %}
                             <tr {% if h.id==selected_deployment.id %}class="table-active" {% endif %}>
                                 <td>
-                                    <a href="/deployments/{{ h.id }}">#{{ h.id }}</a>
+                                    <a href="{{ request.app.url_path_for('deployments_page', deployment_id=h.id) }}">#{{
+                                        h.id }}</a>
                                 </td>
                                 <td>
                                     <span
@@ -195,7 +202,7 @@
             </div>
             {% endif %}
 
-            <div class="panel-card">
+            <div class="panel-card panel-card--table">
                 <div class="panel-card__header">
                     <h2 class="h5 mb-0">All Deployments</h2>
                 </div>
@@ -216,7 +223,8 @@
                             <tr {% if selected_deployment and selected_deployment.id==deployment.id
                                 %}class="table-active" {% endif %}>
                                 <td>
-                                    <a href="/deployments/{{ deployment.id }}" class="fw-semibold">#{{ deployment.id
+                                    <a href="{{ request.app.url_path_for('deployments_page', deployment_id=deployment.id) }}"
+                                        class="fw-semibold">#{{ deployment.id
                                         }}</a>
                                 </td>
                                 <td>
@@ -250,7 +258,7 @@
                                     {% endif %}
                                 </td>
                                 <td class="text-end">
-                                    <a href="/deployments/{{ deployment.id }}"
+                                    <a href="{{ request.app.url_path_for('deployments_page', deployment_id=deployment.id) }}"
                                         class="btn btn-sm btn-outline-primary">Details</a>
                                 </td>
                             </tr>

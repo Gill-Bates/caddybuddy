@@ -24,6 +24,8 @@ _SENSITIVE_QUERY_PARAM_PATTERN = re.compile(
 )
 _NOISY_DEBUG_LOGGERS = (
     "aiosqlite",
+    "httpcore",
+    "httpx",
     "multipart",
     "python_multipart",
     "sqlalchemy.engine",
@@ -117,6 +119,16 @@ def build_log_config(level_name: str) -> dict[str, object]:
     log_config["loggers"]["uvicorn.access"]["level"] = normalized_level
     log_config["loggers"]["uvicorn.error"]["level"] = normalized_level
     log_config["loggers"]["aiosqlite"] = {
+        "handlers": ["default"],
+        "level": "WARNING",
+        "propagate": False,
+    }
+    log_config["loggers"]["httpcore"] = {
+        "handlers": ["default"],
+        "level": "WARNING",
+        "propagate": False,
+    }
+    log_config["loggers"]["httpx"] = {
         "handlers": ["default"],
         "level": "WARNING",
         "propagate": False,

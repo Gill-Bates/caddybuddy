@@ -26,13 +26,13 @@ within a transaction and rely on the ORM version column for optimistic locking.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import Final
 
 from app.models.entities import Deployment, DeploymentStatus
 
 
-_EMPTY_TRANSITIONS: Final[frozenset[DeploymentStatus]] = frozenset()
 _FAILED_STATUSES: Final[frozenset[DeploymentStatus]] = frozenset({
     DeploymentStatus.INVALID,
     DeploymentStatus.FAILED,
@@ -65,6 +65,10 @@ def _targets_for(current: DeploymentStatus) -> frozenset[DeploymentStatus]:
         return _TRANSITIONS[current]
     except KeyError as exc:
         raise ValueError(f"Unhandled deployment status: {current!r}") from exc
+
+
+def _deployment_id(deployment: Deployment) -> int | None:
+    return getattr(deployment, "id", None)
 
 
 class InvalidStateTransitionError(Exception):
@@ -152,61 +156,71 @@ class DeploymentStateMachine:
         self.validate_transition(
             deployment.status,
             DeploymentStatus.VALIDATING,
-            deployment_id=getattr(deployment, "id", None),
+            deployment_id=_deployment_id(deployment),
         )
         deployment.status = DeploymentStatus.VALIDATING
+        deployment.validation_output = None
 
     def mark_valid(self, deployment: Deployment, output: str | None = None) -> None:
         """Mutate ``deployment`` in place to VALID. Caller must persist it."""
         self.validate_transition(
             deployment.status,
             DeploymentStatus.VALID,
-            deployment_id=getattr(deployment, "id", None),
+            deployment_id=_deployment_id(deployment),
         )
-        deployment.mark_validated(output)
+        deployment.status = DeploymentStatus.VALID
+        deployment.validation_output = output
+        deployment.deployment_error = None
 
     def mark_invalid(self, deployment: Deployment, error: str) -> None:
         """Mutate ``deployment`` in place to INVALID. Caller must persist it."""
         self.validate_transition(
             deployment.status,
             DeploymentStatus.INVALID,
-            deployment_id=getattr(deployment, "id", None),
+            deployment_id=_deployment_id(deployment),
         )
-        deployment.mark_invalid(error)
+        deployment.status = DeploymentStatus.INVALID
+        deployment.validation_output = error
 
     def start_deployment(self, deployment: Deployment) -> None:
         """Mutate ``deployment`` in place to DEPLOYING. Caller must persist it."""
         self.validate_transition(
             deployment.status,
             DeploymentStatus.DEPLOYING,
-            deployment_id=getattr(deployment, "id", None),
+            deployment_id=_deployment_id(deployment),
         )
-        deployment.mark_deploying()
+        deployment.status = DeploymentStatus.DEPLOYING
 
     def mark_deployed(self, deployment: Deployment, deployed_by: str | None = None) -> None:
         """Mutate ``deployment`` in place to DEPLOYED. Caller must persist it."""
         self.validate_transition(
             deployment.status,
             DeploymentStatus.DEPLOYED,
-            deployment_id=getattr(deployment, "id", None),
+            deployment_id=_deployment_id(deployment),
         )
-        deployment.mark_deployed(deployed_by)
+        deployment.status = DeploymentStatus.DEPLOYED
+        if hasattr(deployment, "rendered_checksum"):
+            deployment.deployed_checksum = deployment.rendered_checksum
+        deployment.deployed_at = datetime.now(UTC)
+        deployment.deployed_by = deployed_by
+        deployment.deployment_error = None
 
     def mark_failed(self, deployment: Deployment, error: str) -> None:
         """Mutate ``deployment`` in place to FAILED. Caller must persist it."""
         self.validate_transition(
             deployment.status,
             DeploymentStatus.FAILED,
-            deployment_id=getattr(deployment, "id", None),
+            deployment_id=_deployment_id(deployment),
         )
-        deployment.mark_failed(error)
+        deployment.status = DeploymentStatus.FAILED
+        deployment.deployment_error = error
 
     def start_rollback(self, deployment: Deployment) -> None:
         """Mutate ``deployment`` in place to ROLLBACK_PENDING. Caller must persist it."""
         self.validate_transition(
             deployment.status,
             DeploymentStatus.ROLLBACK_PENDING,
-            deployment_id=getattr(deployment, "id", None),
+            deployment_id=_deployment_id(deployment),
         )
         deployment.status = DeploymentStatus.ROLLBACK_PENDING
 
@@ -215,16 +229,17 @@ class DeploymentStateMachine:
         self.validate_transition(
             deployment.status,
             DeploymentStatus.ROLLED_BACK,
-            deployment_id=getattr(deployment, "id", None),
+            deployment_id=_deployment_id(deployment),
         )
         deployment.status = DeploymentStatus.ROLLED_BACK
+        deployment.deployment_error = None
 
     def reset_for_retry(self, deployment: Deployment) -> None:
         """Mutate ``deployment`` in place back to PENDING. Caller must persist it."""
         self.validate_transition(
             deployment.status,
             DeploymentStatus.PENDING,
-            deployment_id=getattr(deployment, "id", None),
+            deployment_id=_deployment_id(deployment),
         )
         deployment.status = DeploymentStatus.PENDING
         deployment.validation_output = None

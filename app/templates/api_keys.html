@@ -1,14 +1,14 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<section class="d-grid gap-4">
+<section class="app-page">
     {% set column_count = 6 if show_all else 5 %}
 
-    <div>
-        <p class="eyebrow mb-2">Credential management</p>
-        <h1 class="page-title mb-2">API Keys</h1>
-        <p class="text-body-secondary mb-0">Generate scoped credentials for automation. Raw keys are only shown once
-            after creation.</p>
+    <div class="app-page__header">
+        <div class="app-page__lede">
+            <p class="eyebrow mb-2">Credential management</p>
+            <h1 class="page-title mb-0">API Keys</h1>
+        </div>
     </div>
 
     {% if pending_api_key %}
@@ -22,13 +22,13 @@
     </div>
     {% endif %}
 
-    <div class="row g-4 align-items-start">
+    <div class="row app-grid">
         <div class="col-xl-4">
             <div class="panel-card">
                 <div class="panel-card__header">
                     <h2 class="h5 mb-0">Create key</h2>
                 </div>
-                <form action="/api-keys" method="post" class="d-grid gap-3">
+                <form action="{{ request.app.url_path_for('create_api_key') }}" method="post" class="d-grid gap-3">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <div>
                         <label class="form-label" for="api-key-name">Name</label>
@@ -57,7 +57,7 @@
         </div>
 
         <div class="col-xl-8">
-            <div class="panel-card">
+            <div class="panel-card panel-card--table">
                 <div class="panel-card__header">
                     <h2 class="h5 mb-0">Issued keys</h2>
                 </div>
@@ -101,14 +101,16 @@
                                     {% endif %}
                                 </td>
                                 <td>
-                                    <form action="/api-keys/{{ api_key.id }}/toggle" method="post"
-                                        class="d-inline-flex gap-2 align-items-center">
+                                    <form
+                                        action="{{ request.app.url_path_for('toggle_api_key', api_key_id=api_key.id) }}"
+                                        method="post" class="d-inline-flex gap-2 align-items-center">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                         <span
                                             class="status-pill {% if api_key.is_active %}status-pill--online{% else %}status-pill--offline{% endif %}">{{
                                             'active' if api_key.is_active else 'inactive' }}</span>
                                         <button type="submit" class="btn btn-sm btn-outline-secondary js-confirm"
-                                            data-confirm="Toggle this API key? Active integrations may break.">
+                                            data-confirm="Toggle this API key? Active integrations may break."
+                                            data-confirm-btn-class="btn-secondary">
                                             {{ 'Disable' if api_key.is_active else 'Enable' }}
                                         </button>
                                     </form>

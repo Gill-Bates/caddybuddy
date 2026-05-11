@@ -168,6 +168,9 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _validate_non_development_secrets(self) -> Self:
         if self.allow_insecure_defaults:
+            # Automatically disable HTTPS-only session cookies in insecure dev mode
+            # to allow cross-browser testing (WebKit strictly rejects secure cookies over HTTP).
+            self.session_https_only = False
             return self
 
         secret_key = self.secret_key.get_secret_value().strip()

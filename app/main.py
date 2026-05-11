@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -25,8 +25,9 @@ from app.dependencies.web import push_flash
 from app.middleware.security import SecurityHeadersMiddleware
 from app.routers.api import router as api_router
 from app.routers.ui import router as ui_router
-from app.services.auth import auth_service
+from app.services.auth import AuthorizationError, auth_service
 from app.services.caddy import caddy_service
+from app.services.events import event_bus
 from app.services.server_status_monitor import run_server_status_monitor
 
 
@@ -60,6 +61,11 @@ async def _handle_rate_limit_exceeded(request: Request, exc: RateLimitExceeded):
 
     push_flash(request, "danger", "Too many attempts. Please try again in a minute.")
     return RedirectResponse(url=_safe_rate_limit_redirect_path(request), status_code=303)
+
+
+async def _handle_authorization_error(_request: Request, exc: AuthorizationError) -> JSONResponse:
+    """Return a consistent 403 payload for application-level authorization failures."""
+    return JSONResponse(status_code=403, content={"detail": str(exc)})
 
 
 @asynccontextmanager
@@ -98,6 +104,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         server_status_stop_event.set()
+        await event_bus.shutdown()
         if server_status_task is not None:
             await server_status_task
         await caddy_service.aclose()
@@ -112,6 +119,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title=settings.app_name, lifespan=lifespan)
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _handle_rate_limit_exceeded)
+    app.add_exception_handler(AuthorizationError, _handle_authorization_error)
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.secret_key.get_secret_value(),

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -32,10 +33,36 @@ def _build_session_factory(session):
     return session_factory
 
 
+def _build_sequenced_session_factory(*sessions):
+    session_iter = iter(sessions)
+
+    def session_factory(*args, **kwargs):
+        del args, kwargs
+        return _FakeSessionContext(next(session_iter))
+
+    return session_factory
+
+
 class ServerStatusMonitorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_probe_server_status_returns_offline_on_timeout(self) -> None:
+        server = SimpleNamespace(id=7, status="online")
+
+        async def slow_probe(_server):
+            await asyncio.sleep(0.05)
+            return {}
+
+        with patch(
+            "app.services.server_status_monitor.caddy_service.test_connection",
+            new=AsyncMock(side_effect=slow_probe),
+        ):
+            status = await server_status_monitor._probe_server_status(server, timeout_seconds=0.001)
+
+        self.assertEqual(status, "offline")
+
     async def test_probe_server_statuses_once_commits_and_publishes_on_status_change(self) -> None:
-        session = SimpleNamespace(commit=AsyncMock())
-        session_factory = _build_session_factory(session)
+        read_session = SimpleNamespace()
+        write_session = SimpleNamespace(commit=AsyncMock(), execute=AsyncMock())
+        session_factory = _build_sequenced_session_factory(read_session, write_session)
         server = SimpleNamespace(id=7, status="offline")
 
         with (
@@ -45,10 +72,10 @@ class ServerStatusMonitorTests(unittest.IsolatedAsyncioTestCase):
         ):
             await server_status_monitor.probe_server_statuses_once(session_factory)
 
-        list_all.assert_awaited_once_with(session)
+        list_all.assert_awaited_once_with(read_session, limit=server_status_monitor.SERVER_STATUS_QUERY_LIMIT)
         test_connection.assert_awaited_once_with(server)
-        self.assertEqual(server.status, "online")
-        session.commit.assert_awaited_once()
+        write_session.execute.assert_awaited_once()
+        write_session.commit.assert_awaited_once()
         publish_resource_event.assert_awaited_once_with(
             "server",
             "updated",
@@ -57,8 +84,8 @@ class ServerStatusMonitorTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_probe_server_statuses_once_skips_commit_when_status_is_unchanged(self) -> None:
-        session = SimpleNamespace(commit=AsyncMock())
-        session_factory = _build_session_factory(session)
+        read_session = SimpleNamespace()
+        session_factory = _build_session_factory(read_session)
         server = SimpleNamespace(id=7, status="offline")
 
         with (
@@ -74,14 +101,14 @@ class ServerStatusMonitorTests(unittest.IsolatedAsyncioTestCase):
         ):
             await server_status_monitor.probe_server_statuses_once(session_factory)
 
-        list_all.assert_awaited_once_with(session)
+        list_all.assert_awaited_once_with(read_session, limit=server_status_monitor.SERVER_STATUS_QUERY_LIMIT)
         test_connection.assert_awaited_once_with(server)
-        session.commit.assert_not_awaited()
         publish_resource_event.assert_not_awaited()
 
     async def test_probe_server_statuses_once_commits_and_publishes_on_online_to_offline(self) -> None:
-        session = SimpleNamespace(commit=AsyncMock())
-        session_factory = _build_session_factory(session)
+        read_session = SimpleNamespace()
+        write_session = SimpleNamespace(commit=AsyncMock(), execute=AsyncMock())
+        session_factory = _build_sequenced_session_factory(read_session, write_session)
         server = SimpleNamespace(id=7, status="online")
 
         with (
@@ -97,10 +124,10 @@ class ServerStatusMonitorTests(unittest.IsolatedAsyncioTestCase):
         ):
             await server_status_monitor.probe_server_statuses_once(session_factory)
 
-        list_all.assert_awaited_once_with(session)
+        list_all.assert_awaited_once_with(read_session, limit=server_status_monitor.SERVER_STATUS_QUERY_LIMIT)
         test_connection.assert_awaited_once_with(server)
-        self.assertEqual(server.status, "offline")
-        session.commit.assert_awaited_once()
+        write_session.execute.assert_awaited_once()
+        write_session.commit.assert_awaited_once()
         publish_resource_event.assert_awaited_once_with(
             "server",
             "updated",
@@ -109,8 +136,9 @@ class ServerStatusMonitorTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_probe_server_statuses_once_commits_once_for_mixed_batch(self) -> None:
-        session = SimpleNamespace(commit=AsyncMock())
-        session_factory = _build_session_factory(session)
+        read_session = SimpleNamespace()
+        write_session = SimpleNamespace(commit=AsyncMock(), execute=AsyncMock())
+        session_factory = _build_sequenced_session_factory(read_session, write_session)
         unchanged_online = SimpleNamespace(id=1, status="online")
         changed_server = SimpleNamespace(id=2, status="offline")
         unchanged_offline = SimpleNamespace(id=3, status="offline")
@@ -133,12 +161,10 @@ class ServerStatusMonitorTests(unittest.IsolatedAsyncioTestCase):
         ):
             await server_status_monitor.probe_server_statuses_once(session_factory)
 
-        list_all.assert_awaited_once_with(session)
+        list_all.assert_awaited_once_with(read_session, limit=server_status_monitor.SERVER_STATUS_QUERY_LIMIT)
         self.assertEqual(test_connection_mock.await_count, 3)
-        self.assertEqual(unchanged_online.status, "online")
-        self.assertEqual(changed_server.status, "online")
-        self.assertEqual(unchanged_offline.status, "offline")
-        session.commit.assert_awaited_once()
+        self.assertEqual(write_session.execute.await_count, 1)
+        write_session.commit.assert_awaited_once()
         publish_resource_event.assert_awaited_once_with(
             "server",
             "updated",

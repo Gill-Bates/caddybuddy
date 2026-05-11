@@ -85,9 +85,9 @@ class ConfigRenderer:
 
     @staticmethod
     def merge_variables(
-        template_vars: dict,
-        site_vars: dict,
-        reserved_vars: dict,
+        template_vars: dict[str, object],
+        site_vars: dict[str, object],
+        reserved_vars: dict[str, object],
     ) -> dict[str, str]:
         """Merge variable sources with correct precedence.
 
@@ -130,8 +130,8 @@ class ConfigRenderer:
             )
 
         sanitized_variables = {
-            name: self._validate_variable_value(name, value)
-            for name, value in variables.items()
+            name: self._validate_variable_value(name, variables[name])
+            for name in required_vars & provided_vars
         }
 
         def replace_var(match: re.Match[str]) -> str:
@@ -171,7 +171,7 @@ class ConfigRenderer:
         """
         reserved_vars = {
             "domain": site.domain,
-            "ssl_enabled": str(site.ssl_enabled).lower(),
+            "ssl_enabled": str(site.ssl_enabled).lower() if site.ssl_enabled is not None else None,
             "ssl_provider": site.ssl_provider,
         }
 
@@ -218,13 +218,13 @@ class ConfigRenderer:
             RenderResult with complete multi-site Caddyfile
         """
         site_blocks: list[str] = []
-        all_missing_vars: set[str] = set()
+        all_missing_vars: list[str] = []
         all_warnings: list[str] = []
 
         for site, template in sites:
             result = self.render_site_config(site, template, strict=strict)
             site_blocks.append(result.rendered)
-            all_missing_vars.update(result.missing_vars)
+            all_missing_vars.extend(result.missing_vars)
             all_warnings.extend(result.warnings)
 
         rendered = "\n\n".join(site_blocks)

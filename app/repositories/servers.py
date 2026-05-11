@@ -23,8 +23,13 @@ class ServerRepository:
         result = await session.execute(select(func.count(CaddyServer.id)))
         return int(result.scalar_one())
 
-    async def list_all(self, session: AsyncSession, *, limit: int | None = None) -> list[CaddyServer]:
-        statement = self._base_select().order_by(CaddyServer.created_at.desc())
+    async def list_all(
+        self, session: AsyncSession, *, active_only: bool = False, limit: int | None = None
+    ) -> list[CaddyServer]:
+        statement = self._base_select()
+        if active_only:
+            statement = statement.where(CaddyServer.active.is_(True))
+        statement = statement.order_by(CaddyServer.created_at.desc())
         if limit is not None:
             statement = statement.limit(limit)
         result = await session.execute(statement)

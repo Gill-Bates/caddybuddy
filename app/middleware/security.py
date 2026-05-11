@@ -4,21 +4,49 @@
 # Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
 #
 
-from starlette.middleware.base import BaseHTTPMiddleware
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable
+
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        response = await call_next(request)
-        response.headers.setdefault(
-            "Content-Security-Policy",
-            "default-src 'self'; style-src 'self'; "
-            "script-src 'self'; font-src 'self' data:; img-src 'self' data: https:; "
-            "connect-src 'self'; object-src 'none'; frame-ancestors 'none'; "
-            "base-uri 'self'; form-action 'self'",
-        )
-        response.headers.setdefault("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
-        response.headers.setdefault("X-Frame-Options", "DENY")
-        response.headers.setdefault("X-Content-Type-Options", "nosniff")
-        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-        return response
+_SECURITY_HEADERS = (
+    (
+        b"content-security-policy",
+        b"default-src 'self'; style-src 'self'; "
+        b"script-src 'self'; font-src 'self' data:; img-src 'self' data: https:; "
+        b"connect-src 'self'; object-src 'none'; frame-ancestors 'none'; "
+        b"base-uri 'self'; form-action 'self'",
+    ),
+    (b"strict-transport-security", b"max-age=63072000; includeSubDomains"),
+    (b"x-frame-options", b"DENY"),
+    (b"x-content-type-options", b"nosniff"),
+    (b"referrer-policy", b"strict-origin-when-cross-origin"),
+)
+
+
+class SecurityHeadersMiddleware:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_security_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                existing_header_names = {
+                    key.lower()
+                    for key, _value in message.get("headers", [])
+                }
+                headers = list(message.get("headers", []))
+                for key, value in _SECURITY_HEADERS:
+                    if key not in existing_header_names:
+                        headers.append((key, value))
+                message = {**message, "headers": headers}
+
+            await send(message)
+
+        await self.app(scope, receive, send_with_security_headers)

@@ -9,8 +9,10 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.models.entities import CaddyServer
 from app.repositories.servers import server_repository
 from app.services.caddy import CaddyServiceError, caddy_service
 from app.services.events import publish_resource_event
@@ -19,12 +21,19 @@ from app.services.events import publish_resource_event
 logger = logging.getLogger(__name__)
 
 SERVER_STATUS_POLL_INTERVAL_SECONDS = 30.0
+SERVER_STATUS_PROBE_TIMEOUT_SECONDS = 5.0
+SERVER_STATUS_PROBE_CONCURRENCY = 10
+SERVER_STATUS_QUERY_LIMIT = 5000
 
 
-async def _probe_server_status(server) -> str:
+async def _probe_server_status(
+    server: CaddyServer,
+    *,
+    timeout_seconds: float = SERVER_STATUS_PROBE_TIMEOUT_SECONDS,
+) -> str:
     try:
-        await caddy_service.test_connection(server)
-    except (CaddyServiceError, ValueError):
+        await asyncio.wait_for(caddy_service.test_connection(server), timeout=timeout_seconds)
+    except (asyncio.TimeoutError, CaddyServiceError):
         return "offline"
     return "online"
 
@@ -32,21 +41,32 @@ async def _probe_server_status(server) -> str:
 async def probe_server_statuses_once(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    changed_servers: list[tuple[int, str, str]] = []
-
     async with session_factory() as session:
-        servers = await server_repository.list_all(session)
-        for server in servers:
+        servers = await server_repository.list_all(session, limit=SERVER_STATUS_QUERY_LIMIT)
+
+    semaphore = asyncio.Semaphore(SERVER_STATUS_PROBE_CONCURRENCY)
+
+    async def probe_one(server: CaddyServer) -> tuple[int, str, str] | None:
+        async with semaphore:
             previous_status = server.status
             current_status = await _probe_server_status(server)
-            if current_status == previous_status:
-                continue
-            server.status = current_status
-            changed_servers.append((server.id, previous_status, current_status))
+        if current_status == previous_status:
+            return None
+        return (server.id, previous_status, current_status)
 
-        if not changed_servers:
-            return
+    results = await asyncio.gather(*(probe_one(server) for server in servers))
+    changed_servers = [result for result in results if result is not None]
 
+    if not changed_servers:
+        return
+
+    async with session_factory() as session:
+        for server_id, _previous_status, current_status in changed_servers:
+            await session.execute(
+                update(CaddyServer)
+                .where(CaddyServer.id == server_id)
+                .values(status=current_status)
+            )
         await session.commit()
 
     for server_id, previous_status, current_status in changed_servers:

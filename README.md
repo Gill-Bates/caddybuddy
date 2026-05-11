@@ -30,6 +30,7 @@ CaddyBuddy manages the operational metadata around Caddy, not the entire host sy
 - Servers
 - Caddyfile
 - Sites
+- Queue
 - Deployments
 - API Keys
 - Users
@@ -214,6 +215,7 @@ The system API is intentionally small and operationally focused:
 | `GET /api/v1/health` | Health status, app name, and version |
 | `GET /api/v1/build-info` | Version, commit, and build date |
 | `GET /api/v1/events` | Server-Sent Events stream for resource updates |
+| `GET /api/v1/queue/count` | Count of sites pending deployment for authenticated users |
 
 Example:
 
@@ -256,6 +258,7 @@ caddybuddy/
 ```bash
 cd tools/ui-lint
 npm install
+npm run install:browsers
 
 UI_LINT_BASE_URL=http://127.0.0.1:8000 \
 UI_LINT_USERNAME=admin \
@@ -283,7 +286,7 @@ python -m unittest tests.test_database_session tests.test_config_renderer
 - Mount `data/` persistently.
 - The example `docker/docker-compose.yml` is project-specific infrastructure, not a generic production template.
 - For release builds, set `VERSION`, `BUILD_INFO`, and optionally build args such as `APP_VERSION`, `GIT_SHA`, and `BUILD_DATE` deliberately.
-- On first startup with an empty database, change the generated default admin password immediately.
+- On first startup with an empty database, change the configured initial admin password immediately.
 - Deployments currently require a `caddy` binary available in the application runtime, because CaddyBuddy adapts rendered Caddyfile content before sending JSON to the Caddy admin API.
 
 ---

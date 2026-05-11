@@ -8,25 +8,25 @@ function countItems(value) {
 }
 
 export function serializeResultForOutput(result, { summaryPath, visualRegressionEnabled }) {
-    const metrics = result.metrics || {};
-    const spacing = metrics.spacing || {};
-    const horizontalOverflow = metrics.horizontalOverflow || {};
-    const layoutShiftValue = Number(metrics.layoutShift?.value || 0);
+    const metrics = result.metrics ?? {};
+    const spacing = metrics.spacing ?? {};
+    const horizontalOverflow = metrics.horizontalOverflow ?? {};
+    const layoutShiftValue = Number(metrics.layoutShift?.value ?? 0);
 
     return {
         name: result.name,
         url: result.url,
         theme: result.theme || null,
         findings: result.findings,
-        hardFindings: result.hardFindings || [],
-        warnings: result.warnings || [],
+        hardFindings: result.hardFindings ?? [],
+        warnings: result.warnings ?? [],
         uiScore: metrics.uiScore ?? null,
         uiScoreLabel: metrics.uiScoreLabel ?? null,
         visualRegressionEnabled,
         visualRegressionPass: result.visualRegression?.pass ?? null,
         visualRegressionReason: result.visualRegression?.reason ?? null,
         visualRegressionDiffPercent: result.visualRegression?.percent ?? null,
-        diffRatio: Number(result.diff.ratio.toFixed(6)),
+        diffRatio: Number.isFinite(result.diff?.ratio) ? Number(result.diff.ratio.toFixed(6)) : null,
         layoutShift: Number(layoutShiftValue.toFixed(6)),
         overflowOffenders: countItems(horizontalOverflow.offenders),
         clippedButtons: countItems(metrics.clippedButtons),
@@ -44,6 +44,8 @@ export function serializeResultForOutput(result, { summaryPath, visualRegression
         scrollBottomCrowding: countItems(metrics.scrollBottomCrowding),
         footerViewportGap: metrics.footerViewportGap?.gapPx ?? null,
         footerViewportGapPass: metrics.footerViewportGap?.present ? (metrics.footerViewportGap.passesMinimum ? 1 : 0) : null,
+        sidebarFooterViewportGap: metrics.sidebarFooterViewportGap?.gapPx ?? null,
+        sidebarFooterViewportGapPass: metrics.sidebarFooterViewportGap?.present ? (metrics.sidebarFooterViewportGap.passesMinimum ? 1 : 0) : null,
         ghostScrollContainers: countItems(metrics.ghostScrollContainers),
         nestedScrollContainers: countItems(metrics.nestedScrollContainers),
         flexScrollTraps: countItems(metrics.flexScrollTraps),

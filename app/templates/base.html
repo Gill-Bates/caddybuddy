@@ -3,55 +3,66 @@
 
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>{% if page_title %}{{ page_title }} | {% endif %}{{ app_name }}</title>
     <meta name="color-scheme" content="light">
     <meta name="theme-color" content="#0f766e">
     <meta name="referrer" content="strict-origin-when-cross-origin">
-    <link href="{{ request.app.url_path_for('static', path='vendor/bootstrap/bootstrap.min.css') }}" rel="stylesheet">
-    <link href="{{ request.app.url_path_for('static', path='css/app.css') }}" rel="stylesheet">
+    <link href="{{ request.app.url_path_for('static', path='vendor/bootstrap/bootstrap.min.css') }}" rel="stylesheet"
+        integrity="{{ asset_integrity('vendor/bootstrap/bootstrap.min.css') }}" crossorigin="anonymous">
+    <link
+        href="{{ request.app.url_path_for('static', path='css/app.css') }}?v={{ asset_integrity('css/app.css')[-10:] }}"
+        rel="stylesheet" integrity="{{ asset_integrity('css/app.css') }}" crossorigin="anonymous" fetchpriority="high">
     <link rel="icon" href="{{ request.app.url_path_for('static', path='img/favicon.svg') }}" type="image/svg+xml">
 </head>
 
-<body>
-    <a class="app-skip-link" href="#main-content">Skip to main content</a>
+<body class="app-body{% if not current_user %} app-body--public{% endif %}">
+    {% macro nav_link(path, label, exact=False) -%}
+    {% set is_active = request.url.path == path if exact else request.url.path.startswith(path) %}
+    <a class="app-nav__link {% if is_active %}is-active{% endif %}" href="{{ path }}" {% if is_active
+        %}aria-current="page" {% endif %}>{{ label }}{% if caller is defined %}{{ caller() }}{% endif %}</a>
+    {%- endmacro %}
+    <a class="app-skip-link" href="#main-content" data-ui-lint-ignore-click-target>Skip to main content</a>
+    {% if current_user %}
+    <button type="button" class="mobile-menu-toggle" id="mobileMenuToggle" aria-label="Open menu" aria-expanded="false"
+        aria-controls="appSidebar">
+        <svg class="mobile-menu-toggle__icon mobile-menu-toggle__icon--open" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="3" y1="6" x2="21" y2="6"></line>
+            <line x1="3" y1="12" x2="21" y2="12"></line>
+            <line x1="3" y1="18" x2="21" y2="18"></line>
+        </svg>
+        <svg class="mobile-menu-toggle__icon mobile-menu-toggle__icon--close" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+    </button>
+    <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+    {% endif %}
     <div class="app-shell {% if not current_user %}app-shell--public{% endif %}">
         {% if current_user %}
-        <aside class="app-sidebar">
+        <aside class="app-sidebar" id="appSidebar">
             <div>
-                <a href="/" class="brand-mark text-decoration-none">
+                <a href="{{ request.app.url_path_for('dashboard') }}" class="brand-mark text-decoration-none">
                     <span class="brand-mark__kicker">Control plane</span>
                     <span class="brand-mark__name">{{ app_name }}</span>
                 </a>
                 <nav class="nav flex-column app-nav mt-4 gap-2" aria-label="Primary navigation">
-                    <a class="app-nav__link {% if request.url.path == '/' %}is-active{% endif %}" href="/" {% if
-                        request.url.path=='/' %}aria-current="page" {% endif %}>Dashboard</a>
-                    <a class="app-nav__link {% if request.url.path.startswith('/servers') %}is-active{% endif %}"
-                        href="/servers" {% if request.url.path.startswith('/servers') %}aria-current="page" {% endif
-                        %}>Servers</a>
-                    <a class="app-nav__link {% if request.url.path.startswith('/templates') %}is-active{% endif %}"
-                        href="/templates" {% if request.url.path.startswith('/templates') %}aria-current="page" {% endif
-                        %}>Caddyfile</a>
-                    <a class="app-nav__link {% if request.url.path.startswith('/sites') %}is-active{% endif %}"
-                        href="/sites" {% if request.url.path.startswith('/sites') %}aria-current="page" {% endif
-                        %}>Sites</a>
-                    <a class="app-nav__link {% if request.url.path.startswith('/deployments') %}is-active{% endif %}"
-                        href="/deployments" {% if request.url.path.startswith('/deployments') %}aria-current="page" {%
-                        endif %}>Deployments</a>
-                    <a class="app-nav__link {% if request.url.path.startswith('/api-keys') %}is-active{% endif %}"
-                        href="/api-keys" {% if request.url.path.startswith('/api-keys') %}aria-current="page" {% endif
-                        %}>API Keys</a>
-                    {% if current_user.role == 'admin' %}
-                    <a class="app-nav__link {% if request.url.path.startswith('/users') %}is-active{% endif %}"
-                        href="/users" {% if request.url.path.startswith('/users') %}aria-current="page" {% endif
-                        %}>Users</a>
-                    <a class="app-nav__link {% if request.url.path.startswith('/audit-logs') %}is-active{% endif %}"
-                        href="/audit-logs" {% if request.url.path.startswith('/audit-logs') %}aria-current="page" {%
-                        endif %}>Audit Logs</a>
+                    {{ nav_link(request.app.url_path_for('dashboard'), 'Dashboard', exact=True) }}
+                    {{ nav_link(request.app.url_path_for('servers_page'), 'Servers') }}
+                    {{ nav_link(request.app.url_path_for('templates_page'), 'Caddyfile') }}
+                    {{ nav_link(request.app.url_path_for('sites_page'), 'Sites') }}
+                    {{ nav_link(request.app.url_path_for('deployments_page'), 'Deployments') }}
+                    {% call nav_link(request.app.url_path_for('queue_page'), 'Queue') %}
+                    <span class="queue-badge" id="queueBadge" aria-live="polite" aria-atomic="true" hidden></span>
+                    {% endcall %}
+                    {{ nav_link(request.app.url_path_for('api_keys_page'), 'API Keys') }}
+                    {% if current_user.is_admin %}
+                    {{ nav_link(request.app.url_path_for('users_page'), 'Users') }}
+                    {{ nav_link(request.app.url_path_for('audit_logs_page'), 'Audit Logs') }}
                     {% endif %}
-                    <a class="app-nav__link {% if request.url.path.startswith('/profile') %}is-active{% endif %}"
-                        href="/profile" {% if request.url.path.startswith('/profile') %}aria-current="page" {% endif
-                        %}>Profile</a>
+                    {{ nav_link(request.app.url_path_for('profile_page'), 'Profile') }}
                 </nav>
             </div>
 
@@ -63,7 +74,7 @@
                         <div class="text-body-secondary small text-uppercase">{{ current_user.role }}</div>
                     </div>
                 </div>
-                <form action="/logout" method="post">
+                <form action="{{ request.app.url_path_for('logout_action') }}" method="post">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <button type="submit" class="btn btn-outline-light w-100">Sign out</button>
                 </form>
@@ -71,17 +82,30 @@
         </aside>
         {% endif %}
 
-        <main class="app-main {% if not current_user %}app-main--public{% endif %}" id="main-content" tabindex="-1">
-            <div class="container-fluid px-0">
-                {% include 'partials/flashes.html' %}
-                {% block content %}{% endblock %}
-            </div>
+        <div class="app-content {% if not current_user %}app-content--public{% endif %}">
+            <main class="app-main {% if not current_user %}app-main--public{% endif %}" id="main-content" tabindex="-1">
+                <div class="app-container">
+                    {% include 'partials/flashes.html' %}
+                    {% block content %}{% endblock %}
+                </div>
+            </main>
             <footer class="app-footer">
-                <span>{{ build_info.version }}</span>
-                <span>{{ build_info.commit[:7] if build_info.commit and build_info.commit != 'working-tree' else
-                    build_info.commit }}</span>
+                <div class="app-container app-footer__inner">
+                    <span class="cb-footer-content">
+                        CaddyBuddy {{ build_info.version }} (<span class="font-monospace">{{ build_info.commit[:7] if build_info.commit else 'unknown' }}</span>)
+                        &middot; &copy;&nbsp;2026&nbsp;Gill-Bates
+                        &middot;&nbsp;
+                        <a href="https://github.com/Gill-Bates/caddybuddy" target="_blank" rel="noopener noreferrer" class="text-decoration-none cb-footer-link">
+                            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" class="cb-footer-link-icon" aria-hidden="true">
+                                <path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
+                            </svg>
+                            GitHub
+                            <span class="visually-hidden">(opens in new tab)</span>
+                        </a>
+                    </span>
+                </div>
             </footer>
-        </main>
+        </div>
     </div>
 
     <div class="modal fade" id="confirmActionModal" tabindex="-1" aria-labelledby="confirmActionModalLabel"
@@ -97,14 +121,16 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="button" class="btn btn-danger" id="confirmActionModalAccept">Continue</button>
+                    <button type="button" class="btn btn-primary" id="confirmActionModalAccept">Continue</button>
                 </div>
             </div>
         </div>
     </div>
 
-    <script src="{{ request.app.url_path_for('static', path='vendor/bootstrap/bootstrap.bundle.min.js') }}"></script>
-    <script src="{{ request.app.url_path_for('static', path='js/app.js') }}" defer></script>
+    <script src="{{ request.app.url_path_for('static', path='vendor/bootstrap/bootstrap.bundle.min.js') }}"
+        integrity="{{ asset_integrity('vendor/bootstrap/bootstrap.bundle.min.js') }}" crossorigin="anonymous"></script>
+    <script src="{{ request.app.url_path_for('static', path='js/app.js') }}"
+        integrity="{{ asset_integrity('js/app.js') }}" crossorigin="anonymous" defer></script>
     {% block scripts %}{% endblock %}
 </body>
 

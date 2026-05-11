@@ -25,7 +25,7 @@ import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from types import SimpleNamespace
 
 import httpx
 from sqlalchemy.orm.exc import StaleDataError
@@ -48,10 +48,6 @@ from app.services.deployment_state import (
 )
 from app.services.events import publish_resource_event
 from app.utils.caddyfile import build_domain_site_preview
-
-
-if TYPE_CHECKING:
-    pass
 
 
 logger = logging.getLogger(__name__)
@@ -171,11 +167,11 @@ class DeploymentEngine:
                     "Using built-in Caddyfile snippet '%s' because no database entry exists.",
                     imported_name,
                 )
-                imported_template = type("BuiltinTemplate", (), {
-                    "name": imported_name,
-                    "caddyfile": builtin_caddyfile,
-                    "variables": {},
-                })()
+                imported_template = SimpleNamespace(
+                    name=imported_name,
+                    caddyfile=builtin_caddyfile,
+                    variables={},
+                )
 
             imported_result = await self._render_template_with_imports(
                 session,
@@ -313,7 +309,51 @@ class DeploymentEngine:
         try:
             await session.flush()
         except StaleDataError as exc:
-            raise InvalidStateTransitionError(source, target) from exc
+            raise DeploymentError(
+                f"Concurrent modification of deployment {getattr(deployment, 'id', None)}",
+                deployment=deployment,
+            ) from exc
+
+    @staticmethod
+    def _failed_result(
+        deployment: Deployment,
+        *,
+        message: str,
+        error: str,
+    ) -> DeploymentResult:
+        return DeploymentResult(
+            success=False,
+            deployment=deployment,
+            message=message,
+            error=error,
+        )
+
+    async def _transition_to_failed(
+        self,
+        session: AsyncSession,
+        deployment: Deployment,
+        *,
+        message: str,
+        error_msg: str,
+    ) -> DeploymentResult:
+        try:
+            await self._apply_state_transition(
+                session,
+                deployment,
+                DeploymentStatus.FAILED,
+                lambda: deployment_state_machine.mark_failed(deployment, error_msg),
+            )
+        except (InvalidStateTransitionError, DeploymentError) as exc:
+            return self._failed_result(
+                deployment,
+                message=str(exc),
+                error=str(exc),
+            )
+        return self._failed_result(
+            deployment,
+            message=message,
+            error=error_msg,
+        )
 
     async def create_deployment(
         self,
@@ -362,6 +402,7 @@ class DeploymentEngine:
             server_id=server.id,
             rendered_config=render_result.rendered,
             status=DeploymentStatus.PENDING,
+            deployed_by=deployed_by,
         )
 
         logger.info(
@@ -392,35 +433,18 @@ class DeploymentEngine:
                 lambda: deployment_state_machine.start_deployment(deployment),
             )
         except InvalidStateTransitionError as exc:
-            return DeploymentResult(
-                success=False,
-                deployment=deployment,
-                message=str(exc),
-                error=str(exc),
-            )
+            return self._failed_result(deployment, message=str(exc), error=str(exc))
+        except DeploymentError as exc:
+            return self._failed_result(deployment, message=str(exc), error=str(exc))
 
         # Get server for deployment
         server = deployment.server
         if server is None:
-            try:
-                await self._apply_state_transition(
-                    session,
-                    deployment,
-                    DeploymentStatus.FAILED,
-                    lambda: deployment_state_machine.mark_failed(deployment, "Server not found"),
-                )
-            except InvalidStateTransitionError as exc:
-                return DeploymentResult(
-                    success=False,
-                    deployment=deployment,
-                    message=str(exc),
-                    error=str(exc),
-                )
-            return DeploymentResult(
-                success=False,
-                deployment=deployment,
+            return await self._transition_to_failed(
+                session,
+                deployment,
                 message="Server not found",
-                error="Server not found",
+                error_msg="Server not found",
             )
 
         # Caddy's /load endpoint replaces the complete runtime config, so a
@@ -443,47 +467,28 @@ class DeploymentEngine:
             )
         except (CaddyServiceError, ValueError) as exc:
             error_msg = str(exc)
-            try:
-                await self._apply_state_transition(
-                    session,
-                    deployment,
-                    DeploymentStatus.FAILED,
-                    lambda: deployment_state_machine.mark_failed(deployment, error_msg),
-                )
-            except InvalidStateTransitionError as transition_exc:
-                return DeploymentResult(
-                    success=False,
-                    deployment=deployment,
-                    message=str(transition_exc),
-                    error=str(transition_exc),
-                )
-            return DeploymentResult(
-                success=False,
-                deployment=deployment,
+            return await self._transition_to_failed(
+                session,
+                deployment,
                 message="Failed to convert configuration",
-                error=error_msg,
+                error_msg=error_msg,
             )
         except DeploymentError as exc:
             error_msg = str(exc)
-            try:
-                await self._apply_state_transition(
-                    session,
-                    deployment,
-                    DeploymentStatus.FAILED,
-                    lambda: deployment_state_machine.mark_failed(deployment, error_msg),
-                )
-            except InvalidStateTransitionError as transition_exc:
-                return DeploymentResult(
-                    success=False,
-                    deployment=deployment,
-                    message=str(transition_exc),
-                    error=str(transition_exc),
-                )
-            return DeploymentResult(
-                success=False,
-                deployment=deployment,
+            return await self._transition_to_failed(
+                session,
+                deployment,
                 message="Failed to render complete server configuration",
-                error=error_msg,
+                error_msg=error_msg,
+            )
+        except Exception as exc:
+            error_msg = str(exc)
+            logger.exception("Deployment %s failed unexpectedly", getattr(deployment, "id", None))
+            return await self._transition_to_failed(
+                session,
+                deployment,
+                message="Deployment failed",
+                error_msg=error_msg,
             )
 
         # Deploy to server via Caddy Admin API
@@ -491,21 +496,6 @@ class DeploymentEngine:
             await caddy_service.deploy_config(server, config_payload)
         except (CaddyServiceError, ValueError) as exc:
             error_msg = str(exc)
-            try:
-                await self._apply_state_transition(
-                    session,
-                    deployment,
-                    DeploymentStatus.FAILED,
-                    lambda: deployment_state_machine.mark_failed(deployment, error_msg),
-                )
-            except InvalidStateTransitionError as transition_exc:
-                return DeploymentResult(
-                    success=False,
-                    deployment=deployment,
-                    message=str(transition_exc),
-                    error=str(transition_exc),
-                )
-
             logger.error(
                 "Deployment %d failed on server '%s': %s",
                 deployment.id,
@@ -513,11 +503,20 @@ class DeploymentEngine:
                 error_msg,
             )
 
-            return DeploymentResult(
-                success=False,
-                deployment=deployment,
+            return await self._transition_to_failed(
+                session,
+                deployment,
                 message="Deployment to server failed",
-                error=error_msg,
+                error_msg=error_msg,
+            )
+        except Exception as exc:
+            error_msg = str(exc)
+            logger.exception("Deployment %s failed unexpectedly", getattr(deployment, "id", None))
+            return await self._transition_to_failed(
+                session,
+                deployment,
+                message="Deployment failed",
+                error_msg=error_msg,
             )
 
         # Success
@@ -529,12 +528,9 @@ class DeploymentEngine:
                 lambda: deployment_state_machine.mark_deployed(deployment, deployed_by),
             )
         except InvalidStateTransitionError as exc:
-            return DeploymentResult(
-                success=False,
-                deployment=deployment,
-                message=str(exc),
-                error=str(exc),
-            )
+            return self._failed_result(deployment, message=str(exc), error=str(exc))
+        except DeploymentError as exc:
+            return self._failed_result(deployment, message=str(exc), error=str(exc))
 
         logger.info(
             "Deployment %d successfully deployed to server '%s'",

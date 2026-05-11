@@ -12,15 +12,15 @@ import pixelmatch from 'pixelmatch';
 import { PNG } from 'pngjs';
 
 
-const DEFAULT_NAV_TIMEOUT_MS = Number.parseInt(process.env.UILINT_NAV_TIMEOUT_MS || '10000', 10);
+const DEFAULT_NAV_TIMEOUT_MS = Number.parseInt(process.env.UILINT_NAV_TIMEOUT_MS || '60000', 10);
 const DEFAULT_BOOTSTRAP_TIMEOUT_MS = Number.parseInt(process.env.UILINT_BOOTSTRAP_TIMEOUT_MS || '30000', 10);
 const DEFAULT_COLLECTED_EVENT_LIMIT = 500;
 const DEFAULT_MAX_EVENT_TEXT_LENGTH = Number.parseInt(process.env.UILINT_MAX_EVENT_TEXT_LENGTH || '10000', 10);
-const MAX_PNG_DIMENSION = Number.parseInt(process.env.UILINT_MAX_PNG_DIMENSION || '4096', 10);
-const MAX_PNG_PIXELS = Number.parseInt(process.env.UILINT_MAX_PNG_PIXELS || String(4096 * 4096), 10);
+const MAX_PNG_DIMENSION = Number.parseInt(process.env.UILINT_MAX_PNG_DIMENSION || '32768', 10);
+const MAX_PNG_PIXELS = Number.parseInt(process.env.UILINT_MAX_PNG_PIXELS || String(32768 * 2048), 10);
 const PIXELMATCH_THRESHOLD = 0.1;
-const LOGIN_ERROR_SELECTOR = '.alert-danger:visible, .login-error:visible, .error-message:visible';
-const POST_LOGIN_SELECTOR = '#user-menu, nav .dropdown-toggle, .dashboard-header, [data-ui-root="dashboard"]';
+const LOGIN_ERROR_SELECTOR = '.alert-danger, .login-error, .error-message';
+const POST_LOGIN_SELECTOR = '.app-sidebar, #main-content, .page-title, .metric-card';
 const SENSITIVE_QUERY_PARAM_RE = /(?:token|secret|key|password|passwd|csrf|session|auth)/i;
 
 
@@ -125,25 +125,9 @@ export async function disableMotion(page, motionResetCss, viewName = 'unknown') 
     }
 
     try {
-        await page.evaluate((cssText) => {
-            const existing = document.getElementById('ui-lint-motion-reset');
-            if (existing) {
-                if (existing.tagName === 'STYLE') {
-                    existing.textContent = cssText;
-                }
-                return;
-            }
-            const style = document.createElement('style');
-            style.id = 'ui-lint-motion-reset';
-            style.textContent = cssText;
-            (document.head || document.documentElement).appendChild(style);
-        }, motionResetCss);
-        await page.waitForFunction(
-            () => Boolean(document.getElementById('ui-lint-motion-reset')),
-            { timeout: normalizeTimeout(DEFAULT_BOOTSTRAP_TIMEOUT_MS, 30_000) },
-        );
+        await page.emulateMedia({ reducedMotion: 'reduce' });
     } catch (err) {
-        throw new Error(`[${viewName}] Failed to inject motion reset CSS: ${err.message}`, { cause: err });
+        throw new Error(`[${viewName}] Failed to emulate reduced motion: ${err.message}`, { cause: err });
     }
 }
 
@@ -161,39 +145,59 @@ export async function login(page, { baseUrl, credentialProvider, motionResetCss 
     const username = await credentialProvider.getUsername();
     const password = await credentialProvider.getPassword();
     await page.goto(`${baseUrl}/login`, { waitUntil: 'domcontentloaded', timeout: DEFAULT_NAV_TIMEOUT_MS });
+    await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => { });
     await disableMotion(page, motionResetCss, 'login');
 
     await page.fill('#username', username);
     await page.fill('#password', password);
-    const submitButton = page.locator('form[action="/login"] button[type="submit"]').first();
+    // Use flexible selector: prefer form with /login action, fallback to any auth form
+    const submitButton = page.locator('form[action$="/login"] button[type="submit"], form.auth-form button[type="submit"]').first();
     const visibleError = page.locator(LOGIN_ERROR_SELECTOR).first();
-    const navigationPromise = page.waitForURL(
-        (url) => {
-            const pathname = new URL(url.toString()).pathname.replace(/\/$/, '');
-            return pathname !== '/login';
-        },
-        { timeout: DEFAULT_NAV_TIMEOUT_MS },
-    );
 
-    await submitButton.click();
     try {
-        await navigationPromise;
-        await Promise.race([
-            page.waitForSelector(POST_LOGIN_SELECTOR, { timeout: DEFAULT_NAV_TIMEOUT_MS }),
-            visibleError.waitFor({ state: 'visible', timeout: DEFAULT_NAV_TIMEOUT_MS }),
-        ]);
-    } catch (err) {
-        if (await visibleError.count() > 0) {
+        const buttonCount = await submitButton.count();
+        if (buttonCount === 0) {
+            throw new Error('Submit button not found. Available forms: ' + await page.evaluate(() =>
+                Array.from(document.querySelectorAll('form')).map((form) => `action="${form.action}"`).join(', ')
+            ));
+        }
+
+        const redirectPromise = page.waitForURL(
+            (url) => {
+                const pathname = new URL(url.toString()).pathname.replace(/\/$/, '');
+                return pathname !== '/login';
+            },
+            { timeout: DEFAULT_NAV_TIMEOUT_MS },
+        ).then(() => 'redirect');
+        const errorPromise = visibleError.waitFor({ state: 'visible', timeout: DEFAULT_NAV_TIMEOUT_MS }).then(() => 'error');
+
+        await submitButton.click({ force: true });
+
+        const loginOutcome = await Promise.race([redirectPromise, errorPromise]);
+        if (loginOutcome === 'error') {
             const errorText = (await visibleError.textContent() || '').trim();
             throw new Error(`Login failed: ${errorText}`);
         }
-        throw new Error(`Login did not complete successfully: ${err.message}`);
+
+        await page.waitForSelector(POST_LOGIN_SELECTOR, { timeout: DEFAULT_NAV_TIMEOUT_MS });
+    } catch (err) {
+        const finalUrl = page.url();
+        const pageContent = await page.evaluate(() => document.body.innerText.slice(0, 500)).catch(() => 'unavailable');
+
+        // Check for visible error alert
+        const errorVisible = await visibleError.isVisible().catch(() => false);
+        if (errorVisible) {
+            const errorText = (await visibleError.textContent() || '').trim();
+            throw new Error(`Login failed: ${errorText} (URL: ${finalUrl})`);
+        }
+
+        throw new Error(`Login did not complete successfully: ${err.message} (Final URL: ${finalUrl}, Content: ${pageContent.replace(/\s+/g, ' ')})`);
     }
 
-    const errorText = await visibleError.count() > 0
-        ? ((await visibleError.textContent()) || '').trim()
-        : '';
-    if (errorText) {
+    // Final check for visible errors
+    const errorVisible = await visibleError.isVisible().catch(() => false);
+    if (errorVisible) {
+        const errorText = (await visibleError.textContent() || '').trim();
         throw new Error(`Login failed: ${errorText}`);
     }
 

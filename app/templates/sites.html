@@ -1,23 +1,21 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<section class="d-grid gap-4">
-    <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-end">
-        <div>
+<section class="app-page">
+    <div class="app-page__header">
+        <div class="app-page__lede">
             <p class="eyebrow mb-2">Site Management</p>
-            <h1 class="page-title mb-2">Sites</h1>
-            <p class="text-body-secondary mb-0">Define sites with their domains and Caddyfiles. Each domain
-                can only be assigned once (enforced at database level).</p>
+            <h1 class="page-title mb-0">Sites</h1>
         </div>
     </div>
 
-    <div class="row g-4 align-items-start">
+    <div class="row app-grid">
         <div class="col-xl-4">
             <div class="panel-card">
                 <div class="panel-card__header">
                     <h2 class="h5 mb-0">{% if selected_site %}Edit site{% else %}Create site{% endif %}</h2>
                 </div>
-                <form action="/sites" method="post" class="d-grid gap-3">
+                <form action="{{ request.app.url_path_for('save_site') }}" method="post" class="d-grid gap-3">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     {% if selected_site %}
                     <input type="hidden" name="site_id" value="{{ selected_site.id }}">
@@ -43,7 +41,8 @@
                             {% endfor %}
                         </select>
                         <div class="form-text">
-                            <a href="/templates" class="text-decoration-none">Manage Caddyfiles →</a>
+                            <a href="{{ request.app.url_path_for('templates_page') }}"
+                                class="cb-touch-link text-decoration-none">Manage Caddyfiles →</a>
                         </div>
                     </div>
 
@@ -97,7 +96,8 @@
                             {% if selected_site %}Update site{% else %}Create site{% endif %}
                         </button>
                         {% if selected_site %}
-                        <a href="/sites" class="btn btn-outline-secondary">Cancel</a>
+                        <a href="{{ request.app.url_path_for('sites_page') }}"
+                            class="btn btn-outline-secondary">Cancel</a>
                         {% endif %}
                     </div>
                 </form>
@@ -106,7 +106,8 @@
                 <hr class="my-4">
                 <div class="d-grid gap-3">
                     <h3 class="h6 mb-0">Deploy to Server</h3>
-                    <form action="/sites/{{ selected_site.id }}/deploy" method="post" class="d-flex gap-2">
+                    <form action="{{ request.app.url_path_for('deploy_site', site_id=selected_site.id) }}" method="post"
+                        class="d-flex gap-2">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <select name="server_id" class="form-select flex-grow-1" required>
                             <option value="">Select server...</option>
@@ -121,7 +122,7 @@
                 </div>
 
                 <hr class="my-4">
-                <form action="/sites/{{ selected_site.id }}/delete" method="post"
+                <form action="{{ request.app.url_path_for('delete_site', site_id=selected_site.id) }}" method="post"
                     onsubmit="return confirm('Delete site {{ selected_site.domain }}? This will also delete all deployments.')">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <button type="submit" class="btn btn-outline-danger w-100">Delete site</button>
@@ -142,7 +143,7 @@
             {% endif %}
 
             {% if selected_site and deployments %}
-            <div class="panel-card mb-4">
+            <div class="panel-card panel-card--table mb-4">
                 <div class="panel-card__header">
                     <h2 class="h5 mb-0">Deployment History</h2>
                 </div>
@@ -177,7 +178,7 @@
                                     {% endif %}
                                 </td>
                                 <td class="text-end">
-                                    <a href="/deployments/{{ deployment.id }}"
+                                    <a href="{{ request.app.url_path_for('deployments_page', deployment_id=deployment.id) }}"
                                         class="btn btn-sm btn-outline-primary">Details</a>
                                 </td>
                             </tr>
@@ -188,7 +189,7 @@
             </div>
             {% endif %}
 
-            <div class="panel-card">
+            <div class="panel-card panel-card--table">
                 <div class="panel-card__header">
                     <h2 class="h5 mb-0">All Sites</h2>
                 </div>
@@ -213,7 +214,8 @@
                                 </td>
                                 <td>
                                     {% if site.config_template %}
-                                    <a href="/templates/{{ site.config_template.id }}" class="text-decoration-none">
+                                    <a href="{{ request.app.url_path_for('templates_page', template_id=site.config_template.id) }}"
+                                        class="text-decoration-none">
                                         {{ site.config_template.name }}
                                     </a>
                                     {% else %}
@@ -250,7 +252,8 @@
                                     {% endif %}
                                 </td>
                                 <td class="text-end">
-                                    <a href="/sites/{{ site.id }}" class="btn btn-sm btn-outline-primary">Edit</a>
+                                    <a href="{{ request.app.url_path_for('sites_page', site_id=site.id) }}"
+                                        class="btn btn-sm btn-outline-primary">Edit</a>
                                 </td>
                             </tr>
                             {% else %}

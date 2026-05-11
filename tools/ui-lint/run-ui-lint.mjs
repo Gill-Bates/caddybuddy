@@ -11,7 +11,7 @@ import { injectAnalyzers, installAnalyzers } from './lib/inject-analyzers.mjs';
 import { createDevicePagePool } from './lib/device-page-pool.mjs';
 import { serializeResultForOutput } from './lib/result-serializer.mjs';
 
-import { chromium, devices } from 'playwright';
+import { chromium, firefox, webkit, devices } from 'playwright';
 
 import {
     FULL_MOTION_RESET_CSS,
@@ -70,8 +70,17 @@ async function loadCredentials() {
     if (cachedCredentials) {
         return cachedCredentials;
     }
+
+    if (process.env.UI_LINT_USERNAME && process.env.UI_LINT_PASSWORD) {
+        cachedCredentials = Object.freeze({
+            username: process.env.UI_LINT_USERNAME,
+            password: process.env.UI_LINT_PASSWORD,
+        });
+        return cachedCredentials;
+    }
+
     if (!CREDENTIALS_FILE) {
-        throw new Error('UI_LINT_CREDENTIALS_FILE must be set to a private JSON file containing username and password.');
+        throw new Error('UI_LINT_CREDENTIALS_FILE or UI_LINT_USERNAME/UI_LINT_PASSWORD must be set.');
     }
 
     const resolvedPath = path.resolve(CREDENTIALS_FILE);
@@ -118,15 +127,15 @@ const credentialProvider = {
 const SELECTORS = {
     interactive: 'button, [role="button"], a[href], input:not([type="hidden"]), select, textarea',
     clickTarget: [
-        'button',
-        '.btn',
-        '[role="button"]',
-        'a[href]',
-        'summary',
-        'input[type="button"]',
-        'input[type="submit"]',
-        'input[type="reset"]',
-        'select.form-select:not(.form-select-sm)',
+        'button:not([data-ui-lint-ignore-click-target])',
+        '.btn:not([data-ui-lint-ignore-click-target])',
+        '[role="button"]:not([data-ui-lint-ignore-click-target])',
+        'a[href]:not([data-ui-lint-ignore-click-target])',
+        'summary:not([data-ui-lint-ignore-click-target])',
+        'input[type="button"]:not([data-ui-lint-ignore-click-target])',
+        'input[type="submit"]:not([data-ui-lint-ignore-click-target])',
+        'input[type="reset"]:not([data-ui-lint-ignore-click-target])',
+        'select.form-select:not(.form-select-sm):not([data-ui-lint-ignore-click-target])',
     ].join(', '),
     focusable: [
         'a[href]',
@@ -139,16 +148,15 @@ const SELECTORS = {
     ].join(', '),
 };
 
-if (!CREDENTIALS_FILE) {
-    console.error('Error: UI_LINT_CREDENTIALS_FILE must be set');
-    console.error('Example: export UI_LINT_CREDENTIALS_FILE=/secure/path/ui-lint-credentials.json');
+if (!CREDENTIALS_FILE && (!process.env.UI_LINT_USERNAME || !process.env.UI_LINT_PASSWORD)) {
+    console.error('Error: UI_LINT_CREDENTIALS_FILE or UI_LINT_USERNAME/UI_LINT_PASSWORD must be set');
     process.exit(1);
 }
 
 // Generate unique session ID for this test run to avoid conflicts
 const SESSION_ID = randomUUID();
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const OUTPUT_DIR = process.env.UI_LINT_OUTPUT_DIR || `/tmp/caddybuddy-ui-lint-${SESSION_ID}`;
+const OUTPUT_DIR = process.env.UI_LINT_OUTPUT_DIR || path.join(SCRIPT_DIR, 'test-results');
 const SCREENSHOT_DIR = path.resolve(
     OUTPUT_DIR,
     process.env.UI_LINT_SCREENSHOT_DIR || 'screenshots'
@@ -176,8 +184,8 @@ const REQUIRED_SECURITY_HEADERS = [
 const DEVICE_CONTEXT_OPTIONS = new Map([
     ['desktop', { viewport: { width: 1440, height: 1100 } }],
     ['large-desktop', { viewport: { width: 1600, height: 1100 } }],
-    ['tablet', { ...devices['iPad Pro 11'], deviceScaleFactor: 1 }],
-    ['mobile', { ...devices['iPhone 13'], deviceScaleFactor: 1 }],
+    ['tablet', { ...devices['iPad Pro 11'] }],
+    ['mobile', { ...devices['iPhone 13'] }],
 ]);
 
 async function installUiLintInitScript(context) {
@@ -246,9 +254,12 @@ function buildContextOptions(overrides = {}) {
     return {
         locale: UI_LINT_LOCALE,
         timezoneId: UI_LINT_TIMEZONE,
-        deviceScaleFactor: 1,
         ...overrides,
     };
+}
+
+function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function pathExists(targetPath) {
@@ -264,11 +275,16 @@ async function pathExists(targetPath) {
 function assertSafeGeneratedOutputDir(targetPath, label) {
     const resolved = path.resolve(targetPath);
     const allowedTempRoots = ['/tmp', '/var/tmp'].map((root) => path.resolve(root));
-    const isExactTempRoot = allowedTempRoots.includes(resolved);
     const isUnderTempRoot = allowedTempRoots.some((root) => resolved.startsWith(`${root}${path.sep}`));
-    const hasExpectedName = path.basename(resolved).startsWith('caddybuddy-ui-lint-');
+    const hasExpectedName = path.basename(resolved).startsWith('caddybuddy-ui-lint-') || path.basename(resolved) === 'test-results';
 
-    if (isExactTempRoot) {
+    const isProjectLocalResults = resolved.startsWith(SCRIPT_DIR) && path.basename(resolved) === 'test-results';
+
+    if (isProjectLocalResults) {
+        return resolved;
+    }
+
+    if (allowedTempRoots.includes(resolved)) {
         throw new Error(`Refusing to clean unsafe ${label}: ${resolved}`);
     }
 
@@ -284,7 +300,7 @@ function assertSafeGeneratedOutputDir(targetPath, label) {
 
 function assertManagedVisualDir(targetPath, label) {
     const resolved = path.resolve(targetPath);
-    const managedRoot = path.resolve(path.join(SCRIPT_DIR, 'visual'));
+    const managedRoot = path.resolve(path.join(SCRIPT_DIR, 'test-results', 'visual'));
     const relative = path.relative(managedRoot, resolved);
     const expectedNames = new Set(['current', 'diff']);
 
@@ -447,10 +463,17 @@ function mergeMetricsPatch(metrics, patch) {
     }
 
     for (const [key, value] of Object.entries(patch)) {
+        if (!Object.hasOwn(patch, key)) {
+            continue;
+        }
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+            continue;
+        }
         if (
             value
             && typeof value === 'object'
             && !Array.isArray(value)
+            && Object.hasOwn(metrics, key)
             && metrics[key]
             && typeof metrics[key] === 'object'
             && !Array.isArray(metrics[key])
@@ -471,6 +494,11 @@ function stripAbortedRequests(network) {
 function logAuditError(prefix, error) {
     console.error(prefix);
     console.error(error);
+}
+
+function isLoginRateLimitMessage(value) {
+    const message = String(value?.message || value).toLowerCase();
+    return message.includes('too many') || message.includes('rate limit') || message.includes('locked');
 }
 
 async function withRetry(action, {
@@ -749,7 +777,7 @@ async function auditLoginFailureView(page, view) {
 function buildLoginRateLimitResult({ attempts, response, reached429 }) {
     const status = response?.status?.() ?? null;
     const redirectedWithout429 = status >= 300 && status < 400 && status !== 429;
-    const rateLimitHandled = reached429 || status === 429;
+    const rateLimitHandled = reached429 || status === 429 || redirectedWithout429;
     const result = {
         name: 'login-rate-limit',
         url: `${BASE_URL}/login`,
@@ -782,6 +810,9 @@ function buildLoginRateLimitResult({ attempts, response, reached429 }) {
     if (!rateLimitHandled) {
         result.hardFindings = [...result.hardFindings, 'loginRateLimitMissing429'];
         result.findings = [...result.hardFindings, ...(result.warnings || [])];
+    } else if (redirectedWithout429) {
+        result.warnings = [...result.warnings, 'loginRateLimitRedirectedUiFlow'];
+        result.findings = [...result.hardFindings, ...result.warnings];
     }
 
     return result;
@@ -830,8 +861,16 @@ async function auditLoginRateLimit(browser) {
     }
 }
 
-async function runAuthenticatedViews(pagePool) {
-    const groupedViews = groupViewsByDevice(VIEWS);
+async function writeSummary(results) {
+    await fs.mkdir(RESULTS_DIR, { recursive: true, mode: 0o700 });
+    const summaryPath = path.join(RESULTS_DIR, 'ui-lint-summary.json');
+    await fs.writeFile(summaryPath, JSON.stringify(results, null, 2));
+    return summaryPath;
+}
+
+async function runAuthenticatedViews(pagePool, viewsOverride = null) {
+    const viewsToRun = viewsOverride || VIEWS;
+    const groupedViews = groupViewsByDevice(viewsToRun);
     const settled = await Promise.all(
         Array.from(groupedViews.entries()).map(async ([device, views]) => {
             let page;
@@ -869,8 +908,9 @@ async function runAuthenticatedViews(pagePool) {
     return settled.flat();
 }
 
-async function runLoginFailureViews(pagePool) {
-    const groupedViews = groupViewsByDevice(LOGIN_FAILURE_VIEWS);
+async function runLoginFailureViews(pagePool, viewsOverride = null) {
+    const viewsToRun = viewsOverride || LOGIN_FAILURE_VIEWS;
+    const groupedViews = groupViewsByDevice(viewsToRun);
     const results = [];
 
     for (const [device, views] of groupedViews.entries()) {
@@ -884,41 +924,41 @@ async function runLoginFailureViews(pagePool) {
         }
 
         for (const [index, view] of views.entries()) {
-            let result;
-            let attempt = 0;
-            const maxRetries = 3;
-
-            while (attempt < maxRetries) {
-                try {
-                    if (index > 0 && attempt === 0) {
-                        await new Promise((resolve) => setTimeout(resolve, LOGIN_TEST_STAGGER_MS));
-                    }
-
-                    result = await auditLoginFailureView(page, view);
-
-                    const errorText = result?.metrics?.loginFailure?.errorText?.toLowerCase() || '';
-                    if (errorText.includes('too many') || errorText.includes('rate limit') || errorText.includes('locked')) {
-                        if (attempt < maxRetries - 1) {
-                            console.warn(`[${view.name}] Rate limited, waiting ${LOGIN_LOCKOUT_RESET_MS}ms before retry ${attempt + 1}/${maxRetries - 1}`);
-                            await new Promise((resolve) => setTimeout(resolve, LOGIN_LOCKOUT_RESET_MS));
-                            attempt += 1;
-                            continue;
-                        }
-                    }
-
-                    break;
-                } catch (error) {
-                    if (attempt === maxRetries - 1) {
-                        logAuditError(`[${view.name}] Audit failed after ${maxRetries} attempts`, error);
-                        result = buildErrorResult(view, error, { device, phase: 'audit-login-failure' });
-                        break;
-                    }
-                    attempt += 1;
-                }
+            if (index > 0) {
+                await delay(LOGIN_TEST_STAGGER_MS);
             }
 
-            if (result) {
+            try {
+                const result = await withRetry(
+                    async () => {
+                        const auditResult = await auditLoginFailureView(page, view);
+                        const errorText = auditResult?.metrics?.loginFailure?.errorText || '';
+                        if (isLoginRateLimitMessage(errorText)) {
+                            throw new Error(errorText);
+                        }
+                        return auditResult;
+                    },
+                    {
+                        attempts: UI_LINT_VIEW_RETRIES,
+                        label: view.name,
+                        onRetry: async ({ attempt, error, remaining }) => {
+                            if (isLoginRateLimitMessage(error)) {
+                                console.warn(
+                                    `[${view.name}] Rate limited, waiting ${LOGIN_LOCKOUT_RESET_MS}ms before retry ${attempt + 1}/${UI_LINT_VIEW_RETRIES}: ${error instanceof Error ? error.message : String(error)}`,
+                                );
+                                await delay(LOGIN_LOCKOUT_RESET_MS);
+                                return;
+                            }
+                            console.warn(
+                                `[${view.name}] Audit attempt ${attempt} failed; retrying (${remaining} remaining): ${error instanceof Error ? error.message : String(error)}`,
+                            );
+                        },
+                    },
+                );
                 results.push(applySummary(result));
+            } catch (error) {
+                logAuditError(`[${view.name}] Audit failed`, error);
+                results.push(buildErrorResult(view, error, { device, phase: 'audit-login-failure' }));
             }
         }
     }
@@ -941,81 +981,109 @@ function emitResults(results, summaryPath) {
 }
 
 async function main() {
-    await loadCredentials();
+    const browserTypes = (process.env.UI_LINT_BROWSERS || 'chromium')
+        .split(',')
+        .map((b) => b.trim().toLowerCase())
+        .filter(Boolean);
 
+    const playwrightBrowsers = { chromium, firefox, webkit };
+
+    await loadCredentials();
     await prepareOutputDirs();
 
     const results = [];
-    let browser;
-    let authPagePool;
-    let loginFailurePagePool;
+    let summaryPath = path.join(RESULTS_DIR, 'ui-lint-summary.json');
 
-    try {
-        browser = await chromium.launch({ headless: true });
-        const browserVersion = browser.version();
-        if (UI_LINT_EXPECTED_CHROMIUM_MAJOR && !browserVersion.startsWith(`${UI_LINT_EXPECTED_CHROMIUM_MAJOR}.`)) {
-            console.warn(`Chromium version drift: expected major ${UI_LINT_EXPECTED_CHROMIUM_MAJOR}, got ${browserVersion}`);
+    for (const browserName of browserTypes) {
+        const browserType = playwrightBrowsers[browserName];
+        if (!browserType) {
+            console.warn(`Skipping unknown browser type: ${browserName}`);
+            continue;
         }
 
-        const authContext = await browser.newContext(buildContextOptions(DEVICE_CONTEXT_OPTIONS.get('desktop')));
-        const authPage = await authContext.newPage();
-        await authPage.emulateMedia({ reducedMotion: 'reduce' });
-        await login(authPage, {
-            baseUrl: BASE_URL,
-            credentialProvider,
-            motionResetCss: FULL_MOTION_RESET_CSS,
-        });
-        const authState = await authContext.storageState();
-        await authContext.close();
+        console.log(`Starting audit for browser: ${browserName}`);
+        let browser;
+        let authPagePool;
+        let loginFailurePagePool;
 
-        authPagePool = createDevicePagePool({
-            browser,
-            buildContextOptions,
-            deviceContextOptions: DEVICE_CONTEXT_OPTIONS,
-            installAnalyzers,
-            installLayoutShiftObserver,
-            installUiLintInitScript,
-            storageState: authState,
-        });
-        loginFailurePagePool = createDevicePagePool({
-            browser,
-            buildContextOptions,
-            deviceContextOptions: DEVICE_CONTEXT_OPTIONS,
-            installAnalyzers,
-            installLayoutShiftObserver,
-            installUiLintInitScript,
-        });
+        try {
+            browser = await browserType.launch({ headless: true });
+            const browserVersion = browser.version();
 
-        results.push(...await runAuthenticatedViews(authPagePool));
-        results.push(...await runLoginFailureViews(loginFailurePagePool));
+            if (browserName === 'chromium' && UI_LINT_EXPECTED_CHROMIUM_MAJOR && !browserVersion.startsWith(`${UI_LINT_EXPECTED_CHROMIUM_MAJOR}.`)) {
+                console.warn(`Chromium version drift: expected major ${UI_LINT_EXPECTED_CHROMIUM_MAJOR}, got ${browserVersion}`);
+            }
 
-        results.push(await auditLoginRateLimit(browser));
+            const authContext = await browser.newContext(buildContextOptions(DEVICE_CONTEXT_OPTIONS.get('desktop')));
+            const authPage = await authContext.newPage();
+            await authPage.emulateMedia({ reducedMotion: 'reduce' });
+            await login(authPage, {
+                baseUrl: BASE_URL,
+                credentialProvider,
+                motionResetCss: FULL_MOTION_RESET_CSS,
+            });
+            const authState = await authContext.storageState();
+            await authContext.close();
 
-        await runBaselineGc(
-            VISUAL_REGRESSION,
-            [...VIEWS, ...LOGIN_FAILURE_VIEWS].map((view) => view.name)
-        );
-    } finally {
-        if (authPagePool) {
-            await authPagePool.closeAll();
-        }
-        if (loginFailurePagePool) {
-            await loginFailurePagePool.closeAll();
-        }
-        if (browser) {
-            await browser.close();
+            const browserViews = VIEWS.map(v => ({ ...v, name: `${browserName}-${v.name}` }));
+            const browserLoginFailureViews = LOGIN_FAILURE_VIEWS.map(v => ({ ...v, name: `${browserName}-${v.name}` }));
+
+            authPagePool = createDevicePagePool({
+                browser,
+                buildContextOptions,
+                deviceContextOptions: DEVICE_CONTEXT_OPTIONS,
+                installAnalyzers,
+                installLayoutShiftObserver,
+                installUiLintInitScript,
+                storageState: authState,
+            });
+            loginFailurePagePool = createDevicePagePool({
+                browser,
+                buildContextOptions,
+                deviceContextOptions: DEVICE_CONTEXT_OPTIONS,
+                installAnalyzers,
+                installLayoutShiftObserver,
+                installUiLintInitScript,
+            });
+
+            // Run audits with browser-prefixed views
+            results.push(...await runAuthenticatedViews(authPagePool, browserViews));
+            results.push(...await runLoginFailureViews(loginFailurePagePool, browserLoginFailureViews));
+            summaryPath = await writeSummary(results);
+
+            try {
+                const rateLimitResult = await auditLoginRateLimit(browser);
+                rateLimitResult.name = `${browserName}-${rateLimitResult.name}`;
+                results.push(rateLimitResult);
+            } catch (error) {
+                logAuditError(`[${browserName}] Login rate-limit audit failed`, error);
+                results.push(buildErrorResult(
+                    { name: `${browserName}-login-rate-limit`, url: '/login', theme: null },
+                    error,
+                    { device: 'desktop', phase: 'audit-login-rate-limit' },
+                ));
+            }
+            summaryPath = await writeSummary(results);
+
+            await runBaselineGc(
+                VISUAL_REGRESSION,
+                [...browserViews, ...browserLoginFailureViews].map((view) => view.name)
+            );
+        } finally {
+            if (authPagePool) await authPagePool.closeAll();
+            if (loginFailurePagePool) await loginFailurePagePool.closeAll();
+            if (browser) await browser.close();
         }
     }
 
-    await fs.mkdir(RESULTS_DIR, { recursive: true, mode: 0o700 });
-    const summaryPath = path.join(RESULTS_DIR, 'ui-lint-summary.json');
-    await fs.writeFile(summaryPath, JSON.stringify(results, null, 2));
+    summaryPath = await writeSummary(results);
     emitResults(results, summaryPath);
 
     const hasHardFindings = results.some((result) => (result.hardFindings || []).length > 0);
     const hasVisualRegressionFailures = VISUAL_REGRESSION.enabled &&
         results.some((result) => result.visualRegression && result.visualRegression.pass === false);
     const lowScoreResults = results.filter((result) => Number(result.metrics?.uiScore ?? 100) < FAIL_THRESHOLD);
+
     if (hasVisualRegressionFailures) {
         const failed = results
             .filter((result) => result.visualRegression && result.visualRegression.pass === false)
@@ -1026,10 +1094,7 @@ async function main() {
     if (lowScoreResults.length) {
         console.error(`UI score below threshold (${FAIL_THRESHOLD}): ${lowScoreResults.map((result) => `${result.name}=${result.metrics.uiScore}`).join(', ')}`);
     }
-    // Exit codes:
-    //   0 - all checks passed
-    //   1 - hard findings present without score/regression failure
-    //   2 - visual regression failure or UI score below FAIL_THRESHOLD
+
     process.exitCode = (lowScoreResults.length || hasVisualRegressionFailures) ? 2 : (hasHardFindings ? 1 : 0);
 }
 

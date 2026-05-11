@@ -2,42 +2,43 @@
 
 {% block content %}
 <section class="auth-shell">
-    <div class="auth-card panel-card">
-        <div class="auth-brand">
-            <div class="auth-brand__logo-wrap" aria-hidden="true">
-                <img src="{{ request.app.url_path_for('static', path='img/favicon.svg') }}" alt=""
-                    class="auth-brand__logo">
+    <div class="auth-card">
+        <div class="card-body p-4 p-sm-5">
+            <div class="text-center mb-4">
+                <div class="auth-brand__logo-wrap mx-auto mb-3" aria-hidden="true">
+                    <img src="{{ request.app.url_path_for('static', path='img/favicon.svg') }}" alt=""
+                        class="auth-brand__logo">
+                </div>
+                <h1 class="auth-card__title mb-2">Sign in</h1>
+                <p class="text-muted small">Manage Caddy with ease!</p>
             </div>
-            <p class="auth-brand__eyebrow">{{ app_name }}</p>
+
+            <form action="{{ request.app.url_path_for('login_action') }}" method="post" class="auth-form"
+                data-loading-submit-form>
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="next" value="{{ next_url | default('/') }}">
+
+                <div class="mb-3">
+                    <label for="username" class="form-label auth-field-label">Username</label>
+                    <input id="username" name="username" class="form-control form-control-lg"
+                        placeholder="Enter username" autocomplete="username" autocapitalize="off" autocorrect="off"
+                        required autofocus>
+                </div>
+
+                <div class="mb-4">
+                    <label for="password" class="form-label auth-field-label">Password</label>
+                    <input id="password" name="password" type="password" class="form-control form-control-lg"
+                        placeholder="••••••••" autocomplete="current-password" required>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-lg w-100 auth-form__submit" data-loading-submit-button
+                    aria-busy="false">
+                    <span class="spinner-border spinner-border-sm me-2 d-none" role="status"
+                        data-loading-submit-spinner></span>
+                    <span data-loading-submit-label>Sign in</span>
+                </button>
+            </form>
         </div>
-
-        <div class="auth-card__header">
-            <h1 class="auth-card__title">Sign in</h1>
-            <p class="auth-card__subtitle text-body-secondary mb-0">
-                Secure access to your infrastructure control plane.
-            </p>
-        </div>
-
-        <form action="/login" method="post" class="auth-form">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <input type="hidden" name="next" value="{{ request.query_params.get('next', '/') }}">
-
-            <div class="auth-form__group">
-                <label for="username" class="form-label auth-field-label">Username</label>
-                <input id="username" name="username" class="form-control form-control-lg auth-form__control"
-                    placeholder="Enter username" autocomplete="username" autocapitalize="off" autocorrect="off" required
-                    autofocus>
-            </div>
-
-            <div class="auth-form__group auth-form__group--last">
-                <label for="password" class="form-label auth-field-label">Password</label>
-                <input id="password" name="password" type="password"
-                    class="form-control form-control-lg auth-form__control" placeholder="••••••••"
-                    autocomplete="current-password" required>
-            </div>
-
-            <button type="submit" class="btn btn-primary btn-lg w-100 auth-form__submit">Sign in</button>
-        </form>
     </div>
 </section>
 {% endblock %}

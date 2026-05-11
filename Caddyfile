@@ -1,6 +1,6 @@
 {
 	admin 0.0.0.0:2019
-	email tobias@steiner.rs
+	email name@domain.com
 
 	log {
 		level info
@@ -32,11 +32,11 @@
 }
 
 # Bootstrap the CaddyBuddy GUI directly, without external site imports.
-caddy.sv2.cirrio.de {
+caddy.domain.com {
 	import security_headers
 	import default_log
 
-	reverse_proxy 10.30.0.140:8000 {
+	reverse_proxy xx.xx.xx.xx:8000 {
 		transport http {
 			keepalive 30s
 		}
