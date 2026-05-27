@@ -771,6 +771,10 @@ body.app-body--menu-open {
     height: auto;
 }
 
+#ssllabs-api-config {
+    height: auto;
+}
+
 .ssllabs-callout__body {
     display: flex;
     align-items: center;

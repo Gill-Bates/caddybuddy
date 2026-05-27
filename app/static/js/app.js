@@ -606,6 +606,14 @@ const caddyfileFormHasRequiredValues = (form) => {
     return caddyfileInput.value.trim() !== "";
 };
 
+const serializeCaddyfileFormState = (form) => {
+    const caddyfileInput = form.elements.namedItem("caddyfile");
+    if (!(caddyfileInput instanceof HTMLTextAreaElement)) {
+        return "";
+    }
+    return caddyfileInput.value;
+};
+
 const setButtonInteractionState = (button, enabled) => {
     if (!(button instanceof HTMLButtonElement)) {
         return;
@@ -652,7 +660,20 @@ const updateCaddyfileFormActions = (form) => {
         return;
     }
 
-    setButtonInteractionState(validateButton, caddyfileFormHasRequiredValues(form));
+    const currentState = serializeCaddyfileFormState(form);
+    const initialState = form.dataset.initialSerializedState || "";
+    const lastValidatedState = form.dataset.lastValidatedState || "";
+
+    if (form.dataset.validationState === "valid" && currentState !== lastValidatedState) {
+        form.dataset.validationState = "unvalidated";
+    }
+
+    const hasChanges = currentState !== initialState;
+    const hasRequiredValues = caddyfileFormHasRequiredValues(form);
+    const validationMatchesCurrentState = form.dataset.validationState === "valid" && currentState === lastValidatedState;
+
+    setButtonInteractionState(validateButton, hasChanges && hasRequiredValues);
+    setButtonInteractionState(saveButton, hasChanges && hasRequiredValues && validationMatchesCurrentState);
 };
 
 const initializeSiteConfigForms = () => {
@@ -703,6 +724,9 @@ const initializeCaddyfileForms = () => {
             continue;
         }
         form.dataset.caddyfileConfigInitialized = "true";
+        form.dataset.initialSerializedState = serializeCaddyfileFormState(form);
+        form.dataset.lastValidatedState = "";
+        form.dataset.validationState = "unvalidated";
 
         const syncFormState = () => {
             updateCaddyfileFormActions(form);
@@ -710,6 +734,28 @@ const initializeCaddyfileForms = () => {
 
         form.addEventListener("input", syncFormState);
         form.addEventListener("change", syncFormState);
+        form.addEventListener("submit", (event) => {
+            const submitter = event.submitter;
+            if (!(submitter instanceof HTMLElement)) {
+                return;
+            }
+
+            const saveButton = submitter.matches("#caddyfile-save-btn")
+                ? submitter
+                : submitter.closest("#caddyfile-save-btn");
+            if (!(saveButton instanceof HTMLButtonElement)) {
+                return;
+            }
+
+            updateCaddyfileFormActions(form);
+            if (!saveButton.disabled) {
+                return;
+            }
+
+            event.preventDefault();
+            pushInlineFlash("warning", "Validate the Caddyfile configuration before saving.");
+        });
+
         syncFormState();
     }
 };
@@ -741,7 +787,9 @@ const initializeValidateButtons = () => {
             const spinner = button.querySelector("[data-validate-button-spinner]");
             const label = button.querySelector("[data-validate-button-label]");
             const originalLabel = label instanceof HTMLElement ? label.textContent : button.textContent;
-            const submittedState = serializeSiteConfigFormState(form);
+            const submittedState = form.hasAttribute("data-caddyfile-config-form")
+                ? serializeCaddyfileFormState(form)
+                : serializeSiteConfigFormState(form);
             const headers = new Headers({ "X-Requested-With": "fetch" });
             const csrfToken = readCsrfToken(form);
             if (csrfToken) {
@@ -945,3 +993,141 @@ initializeSiteDomainInputs();
 initializeSiteConfigForms();
 initializeCaddyfileForms();
 initializeValidateButtons();
+
+// SSL Labs registration status module
+const initializeSslLabsStatus = () => {
+    const statusEl = document.getElementById('ssllabs-status');
+    const statusHintEl = document.getElementById('ssllabs-status-hint');
+    const registerBtn = document.getElementById('ssllabs-register-btn');
+    const refreshBtn = document.getElementById('ssllabs-refresh-status');
+
+    if (!statusEl || !statusHintEl) {
+        return;
+    }
+
+    const setStatusBadge = (el, className, text) => {
+        el.textContent = '';
+        const badge = document.createElement('span');
+        badge.className = 'badge ' + className;
+        badge.textContent = text;
+        el.appendChild(badge);
+    };
+
+    const updateStatusUI = (data) => {
+        if (!data.masked_email) {
+            setStatusBadge(statusEl, 'bg-warning text-dark', 'Not configured');
+            statusHintEl.textContent = 'Set CB_SSLLABS_EMAIL environment variable to enable SSL Labs scans.';
+            if (registerBtn) registerBtn.classList.add('d-none');
+            return;
+        }
+
+        if (data.is_registered === true) {
+            setStatusBadge(statusEl, 'bg-success', 'Registered');
+            statusHintEl.textContent = 'API access is active. You can run SSL Labs scans.';
+            if (registerBtn) registerBtn.classList.add('d-none');
+        } else if (data.is_registered === false) {
+            setStatusBadge(statusEl, 'bg-danger', 'Not registered');
+            statusHintEl.textContent = 'Email needs to be registered with SSL Labs API to run scans.';
+            if (registerBtn) registerBtn.classList.remove('d-none');
+        } else {
+            setStatusBadge(statusEl, 'bg-secondary', 'Unknown');
+            statusHintEl.textContent = data.message || 'Could not determine registration status.';
+            if (registerBtn) registerBtn.classList.remove('d-none');
+        }
+    };
+
+    const showLoading = () => {
+        statusEl.textContent = '';
+        const spinner = document.createElement('span');
+        spinner.className = 'spinner-border spinner-border-sm text-secondary';
+        spinner.setAttribute('role', 'status');
+        const srText = document.createElement('span');
+        srText.className = 'visually-hidden';
+        srText.textContent = 'Loading...';
+        spinner.appendChild(srText);
+        statusEl.appendChild(spinner);
+        statusHintEl.textContent = 'Checking registration status...';
+    };
+
+    const fetchStatus = async () => {
+        showLoading();
+        try {
+            const response = await fetch('/api/v1/ssllabs/registration-status');
+            if (!response.ok) throw new Error('Failed to fetch status');
+            const data = await response.json();
+            updateStatusUI(data);
+        } catch (err) {
+            setStatusBadge(statusEl, 'bg-warning text-dark', 'Error');
+            statusHintEl.textContent = 'Could not check registration status.';
+            console.error('SSL Labs status check failed:', err);
+        }
+    };
+
+    const registerEmail = async () => {
+        if (!(registerBtn instanceof HTMLButtonElement)) return;
+        registerBtn.disabled = true;
+        registerBtn.textContent = '';
+        const spinner = document.createElement('span');
+        spinner.className = 'spinner-border spinner-border-sm me-1';
+        spinner.setAttribute('role', 'status');
+        registerBtn.appendChild(spinner);
+        registerBtn.appendChild(document.createTextNode('Registering...'));
+
+        try {
+            const headers = { 'Content-Type': 'application/json' };
+            const csrfToken = readCsrfToken();
+            if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+
+            const response = await fetch('/api/v1/ssllabs/register', {
+                method: 'POST',
+                headers
+            });
+            const data = await response.json();
+
+            if (response.ok && data.success) {
+                setStatusBadge(statusEl, 'bg-success', 'Registered');
+                statusHintEl.textContent = data.message || 'Successfully registered with SSL Labs.';
+                registerBtn.classList.add('d-none');
+            } else {
+                statusHintEl.textContent = data.detail || data.message || 'Registration failed.';
+                registerBtn.textContent = 'Register with SSL Labs';
+                registerBtn.disabled = false;
+            }
+        } catch (err) {
+            statusHintEl.textContent = 'Registration request failed. Please try again.';
+            registerBtn.textContent = 'Register with SSL Labs';
+            registerBtn.disabled = false;
+            console.error('SSL Labs registration failed:', err);
+        }
+    };
+
+    const refreshStatus = async () => {
+        if (!(refreshBtn instanceof HTMLButtonElement)) return;
+        refreshBtn.disabled = true;
+        showLoading();
+
+        try {
+            const headers = {};
+            const csrfToken = readCsrfToken();
+            if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+
+            const response = await fetch('/api/v1/ssllabs/refresh-status', { method: 'POST', headers });
+            if (!response.ok) throw new Error('Failed to refresh status');
+            const data = await response.json();
+            updateStatusUI(data);
+        } catch (err) {
+            setStatusBadge(statusEl, 'bg-warning text-dark', 'Error');
+            statusHintEl.textContent = 'Could not refresh registration status.';
+            console.error('SSL Labs status refresh failed:', err);
+        } finally {
+            refreshBtn.disabled = false;
+        }
+    };
+
+    if (registerBtn) registerBtn.addEventListener('click', registerEmail);
+    if (refreshBtn) refreshBtn.addEventListener('click', refreshStatus);
+
+    fetchStatus();
+};
+
+initializeSslLabsStatus();

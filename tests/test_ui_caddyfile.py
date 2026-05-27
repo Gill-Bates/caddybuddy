@@ -97,10 +97,11 @@ class UICaddyfileTests(unittest.TestCase):
         self.assertIn("data-caddyfile-config-form", response.text)
         self.assertIn('id="caddyfile-validate-btn"', response.text)
         self.assertIn('data-validate-error-prefix="Caddyfile invalid"', response.text)
-        self.assertIn('data-validate-error-prefix="Caddyfile invalid" disabled aria-disabled="true"', response.text)
+        self.assertIn('disabled aria-disabled="true"', response.text)
         self.assertIn('build ', response.text)
 
-    def test_caddyfile_page_keeps_validate_button_enabled_when_content_exists(self) -> None:
+    def test_caddyfile_page_buttons_start_disabled_until_changes(self) -> None:
+        """Buttons start disabled; JavaScript enables them when changes are made."""
         app = self._build_app()
         current_user = SimpleNamespace(username="admin", role="admin")
 
@@ -116,8 +117,9 @@ class UICaddyfileTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('id="caddyfile-validate-btn"', response.text)
-        self.assertNotIn('data-validate-error-prefix="Caddyfile invalid" disabled', response.text)
-        self.assertIn('aria-disabled="false"', response.text)
+        self.assertIn('id="caddyfile-save-btn"', response.text)
+        # Buttons start disabled in HTML; JavaScript enables them on change
+        self.assertIn('disabled aria-disabled="true"', response.text)
         self.assertIn('build ', response.text)
 
 

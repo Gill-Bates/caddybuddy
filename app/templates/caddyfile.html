@@ -107,8 +107,7 @@
                             data-validate-form-button
                             data-validate-url="{{ request.app.url_path_for('validate_caddyfile_only') }}"
                             data-validate-success-prefix="Caddyfile valid"
-                            data-validate-error-prefix="Caddyfile invalid" {% if onboarding_required or not
-                            caddyfile|trim %}disabled aria-disabled="true" {% else %}aria-disabled="false" {% endif %}>
+                            data-validate-error-prefix="Caddyfile invalid" disabled aria-disabled="true">
                             <span data-validate-button-label>Validate</span>
                             <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"
                                 data-validate-button-spinner></span>
@@ -117,8 +116,8 @@
                             data-loading-submit-button data-loading-label="Saving &amp; Deploying..."
                             data-confirm-title="Deploy Caddyfile"
                             data-confirm="Save this Caddyfile and deploy it to Caddy? The configuration will be validated before deployment."
-                            data-confirm-accept="Deploy" data-confirm-btn-class="btn-primary" {% if onboarding_required
-                            or not caddyfile|trim %}disabled aria-disabled="true" {% endif %}>
+                            data-confirm-accept="Deploy" data-confirm-btn-class="btn-primary" disabled
+                            aria-disabled="true">
                             <span class="save-text" data-loading-submit-label>Save &amp; Deploy</span>
                             <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"
                                 data-loading-submit-spinner></span>
