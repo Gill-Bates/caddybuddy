@@ -193,10 +193,15 @@ class SslLabsClient:
                 status_code=response.status_code,
             )
         if response.status_code == 400:
-            # Usually means email header is missing or invalid
+            # Log response body for debugging
+            try:
+                body = response.text[:500]
+            except Exception:
+                body = "<unreadable>"
+            logger.warning("SSL Labs HTTP 400 response body: %s", body)
             raise SslLabsClientError(
                 "SSL Labs rejected request (HTTP 400). "
-                "Ensure CB_SSLLABS_EMAIL is set and registered at ssllabs.com/ssltest/register.html"
+                "Ensure CB_SSLLABS_EMAIL is set and registered at ssllabs.com"
             )
         if response.status_code == 441:
             raise SslLabsClientError("SSL Labs email is not registered.")
