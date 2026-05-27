@@ -51,6 +51,12 @@ class SslLabsClientError(RuntimeError):
     pass
 
 
+class SslLabsEmailNotRegisteredError(SslLabsClientError):
+    """Raised when the email is not yet registered with SSL Labs."""
+
+    pass
+
+
 class SslLabsRetryableError(SslLabsClientError):
     def __init__(self, message: str, *, retry_after_seconds: int, status_code: int) -> None:
         super().__init__(message)
@@ -133,6 +139,53 @@ def _map_remote_status(payload: dict[str, Any]) -> SslLabsScanStatus:
     return "starting"
 
 
+async def register_email_with_ssllabs(
+    email: str,
+    *,
+    api_base_url: str = "https://api.ssllabs.com/api/v4",
+    organization: str = "CaddyBuddy User",
+) -> bool:
+    """
+    Register an email address with SSL Labs API v4.
+
+    Returns True if registration succeeded, False otherwise.
+    """
+    # Extract name parts from email (before @)
+    local_part = email.split("@")[0] if "@" in email else "User"
+    # Simple heuristic: split on . or _ or treat as single name
+    name_parts = local_part.replace("_", ".").split(".")
+    first_name = name_parts[0].title() if name_parts else "User"
+    last_name = name_parts[1].title() if len(name_parts) > 1 else "User"
+
+    payload = {
+        "firstName": first_name,
+        "lastName": last_name,
+        "email": email,
+        "organization": organization,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            response = await client.post(
+                f"{api_base_url.rstrip('/')}/register",
+                json=payload,
+            )
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("status") == "success":
+                    logger.info("Successfully registered email %s with SSL Labs", mask_email(email))
+                    return True
+            logger.warning(
+                "SSL Labs registration failed: HTTP %d - %s",
+                response.status_code,
+                response.text[:200],
+            )
+            return False
+    except Exception as exc:
+        logger.warning("SSL Labs registration error: %s", exc)
+        return False
+
+
 class SslLabsClient:
     def __init__(
         self,
@@ -199,12 +252,17 @@ class SslLabsClient:
             except Exception:
                 body = "<unreadable>"
             logger.warning("SSL Labs HTTP 400 response body: %s", body)
+            # Check if it's a "not registered" error
+            if "not yet registered" in body.lower() or "register api" in body.lower():
+                raise SslLabsEmailNotRegisteredError(
+                    "SSL Labs email is not yet registered. Registration required."
+                )
             raise SslLabsClientError(
                 "SSL Labs rejected request (HTTP 400). "
-                "Ensure CB_SSLLABS_EMAIL is set and registered at ssllabs.com"
+                "Ensure CB_SSLLABS_EMAIL is set correctly."
             )
         if response.status_code == 441:
-            raise SslLabsClientError("SSL Labs email is not registered.")
+            raise SslLabsEmailNotRegisteredError("SSL Labs email is not registered.")
         if response.status_code >= 400:
             raise SslLabsClientError(f"SSL Labs request failed: HTTP {response.status_code}")
 
@@ -224,6 +282,7 @@ class SslLabsService:
         self._shutdown_event: asyncio.Event | None = None
         self._scheduler_task: asyncio.Task[None] | None = None
         self._active_tasks: dict[int, asyncio.Task[None]] = {}
+        self._registration_attempted: bool = False
 
     def _ensure_task_lock(self) -> asyncio.Lock:
         if self._task_lock is None:
@@ -469,6 +528,22 @@ class SslLabsService:
                         start_new=start_new,
                         from_cache=from_cache,
                         max_age_hours=max_age_hours,
+                    )
+                except SslLabsEmailNotRegisteredError:
+                    # Auto-register if not yet attempted
+                    if not self._registration_attempted:
+                        self._registration_attempted = True
+                        email = getattr(settings, "ssllabs_email", None)
+                        if email and await register_email_with_ssllabs(
+                            email,
+                            api_base_url=settings.ssllabs_api_base_url,
+                        ):
+                            # Registration succeeded, retry the request
+                            logger.info("Auto-registered with SSL Labs, retrying scan...")
+                            continue
+                    # Registration failed or already attempted
+                    raise SslLabsClientError(
+                        "SSL Labs email registration failed. Please register manually."
                     )
                 except SslLabsRetryableError as exc:
                     retry_at = datetime.now(UTC) + timedelta(seconds=exc.retry_after_seconds)
