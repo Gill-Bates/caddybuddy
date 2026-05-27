@@ -290,3 +290,32 @@ class SslLabsScan(Base):
     @validates("status")
     def _validate_status(self, _key: str, value: str) -> str:
         return _normalize_ssllabs_scan_status(value)
+
+
+_APP_SETTING_KEYS = (
+    "caddy_api_url",
+    "caddyfile_path",
+)
+
+
+class AppSetting(Base, TimestampMixin):
+    """Key-value storage for application configuration."""
+
+    __tablename__ = "app_settings"
+    __table_args__ = (
+        CheckConstraint(
+            f"key IN {_APP_SETTING_KEYS!r}",
+            name="ck_app_settings_key",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+
+    @validates("key")
+    def _validate_key(self, _key: str, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in _APP_SETTING_KEYS:
+            raise ValueError(f"Invalid setting key: {value!r}")
+        return normalized

@@ -73,5 +73,16 @@ class UserRepository:
         await session.flush()
         return user
 
+    async def update_password(
+        self,
+        session: AsyncSession,
+        user: User,
+        password_hash: str,
+    ) -> User:
+        """Update user's password hash."""
+        user.password_hash = password_hash
+        await session.flush()
+        return user
+
 
 user_repository = UserRepository()

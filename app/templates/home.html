@@ -43,8 +43,9 @@
         <div class="col-12 col-md-4">
             <article class="metric-card hero-metric hero-metric--domains">
                 <span class="metric-card__label">Domains</span>
-                <strong class="metric-card__value">{{ metrics.domain_count or 0 }}</strong>
-                <p class="hero-metric__hint mb-0">Configured site domains tracked by CaddyBuddy.</p>
+                <strong class="metric-card__value">{{ metrics.enabled_domain_count or 0 }}<span
+                        class="metric-card__total">/{{ metrics.domain_count or 0 }}</span></strong>
+                <p class="hero-metric__hint mb-0">Enabled / total site domains tracked by CaddyBuddy.</p>
             </article>
         </div>
         <div class="col-12 col-md-4">

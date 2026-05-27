@@ -87,6 +87,7 @@ class UIDashboardTests(unittest.TestCase):
         current_user = SimpleNamespace(username="admin", role="admin")
         metrics = SimpleNamespace(
             domain_count=12,
+            enabled_domain_count=10,
             valid_certificate_count=5,
             expired_certificate_count=2,
             caddy_service_status="Running",
@@ -108,9 +109,10 @@ class UIDashboardTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("Dashboard", response.text)
         self.assertIn("Managed sites, certificate state and local Caddy runtime status.", response.text)
-        self.assertIn("Configured site domains tracked by CaddyBuddy.", response.text)
+        self.assertIn("Enabled / total site domains tracked by CaddyBuddy.", response.text)
         self.assertIn("/static/js/app.js?v=", response.text)
-        self.assertIn(">12<", response.text)
+        self.assertIn(">10<", response.text)  # enabled_domain_count
+        self.assertIn("/12</span>", response.text)  # total domain_count
         self.assertIn(">5<", response.text)
         self.assertIn(">2<", response.text)
         self.assertIn("Caddy Running", response.text)
@@ -125,6 +127,7 @@ class UIDashboardTests(unittest.TestCase):
         current_user = SimpleNamespace(username="admin", role="admin")
         metrics = SimpleNamespace(
             domain_count=0,
+            enabled_domain_count=0,
             valid_certificate_count=0,
             expired_certificate_count=0,
             caddy_service_status="Running",
@@ -153,6 +156,7 @@ class UIDashboardTests(unittest.TestCase):
         current_user = SimpleNamespace(username="admin", role="admin")
         metrics = SimpleNamespace(
             domain_count=0,
+            enabled_domain_count=0,
             valid_certificate_count=0,
             expired_certificate_count=0,
             caddy_service_status="Running",

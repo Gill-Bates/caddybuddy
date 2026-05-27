@@ -693,6 +693,12 @@ body.app-body--menu-open {
     line-height: 0.95;
 }
 
+.metric-card__total {
+    font-size: 0.6em;
+    font-weight: 400;
+    color: var(--cb-muted);
+}
+
 .home-hero {
     padding: 1.35rem;
     background:
@@ -772,6 +778,11 @@ body.app-body--menu-open {
 }
 
 #ssllabs-api-config {
+    height: auto;
+}
+
+#ssllabs-settings,
+#password-settings {
     height: auto;
 }
 

@@ -36,6 +36,7 @@ _cert_cache_lock = asyncio.Lock()
 @dataclass(slots=True, frozen=True)
 class DashboardMetrics:
     domain_count: int
+    enabled_domain_count: int
     valid_certificate_count: int
     expired_certificate_count: int
     caddy_service_status: str
@@ -354,7 +355,16 @@ async def get_dashboard_metrics(session: AsyncSession) -> DashboardMetrics:
         for domain_name in split_domain_names(site.domain)
     })
 
+    # Extract domains from enabled sites only
+    enabled_domains = sorted({
+        domain_name.lower().strip()
+        for site in sites
+        if site.enabled
+        for domain_name in split_domain_names(site.domain)
+    })
+
     domain_count = len(all_domains)
+    enabled_domain_count = len(enabled_domains)
 
     # Fetch certificate info by connecting to domains over HTTPS (cached)
     valid_certificate_count = 0
@@ -373,6 +383,7 @@ async def get_dashboard_metrics(session: AsyncSession) -> DashboardMetrics:
 
     return DashboardMetrics(
         domain_count=domain_count,
+        enabled_domain_count=enabled_domain_count,
         valid_certificate_count=valid_certificate_count,
         expired_certificate_count=expired_certificate_count,
         caddy_service_status=host_service_metrics.status,

@@ -61,6 +61,10 @@
                     {% if ssllabs_path %}
                     {{ nav_link(ssllabs_path, 'SSL Labs') }}
                     {% endif %}
+                    {% set settings_path = optional_url_path_for(request, 'settings_page') %}
+                    {% if settings_path %}
+                    {{ nav_link(settings_path, 'Settings') }}
+                    {% endif %}
                 </nav>
             </div>
 

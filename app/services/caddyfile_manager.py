@@ -32,6 +32,7 @@ from app.models.entities import (
 )
 from app.repositories.sites import DuplicateSiteError, site_repository
 from app.services.caddy import CaddyAdminClient, CaddyServiceError, caddy_service
+from app.services.runtime_settings import get_caddy_config
 from app.utils.caddyfile import build_domain_site_preview, parse_caddyfile
 
 
@@ -90,8 +91,9 @@ def _get_operation_lock() -> asyncio.Lock:
     return _OPERATION_LOCK
 
 
-def _get_caddyfile_path() -> Path | None:
-    return get_settings().caddyfile_path
+async def _get_caddyfile_path(session: AsyncSession) -> Path | None:
+    config = await get_caddy_config(session)
+    return config.caddyfile_path
 
 
 def _marker_text() -> str:
@@ -183,8 +185,9 @@ def _inspect_caddyfile_sync(path: Path | None) -> tuple[str | None, str | None, 
     return None, content, marker_present
 
 
-async def _inspect_caddyfile() -> tuple[str | None, str | None, bool]:
-    return await asyncio.to_thread(_inspect_caddyfile_sync, _get_caddyfile_path())
+async def _inspect_caddyfile(session: AsyncSession) -> tuple[str | None, str | None, bool]:
+    path = await _get_caddyfile_path(session)
+    return await asyncio.to_thread(_inspect_caddyfile_sync, path)
 
 
 async def _get_state_value(session: AsyncSession, key: str) -> str | None:
@@ -293,11 +296,12 @@ async def set_baseline_caddyfile(session: AsyncSession, caddyfile: str) -> None:
     await session.flush()
 
 
-async def _admin_api_reachable() -> bool:
+async def _admin_api_reachable(session: AsyncSession) -> bool:
+    config = await get_caddy_config(session)
     settings = get_settings()
     try:
         async with CaddyAdminClient(
-            settings.caddy_admin_url,
+            config.admin_url,
             settings.caddy_admin_timeout_seconds,
         ) as client:
             return await client.health()
@@ -306,9 +310,9 @@ async def _admin_api_reachable() -> bool:
 
 
 async def get_caddy_runtime_status(session: AsyncSession) -> CaddyRuntimeStatus:
-    path = _get_caddyfile_path()
-    file_error, _content, marker_present = await _inspect_caddyfile()
-    admin_api_reachable = await _admin_api_reachable()
+    path = await _get_caddyfile_path(session)
+    file_error, _content, marker_present = await _inspect_caddyfile(session)
+    admin_api_reachable = await _admin_api_reachable(session)
     last_synced_config_sha256 = await _get_state_value(session, _STATE_KEY_LAST_SYNCED_CONFIG_SHA256)
     persisted_error = await _get_state_value(session, _STATE_KEY_LAST_ERROR)
     error = file_error or persisted_error
@@ -419,10 +423,11 @@ async def _sync_caddy_configuration_locked(
     else:
         config_payload = _EMPTY_CADDY_CONFIG
 
+    config = await get_caddy_config(session)
     settings = get_settings()
     try:
         async with CaddyAdminClient(
-            settings.caddy_admin_url,
+            config.admin_url,
             settings.caddy_admin_timeout_seconds,
         ) as client:
             await client.load_config(config_payload)
@@ -466,9 +471,9 @@ async def sync_caddy_configuration(
 
 
 async def onboard_caddy(session: AsyncSession) -> CaddyOnboardingResult:
-    path = _get_caddyfile_path()
+    path = await _get_caddyfile_path(session)
     async with _acquire_operation_guard():
-        file_error, content, marker_present = await _inspect_caddyfile()
+        file_error, content, marker_present = await _inspect_caddyfile(session)
         if marker_present:
             return CaddyOnboardingResult(status="already_managed", synced=False)
         if file_error is not None:
