@@ -298,6 +298,47 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
             ],
         )
 
+    def test_apply_known_schema_migrations_rebuilds_app_settings_for_new_allowed_key(self) -> None:
+        executed_sql: list[str] = []
+
+        class FakeResult:
+            @staticmethod
+            def first() -> tuple[str] | None:
+                return (
+                    "CREATE TABLE app_settings (id INTEGER NOT NULL, \"key\" VARCHAR(64) NOT NULL, "
+                    "value TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, "
+                    "CONSTRAINT ck_app_settings_key CHECK (key IN ('caddy_api_url', 'caddyfile_path', 'rate_limit_enabled')))"
+                ,)
+
+        class FakeConnection:
+            dialect = SimpleNamespace(name="sqlite")
+
+            def exec_driver_sql(self, statement: str):
+                if statement == "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'app_settings'":
+                    return FakeResult()
+                executed_sql.append(statement)
+                return None
+
+        connection = FakeConnection()
+
+        with patch.object(session_module.Base.metadata.tables["app_settings"], "create") as create_app_settings:
+            migrated = session_module._apply_known_schema_migrations(
+                connection,
+                {"app_settings": {"id", "key", "value", "created_at", "updated_at"}},
+            )
+
+        self.assertTrue(migrated)
+        self.assertEqual(
+            executed_sql,
+            [
+                'CREATE TABLE app_settings_backup AS SELECT id, "key", value, created_at, updated_at FROM app_settings',
+                "DROP TABLE app_settings",
+                'INSERT INTO app_settings (id, "key", value, created_at, updated_at) SELECT id, "key", value, created_at, updated_at FROM app_settings_backup',
+                "DROP TABLE app_settings_backup",
+            ],
+        )
+        create_app_settings.assert_called_once_with(connection, checkfirst=True)
+
     def test_apply_known_schema_migrations_is_noop_for_non_sqlite(self) -> None:
         class FakeConnection:
             dialect = SimpleNamespace(name="postgresql")

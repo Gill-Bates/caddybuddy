@@ -85,7 +85,6 @@ async def ssllabs_page(
 
     context = {
         "page_title": "SSL Labs",
-        "ssllabs_masked_email": ssllabs_service.masked_email(),
         "rows": rows,
     }
     return render_template(request, "ssllabs.html", current_user=current_user, context=context)

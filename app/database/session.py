@@ -207,6 +207,28 @@ def _apply_known_schema_migrations(
 
     migrated = False
 
+    app_settings_columns = existing_columns.get("app_settings")
+    if app_settings_columns is not None:
+        result = sync_connection.exec_driver_sql(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'app_settings'"
+        )
+        table_sql_row = result.first()
+        table_sql = table_sql_row[0] if table_sql_row is not None else ""
+        if isinstance(table_sql, str) and "'ssllabs_email'" not in table_sql:
+            logger.info("Applying known SQLite schema migration: app_settings allowed keys")
+            sync_connection.exec_driver_sql(
+                "CREATE TABLE app_settings_backup AS "
+                'SELECT id, "key", value, created_at, updated_at FROM app_settings'
+            )
+            sync_connection.exec_driver_sql("DROP TABLE app_settings")
+            Base.metadata.tables["app_settings"].create(sync_connection, checkfirst=True)
+            sync_connection.exec_driver_sql(
+                "INSERT INTO app_settings (id, \"key\", value, created_at, updated_at) "
+                'SELECT id, "key", value, created_at, updated_at FROM app_settings_backup'
+            )
+            sync_connection.exec_driver_sql("DROP TABLE app_settings_backup")
+            migrated = True
+
     site_columns = existing_columns.get("caddy_sites")
     if site_columns is not None and "upstream_url" not in site_columns:
         logger.info("Applying known SQLite schema migration: caddy_sites.upstream_url")

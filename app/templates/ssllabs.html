@@ -32,52 +32,6 @@
                 </div>
             </div>
 
-            <!-- API Email Configuration Tile -->
-            <div class="panel-card mb-4" id="ssllabs-api-config">
-                <div class="panel-card__header d-flex justify-content-between align-items-center">
-                    <h2 class="h5 mb-0">API Configuration</h2>
-                    <button type="button" class="btn btn-sm btn-outline-secondary" id="ssllabs-refresh-status"
-                        title="Refresh status">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor"
-                            viewBox="0 0 16 16" aria-hidden="true">
-                            <path fill-rule="evenodd"
-                                d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z" />
-                            <path
-                                d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z" />
-                        </svg>
-                    </button>
-                </div>
-                <div class="panel-card__body">
-                    <div class="row align-items-center">
-                        <div class="col-md-8">
-                            <div class="mb-2">
-                                <span class="text-body-secondary">Email:</span>
-                                <span id="ssllabs-email" class="fw-semibold ms-2">
-                                    {% if ssllabs_masked_email %}{{ ssllabs_masked_email }}{% else %}<span
-                                        class="text-warning">Not configured</span>{% endif %}
-                                </span>
-                            </div>
-                            <div>
-                                <span class="text-body-secondary">Status:</span>
-                                <span id="ssllabs-status" class="ms-2">
-                                    <span class="spinner-border spinner-border-sm text-secondary" role="status">
-                                        <span class="visually-hidden">Loading...</span>
-                                    </span>
-                                </span>
-                            </div>
-                            <div class="small text-body-secondary mt-2" id="ssllabs-status-hint">
-                                Checking registration status...
-                            </div>
-                        </div>
-                        <div class="col-md-4 text-md-end mt-3 mt-md-0">
-                            <button type="button" class="btn btn-primary d-none" id="ssllabs-register-btn">
-                                Register with SSL Labs
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
             <div class="panel-card panel-card--table">
                 <div class="panel-card__header">
                     <h2 class="h5 mb-0">Configured domains</h2>
