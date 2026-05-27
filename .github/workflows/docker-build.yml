@@ -305,7 +305,7 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       VERSION: ${{ needs.meta.outputs.version }}
-      IMAGE_NAME: ${{ env.REGISTRY }}/${{ env.PROJECT }}
+      IMAGE_NAME: docker.cirrio.de/caddybuddy
     permissions:
       contents: write
 
