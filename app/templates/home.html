@@ -6,6 +6,7 @@
 {% set caddy_status = metrics.caddy_service_status or 'Unknown' %}
 {% set service_running = caddy_status | lower == 'running' %}
 {% set caddy_version = metrics.caddy_version or 'Unavailable' %}
+{% set caddy_uptime = metrics.caddy_service_uptime or 'Unavailable' %}
 {% set onboarding_required = runtime_status is defined and runtime_status.onboarding_required %}
 <section class="app-page">
     <div class="app-page__header">
@@ -27,9 +28,9 @@
                     (<span class="version-badge" id="caddy-version">{{ caddy_version }}</span>)
                     {% endif %}</span>
             </span>
-            {% if service_running and metrics.caddy_service_uptime %}
+            {% if service_running and caddy_uptime not in ['Unavailable', 'Unknown'] %}
             <span class="dashboard-status__meta" id="caddy-status-meta" data-ui-lint-dynamic>
-                · Uptime {{ metrics.caddy_service_uptime }}
+                · Uptime {{ caddy_uptime }}
             </span>
             {% else %}
             <span class="dashboard-status__meta" id="caddy-status-meta">

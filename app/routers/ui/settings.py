@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.limiter import limiter, update_rate_limit_enabled
@@ -37,6 +37,26 @@ from ._common import require_admin, validated_form
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _expects_json_response(request: Request) -> bool:
+    accept = request.headers.get("accept", "")
+    requested_with = request.headers.get("x-requested-with", "")
+    return "application/json" in accept.lower() or requested_with.lower() == "xmlhttprequest"
+
+
+def _settings_response(
+    request: Request,
+    *,
+    success: bool,
+    message: str,
+    status_code: int = 200,
+):
+    if _expects_json_response(request):
+        return JSONResponse({"success": success, "message": message}, status_code=status_code)
+
+    push_flash(request, "success" if success else "danger", message)
+    return redirect_to("/settings")
 
 
 @router.get("/settings", response_class=HTMLResponse)
@@ -71,6 +91,8 @@ async def update_caddy_settings(
 ):
     current_user = await require_admin(request, session)
     if current_user is None:
+        if _expects_json_response(request):
+            return JSONResponse({"success": False, "message": "Authentication required."}, status_code=401)
         return redirect_to("/login")
 
     form = await validated_form(request)
@@ -86,13 +108,11 @@ async def update_caddy_settings(
         )
         await set_rate_limit_enabled(session, rate_limit_enabled)
     except ValueError as exc:
-        push_flash(request, "danger", str(exc))
-        return redirect_to("/settings")
+        return _settings_response(request, success=False, message=str(exc), status_code=400)
 
     await session.commit()
     update_rate_limit_enabled(rate_limit_enabled)
-    push_flash(request, "success", "Settings updated.")
-    return redirect_to("/settings")
+    return _settings_response(request, success=True, message="Settings updated.")
 
 
 @router.post("/settings/ssllabs", response_class=HTMLResponse)
@@ -102,6 +122,8 @@ async def update_ssllabs_settings(
 ):
     current_user = await require_admin(request, session)
     if current_user is None:
+        if _expects_json_response(request):
+            return JSONResponse({"success": False, "message": "Authentication required."}, status_code=401)
         return redirect_to("/login")
 
     form = await validated_form(request)
@@ -111,8 +133,7 @@ async def update_ssllabs_settings(
         previous_email = await get_ssllabs_email(session)
         await set_ssllabs_email(session, ssllabs_email)
     except ValueError as exc:
-        push_flash(request, "danger", str(exc))
-        return redirect_to("/settings")
+        return _settings_response(request, success=False, message=str(exc), status_code=400)
 
     await session.commit()
     new_email = ssllabs_email.strip().lower() or None
@@ -120,10 +141,8 @@ async def update_ssllabs_settings(
         clear_registration_status_cache(previous_email)
     if new_email:
         clear_registration_status_cache(new_email)
-        push_flash(request, "success", "SSL Labs email updated.")
-    else:
-        push_flash(request, "success", "SSL Labs email removed.")
-    return redirect_to("/settings")
+        return _settings_response(request, success=True, message="SSL Labs email updated.")
+    return _settings_response(request, success=True, message="SSL Labs email removed.")
 
 
 @router.post("/settings/change-password", response_class=HTMLResponse)

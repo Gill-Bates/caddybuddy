@@ -365,6 +365,136 @@ const pushInlineFlash = (category, message) => {
     initializeAutoDismissAlerts();
 };
 
+const initializeSettingsAutoSave = () => {
+    const getFieldValue = (field) => {
+        if (field instanceof HTMLInputElement) {
+            if (field.type === "checkbox" || field.type === "radio") {
+                return field.checked ? "true" : "false";
+            }
+            return field.value;
+        }
+        if (field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement) {
+            return field.value;
+        }
+        return "";
+    };
+
+    const updateStatusElement = (statusElement, message, tone = "muted") => {
+        if (!(statusElement instanceof HTMLElement)) {
+            return;
+        }
+        statusElement.textContent = message;
+        statusElement.classList.remove("text-body-secondary", "text-success", "text-danger");
+        if (tone === "success") {
+            statusElement.classList.add("text-success");
+            return;
+        }
+        if (tone === "danger") {
+            statusElement.classList.add("text-danger");
+            return;
+        }
+        statusElement.classList.add("text-body-secondary");
+    };
+
+    for (const form of document.querySelectorAll("form[data-auto-save-form]")) {
+        if (!(form instanceof HTMLFormElement)) {
+            continue;
+        }
+
+        const fields = Array.from(form.querySelectorAll("[data-auto-save-field]"))
+            .filter((field) => field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement);
+        if (fields.length === 0) {
+            continue;
+        }
+
+        const statusElement = form.querySelector("[data-auto-save-status]");
+        let resetStatusTimeoutId = null;
+        let isSaving = false;
+        let saveQueued = false;
+
+        const clearResetStatusTimeout = () => {
+            if (resetStatusTimeoutId !== null) {
+                window.clearTimeout(resetStatusTimeoutId);
+                resetStatusTimeoutId = null;
+            }
+        };
+
+        const scheduleStatusReset = () => {
+            clearResetStatusTimeout();
+            resetStatusTimeoutId = window.setTimeout(() => {
+                updateStatusElement(statusElement, "", "muted");
+                resetStatusTimeoutId = null;
+            }, 2500);
+        };
+
+        const snapshot = () => fields
+            .map((field) => `${field.name}:${getFieldValue(field)}`)
+            .join("\u001f");
+
+        let lastSavedState = snapshot();
+
+        const saveForm = async () => {
+            const currentState = snapshot();
+            if (currentState === lastSavedState) {
+                return;
+            }
+            if (isSaving) {
+                saveQueued = true;
+                return;
+            }
+            if (!form.reportValidity()) {
+                return;
+            }
+
+            isSaving = true;
+            saveQueued = false;
+            clearResetStatusTimeout();
+            updateStatusElement(statusElement, "Saving...", "muted");
+
+            try {
+                const response = await fetch(resolveSameOriginUrl(form.action), {
+                    method: (form.method || "post").toUpperCase(),
+                    body: new FormData(form),
+                    credentials: "same-origin",
+                    headers: {
+                        Accept: "application/json",
+                        "X-Requested-With": "XMLHttpRequest",
+                    },
+                });
+                const payload = await response.json().catch(() => ({}));
+                const message = typeof payload.message === "string" && payload.message
+                    ? payload.message
+                    : (response.ok ? "Saved." : "Save failed.");
+
+                if (!response.ok || payload.success === false) {
+                    updateStatusElement(statusElement, message, "danger");
+                    pushInlineFlash("danger", message);
+                    return;
+                }
+
+                lastSavedState = snapshot();
+                updateStatusElement(statusElement, message, "success");
+                scheduleStatusReset();
+            } catch {
+                const message = "Automatic save failed. Please try again.";
+                updateStatusElement(statusElement, message, "danger");
+                pushInlineFlash("danger", message);
+            } finally {
+                isSaving = false;
+                if (saveQueued || snapshot() !== lastSavedState) {
+                    void saveForm();
+                }
+            }
+        };
+
+        for (const field of fields) {
+            field.addEventListener("change", () => {
+                void saveForm();
+            });
+        }
+    }
+};
+
 const domainTokenPattern = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 
 const normalizeDomainToken = (value) => {
@@ -989,6 +1119,7 @@ initializeLiveUpdates();
 initializeMobileMenu();
 initializeLoadingSubmitForms();
 initializeAutoDismissAlerts();
+initializeSettingsAutoSave();
 initializeSiteDomainInputs();
 initializeSiteConfigForms();
 initializeCaddyfileForms();
