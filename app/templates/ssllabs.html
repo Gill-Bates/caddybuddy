@@ -32,6 +32,53 @@
                 </div>
             </div>
 
+            <!-- API Email Configuration Tile -->
+            <div class="panel-card mb-4" id="ssllabs-api-config">
+                <div class="panel-card__header d-flex justify-content-between align-items-center">
+                    <h2 class="h5 mb-0">API Configuration</h2>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="ssllabs-refresh-status"
+                        title="Refresh status">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor"
+                            viewBox="0 0 16 16" aria-hidden="true">
+                            <path fill-rule="evenodd"
+                                d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z" />
+                            <path
+                                d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z" />
+                        </svg>
+                    </button>
+                </div>
+                <div class="panel-card__body">
+                    <div class="row align-items-center">
+                        <div class="col-md-8">
+                            <div class="mb-2">
+                                <span class="text-body-secondary">Email:</span>
+                                <span id="ssllabs-email" class="fw-semibold ms-2">
+                                    {% if ssllabs_masked_email %}{{ ssllabs_masked_email }}{% else %}<span
+                                        class="text-warning">Not configured</span>{% endif %}
+                                </span>
+                            </div>
+                            <div>
+                                <span class="text-body-secondary">Status:</span>
+                                <span id="ssllabs-status" class="ms-2">
+                                    <span class="spinner-border spinner-border-sm text-secondary" role="status">
+                                        <span class="visually-hidden">Loading...</span>
+                                    </span>
+                                </span>
+                            </div>
+                            <div class="small text-body-secondary mt-2" id="ssllabs-status-hint">
+                                Checking registration status...
+                            </div>
+                        </div>
+                        <div class="col-md-4 text-md-end mt-3 mt-md-0">
+                            <button type="button" class="btn btn-primary" id="ssllabs-register-btn"
+                                style="display: none;">
+                                Register with SSL Labs
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <div class="panel-card panel-card--table">
                 <div class="panel-card__header">
                     <h2 class="h5 mb-0">Configured domains</h2>
@@ -148,4 +195,112 @@
         </div>
     </div>
 </section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    (function () {
+        'use strict';
+
+        const statusEl = document.getElementById('ssllabs-status');
+        const statusHintEl = document.getElementById('ssllabs-status-hint');
+        const registerBtn = document.getElementById('ssllabs-register-btn');
+        const refreshBtn = document.getElementById('ssllabs-refresh-status');
+
+        function updateStatusUI(data) {
+            if (!data.masked_email) {
+                statusEl.innerHTML = '<span class="badge bg-warning text-dark">Not configured</span>';
+                statusHintEl.textContent = 'Set CB_SSLLABS_EMAIL environment variable to enable SSL Labs scans.';
+                registerBtn.style.display = 'none';
+                return;
+            }
+
+            if (data.is_registered === true) {
+                statusEl.innerHTML = '<span class="badge bg-success">Registered</span>';
+                statusHintEl.textContent = 'API access is active. You can run SSL Labs scans.';
+                registerBtn.style.display = 'none';
+            } else if (data.is_registered === false) {
+                statusEl.innerHTML = '<span class="badge bg-danger">Not registered</span>';
+                statusHintEl.textContent = 'Email needs to be registered with SSL Labs API to run scans.';
+                registerBtn.style.display = 'inline-block';
+            } else {
+                statusEl.innerHTML = '<span class="badge bg-secondary">Unknown</span>';
+                statusHintEl.textContent = data.message || 'Could not determine registration status.';
+                registerBtn.style.display = 'inline-block';
+            }
+        }
+
+        function showLoading() {
+            statusEl.innerHTML = '<span class="spinner-border spinner-border-sm text-secondary" role="status"><span class="visually-hidden">Loading...</span></span>';
+            statusHintEl.textContent = 'Checking registration status...';
+        }
+
+        async function fetchStatus() {
+            showLoading();
+            try {
+                const response = await fetch('/api/v1/ssllabs/registration-status');
+                if (!response.ok) throw new Error('Failed to fetch status');
+                const data = await response.json();
+                updateStatusUI(data);
+            } catch (err) {
+                statusEl.innerHTML = '<span class="badge bg-warning text-dark">Error</span>';
+                statusHintEl.textContent = 'Could not check registration status.';
+                console.error('SSL Labs status check failed:', err);
+            }
+        }
+
+        async function registerEmail() {
+            registerBtn.disabled = true;
+            registerBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span>Registering...';
+
+            try {
+                const response = await fetch('/api/v1/ssllabs/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    statusEl.innerHTML = '<span class="badge bg-success">Registered</span>';
+                    statusHintEl.textContent = data.message || 'Successfully registered with SSL Labs.';
+                    registerBtn.style.display = 'none';
+                } else {
+                    statusHintEl.textContent = data.detail || data.message || 'Registration failed.';
+                    registerBtn.innerHTML = 'Register with SSL Labs';
+                    registerBtn.disabled = false;
+                }
+            } catch (err) {
+                statusHintEl.textContent = 'Registration request failed. Please try again.';
+                registerBtn.innerHTML = 'Register with SSL Labs';
+                registerBtn.disabled = false;
+                console.error('SSL Labs registration failed:', err);
+            }
+        }
+
+        async function refreshStatus() {
+            refreshBtn.disabled = true;
+            showLoading();
+
+            try {
+                const response = await fetch('/api/v1/ssllabs/refresh-status', { method: 'POST' });
+                if (!response.ok) throw new Error('Failed to refresh status');
+                const data = await response.json();
+                updateStatusUI(data);
+            } catch (err) {
+                statusEl.innerHTML = '<span class="badge bg-warning text-dark">Error</span>';
+                statusHintEl.textContent = 'Could not refresh registration status.';
+                console.error('SSL Labs status refresh failed:', err);
+            } finally {
+                refreshBtn.disabled = false;
+            }
+        }
+
+        // Event listeners
+        if (registerBtn) registerBtn.addEventListener('click', registerEmail);
+        if (refreshBtn) refreshBtn.addEventListener('click', refreshStatus);
+
+        // Initial fetch
+        fetchStatus();
+    })();
+</script>
 {% endblock %}

@@ -139,6 +139,65 @@ def _map_remote_status(payload: dict[str, Any]) -> SslLabsScanStatus:
     return "starting"
 
 
+# Registration status cache: {email: (is_registered, timestamp)}
+_registration_status_cache: dict[str, tuple[bool, datetime]] = {}
+_REGISTRATION_CACHE_TTL_SECONDS = 300  # 5 minutes
+
+
+async def check_email_registration_status(
+    email: str,
+    *,
+    api_base_url: str = "https://api.ssllabs.com/api/v4",
+    use_cache: bool = True,
+) -> bool:
+    """
+    Check if an email is registered with SSL Labs API v4.
+
+    Uses a TTL cache to avoid excessive API calls.
+    Returns True if registered, False otherwise.
+    """
+    now = datetime.now(UTC)
+
+    # Check cache first
+    if use_cache and email in _registration_status_cache:
+        is_registered, cached_at = _registration_status_cache[email]
+        age_seconds = (now - cached_at).total_seconds()
+        if age_seconds < _REGISTRATION_CACHE_TTL_SECONDS:
+            return is_registered
+
+    # Make a lightweight API call to check registration
+    # Using the info endpoint or a minimal analyze request
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+            # Try to call the info endpoint with the email header
+            response = await client.get(
+                f"{api_base_url.rstrip('/')}/info",
+                headers={"email": email},
+            )
+            if response.status_code == 200:
+                _registration_status_cache[email] = (True, now)
+                return True
+            if response.status_code == 400:
+                body = response.text.lower()
+                if "not yet registered" in body or "register api" in body:
+                    _registration_status_cache[email] = (False, now)
+                    return False
+            # Other errors - assume not registered
+            _registration_status_cache[email] = (False, now)
+            return False
+    except Exception as exc:
+        logger.warning("Failed to check SSL Labs registration status: %s", exc)
+        return False
+
+
+def clear_registration_status_cache(email: str | None = None) -> None:
+    """Clear the registration status cache for a specific email or all emails."""
+    if email is None:
+        _registration_status_cache.clear()
+    else:
+        _registration_status_cache.pop(email, None)
+
+
 async def register_email_with_ssllabs(
     email: str,
     *,
@@ -174,6 +233,8 @@ async def register_email_with_ssllabs(
                 data = response.json()
                 if data.get("status") == "success":
                     logger.info("Successfully registered email %s with SSL Labs", mask_email(email))
+                    # Clear cache to reflect new registration status
+                    clear_registration_status_cache(email)
                     return True
             logger.warning(
                 "SSL Labs registration failed: HTTP %d - %s",

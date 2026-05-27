@@ -138,3 +138,148 @@ async def subscribe_events(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# --------------------------------------------------------------------------- #
+# SSL Labs Registration
+# --------------------------------------------------------------------------- #
+
+from pydantic import BaseModel
+from app.services.ssllabs import (
+    check_email_registration_status,
+    register_email_with_ssllabs,
+    clear_registration_status_cache,
+)
+from app.config.settings import get_settings
+from app.utils.ssllabs import mask_email
+
+
+class SslLabsRegistrationStatusResponse(BaseModel):
+    email: str | None
+    masked_email: str | None
+    is_registered: bool | None
+    message: str
+
+
+class SslLabsRegisterResponse(BaseModel):
+    success: bool
+    message: str
+    masked_email: str | None = None
+
+
+@router.get("/ssllabs/registration-status", response_model=SslLabsRegistrationStatusResponse)
+async def ssllabs_registration_status(
+    _current_user: User = Depends(_require_api_user),
+) -> SslLabsRegistrationStatusResponse:
+    """Check the SSL Labs email registration status."""
+    settings = get_settings()
+    email = getattr(settings, "ssllabs_email", None)
+
+    if not email:
+        return SslLabsRegistrationStatusResponse(
+            email=None,
+            masked_email=None,
+            is_registered=None,
+            message="No SSL Labs email configured. Set CB_SSLLABS_EMAIL environment variable.",
+        )
+
+    try:
+        is_registered = await check_email_registration_status(
+            email,
+            api_base_url=settings.ssllabs_api_base_url,
+        )
+        masked = mask_email(email)
+        return SslLabsRegistrationStatusResponse(
+            email=email,
+            masked_email=masked,
+            is_registered=is_registered,
+            message="Registered" if is_registered else "Not registered with SSL Labs",
+        )
+    except Exception as exc:
+        return SslLabsRegistrationStatusResponse(
+            email=email,
+            masked_email=mask_email(email),
+            is_registered=None,
+            message=f"Could not check registration status: {exc}",
+        )
+
+
+@router.post("/ssllabs/register", response_model=SslLabsRegisterResponse)
+async def ssllabs_register(
+    _current_user: User = Depends(_require_api_user),
+) -> SslLabsRegisterResponse:
+    """Register the configured email with SSL Labs API."""
+    settings = get_settings()
+    email = getattr(settings, "ssllabs_email", None)
+
+    if not email:
+        raise HTTPException(
+            status_code=400,
+            detail="No SSL Labs email configured. Set CB_SSLLABS_EMAIL environment variable.",
+        )
+
+    # First check if already registered
+    try:
+        is_registered = await check_email_registration_status(
+            email,
+            api_base_url=settings.ssllabs_api_base_url,
+            use_cache=False,  # Force fresh check
+        )
+        if is_registered:
+            return SslLabsRegisterResponse(
+                success=True,
+                message="Email is already registered with SSL Labs.",
+                masked_email=mask_email(email),
+            )
+    except Exception:
+        pass  # Continue to registration attempt
+
+    # Try to register
+    success = await register_email_with_ssllabs(
+        email,
+        api_base_url=settings.ssllabs_api_base_url,
+    )
+
+    if success:
+        return SslLabsRegisterResponse(
+            success=True,
+            message="Successfully registered with SSL Labs.",
+            masked_email=mask_email(email),
+        )
+    else:
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to register with SSL Labs. Please try again later.",
+        )
+
+
+@router.post("/ssllabs/refresh-status", response_model=SslLabsRegistrationStatusResponse)
+async def ssllabs_refresh_status(
+    _current_user: User = Depends(_require_api_user),
+) -> SslLabsRegistrationStatusResponse:
+    """Force refresh the SSL Labs registration status (bypasses cache)."""
+    settings = get_settings()
+    email = getattr(settings, "ssllabs_email", None)
+
+    if not email:
+        return SslLabsRegistrationStatusResponse(
+            email=None,
+            masked_email=None,
+            is_registered=None,
+            message="No SSL Labs email configured. Set CB_SSLLABS_EMAIL environment variable.",
+        )
+
+    # Clear cache and check fresh
+    clear_registration_status_cache(email)
+    is_registered = await check_email_registration_status(
+        email,
+        api_base_url=settings.ssllabs_api_base_url,
+        use_cache=False,
+    )
+
+    return SslLabsRegistrationStatusResponse(
+        email=email,
+        masked_email=mask_email(email),
+        is_registered=is_registered,
+        message="Registered" if is_registered else "Not registered with SSL Labs",
+    )
