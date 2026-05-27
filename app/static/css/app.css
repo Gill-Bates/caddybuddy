@@ -147,6 +147,16 @@ body.app-body--menu-open {
     transition: background-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
 }
 
+.app-nav__icon {
+    inline-size: 1.2rem;
+    block-size: 1.2rem;
+    flex: 0 0 auto;
+}
+
+.app-nav__label {
+    min-width: 0;
+}
+
 .app-nav__link:hover,
 .app-nav__link.is-active {
     color: #fff;

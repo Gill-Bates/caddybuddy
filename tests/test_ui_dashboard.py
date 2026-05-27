@@ -115,8 +115,9 @@ class UIDashboardTests(unittest.TestCase):
         self.assertIn("/12</span>", response.text)  # total domain_count
         self.assertIn(">5<", response.text)
         self.assertIn(">2<", response.text)
-        self.assertIn("Caddy Running", response.text)
-        self.assertIn("Uptime 2h 15m · v2.8.4", response.text)
+        self.assertIn("Caddy", response.text)
+        self.assertIn("Uptime 2h 15m", response.text)
+        self.assertIn("id=\"caddy-version\">v2.8.4</span>", response.text)
         self.assertIn("data-ui-lint-dynamic", response.text)
         self.assertNotIn("(APP_VER)", response.text)
         self.assertIn('col-12 col-md-4', response.text)
@@ -177,7 +178,10 @@ class UIDashboardTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("Create the managed Caddyfile first", response.text)
-        self.assertIn("Import the host-mounted Caddyfile into CaddyBuddy before you create managed sites.", response.text)
+        self.assertIn(
+            "Import the host-mounted Caddyfile into CaddyBuddy and replace it with the managed marker before creating",
+            response.text,
+        )
         self.assertIn('href="/caddyfile"', response.text)
         self.assertNotIn("href=\"/sites\" class=\"btn btn-primary\">Create site", response.text)
 

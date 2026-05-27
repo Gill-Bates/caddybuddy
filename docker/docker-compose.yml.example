@@ -6,13 +6,8 @@ services:
     stop_grace_period: 20s
     environment:
       CB_SECRET_KEY: ${CB_SECRET_KEY:?Set CB_SECRET_KEY to a strong random value before starting caddybuddy.} # Generate with: head -c 32 /dev/urandom | base64
-      CB_ADMIN_PASSWORD: ${CB_ADMIN_PASSWORD:?Set CB_ADMIN_PASSWORD to a non-default admin password before starting caddybuddy.}
-      CB_SSLLABS_EMAIL: ${CB_SSLLABS_EMAIL:-}  # Required for SSL Labs scheduled scans
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       TZ: ${TZ:-Etc/UTC}
-      HOST: 0.0.0.0
-      PORT: ${PORT:-8000}
-      TIMEOUT: ${TIMEOUT:-60}
 
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -25,12 +20,12 @@ services:
     security_opt:
       - no-new-privileges:true
     ports:
-      - "127.0.0.1:${PORT:-8000}:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       # Create the host Caddyfile before first start. CaddyBuddy imports it
       # into SQLite and then replaces the mounted file with a managed marker.
       - type: bind
-        source: ${HOST_CADDYFILE_PATH:-/etc/caddy/Caddyfile}
+        source: /etc/caddy/Caddyfile
         target: /app/Caddyfile
         bind:
           create_host_path: false
@@ -39,7 +34,7 @@ services:
         target: /app/data
 
     healthcheck:
-      test: ["CMD", "python", "-c", "import os, sys, urllib.request; port = os.environ.get('PORT', '8000'); response = urllib.request.urlopen(f'http://127.0.0.1:{port}/api/v1/health', timeout=3); sys.exit(0 if response.status < 500 else 1)"]
+      test: ["CMD", "python", "-c", "import sys, urllib.request; response = urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3); sys.exit(0 if response.status < 500 else 1)"]
       interval: 30s
       timeout: 10s
       retries: 3

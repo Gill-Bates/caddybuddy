@@ -994,6 +994,111 @@ initializeSiteConfigForms();
 initializeCaddyfileForms();
 initializeValidateButtons();
 
+const initializeDashboardStatus = () => {
+    const badge = document.getElementById("caddy-status-badge");
+    const statusDot = document.getElementById("caddy-status-dot");
+    const statusMeta = document.getElementById("caddy-status-meta");
+    const versionWrapper = document.getElementById("caddy-version-wrapper");
+    if (!(badge instanceof HTMLElement) || !(statusDot instanceof HTMLElement) || !(statusMeta instanceof HTMLElement)) {
+        return;
+    }
+
+    const REFRESH_INTERVAL_MS = 10000;
+    const MAX_SILENT_FAILURES = 3;
+    const statusUrl = badge.dataset.statusUrl || "/api/v1/caddy/status";
+    let failureCount = 0;
+    let intervalId = null;
+
+    const updateVersion = (version) => {
+        if (!(versionWrapper instanceof HTMLElement)) {
+            return;
+        }
+
+        versionWrapper.replaceChildren();
+        if (!version || version === "Unavailable" || version === "Unknown") {
+            return;
+        }
+
+        versionWrapper.append("(");
+        const badgeElement = document.createElement("span");
+        badgeElement.className = "version-badge";
+        badgeElement.id = "caddy-version";
+        badgeElement.textContent = version;
+        versionWrapper.append(badgeElement, ")");
+    };
+
+    const setUnavailableStatus = () => {
+        statusDot.classList.remove("status-dot--online");
+        statusDot.classList.add("status-dot--offline");
+        statusMeta.textContent = "· Status unavailable";
+    };
+
+    const updateBadge = async () => {
+        try {
+            const response = await fetch(resolveSameOriginUrl(statusUrl), {
+                credentials: "same-origin",
+                headers: { Accept: "application/json" },
+            });
+            if (!response.ok) {
+                failureCount += 1;
+                if (failureCount >= MAX_SILENT_FAILURES) {
+                    setUnavailableStatus();
+                }
+                return;
+            }
+
+            const data = await response.json();
+            failureCount = 0;
+            statusDot.classList.toggle("status-dot--online", data.running);
+            statusDot.classList.toggle("status-dot--offline", !data.running);
+
+            if (data.running && data.uptime && data.uptime !== "Unavailable") {
+                statusMeta.textContent = `· Uptime ${data.uptime}`;
+            } else {
+                statusMeta.textContent = `· ${data.status}`;
+            }
+            updateVersion(data.version);
+        } catch {
+            failureCount += 1;
+            if (failureCount >= MAX_SILENT_FAILURES) {
+                setUnavailableStatus();
+            }
+        }
+    };
+
+    intervalId = window.setInterval(updateBadge, REFRESH_INTERVAL_MS);
+    document.addEventListener("visibilitychange", () => {
+        if (document.hidden) {
+            if (intervalId !== null) {
+                window.clearInterval(intervalId);
+                intervalId = null;
+            }
+        } else if (intervalId === null) {
+            updateBadge();
+            intervalId = window.setInterval(updateBadge, REFRESH_INTERVAL_MS);
+        }
+    });
+};
+
+const initializeSettingsPasswordValidation = () => {
+    const passwordInput = document.getElementById("new_password");
+    const confirmInput = document.getElementById("confirm_password");
+    if (!(passwordInput instanceof HTMLInputElement) || !(confirmInput instanceof HTMLInputElement)) {
+        return;
+    }
+
+    const validatePasswordMatch = () => {
+        confirmInput.setCustomValidity(
+            confirmInput.value && passwordInput.value !== confirmInput.value
+                ? "New passwords do not match."
+                : ""
+        );
+    };
+
+    passwordInput.addEventListener("input", validatePasswordMatch);
+    confirmInput.addEventListener("input", validatePasswordMatch);
+};
+
 // SSL Labs registration status module
 const initializeSslLabsStatus = () => {
     const statusEl = document.getElementById('ssllabs-status');
@@ -1016,7 +1121,7 @@ const initializeSslLabsStatus = () => {
     const updateStatusUI = (data) => {
         if (!data.masked_email) {
             setStatusBadge(statusEl, 'bg-warning text-dark', 'Not configured');
-            statusHintEl.textContent = 'Set CB_SSLLABS_EMAIL environment variable to enable SSL Labs scans.';
+            statusHintEl.textContent = 'Configure an SSL Labs email in the Settings page to enable scans.';
             if (registerBtn) registerBtn.classList.add('d-none');
             return;
         }
@@ -1124,10 +1229,14 @@ const initializeSslLabsStatus = () => {
         }
     };
 
-    if (registerBtn) registerBtn.addEventListener('click', registerEmail);
+    if (registerBtn instanceof HTMLButtonElement && registerBtn.type === 'button') {
+        registerBtn.addEventListener('click', registerEmail);
+    }
     if (refreshBtn) refreshBtn.addEventListener('click', refreshStatus);
 
     fetchStatus();
 };
 
+initializeDashboardStatus();
+initializeSettingsPasswordValidation();
 initializeSslLabsStatus();

@@ -97,7 +97,7 @@ class SettingsValidationTests(unittest.TestCase):
 
         self.assertEqual(settings.default_admin_password.get_secret_value(), "admin")
 
-    def test_ssllabs_url_and_email_are_normalized(self) -> None:
+    def test_ssllabs_url_is_normalized_and_email_env_is_ignored(self) -> None:
         settings = Settings(
             **_settings_kwargs(
                 CADDYBUDDY_SSLLABS_EMAIL=" security@example.com ",
@@ -105,8 +105,8 @@ class SettingsValidationTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(settings.ssllabs_email, "security@example.com")
         self.assertEqual(settings.ssllabs_api_base_url, "https://api.ssllabs.com/api/v4")
+        self.assertFalse(hasattr(settings, "ssllabs_email"))
 
 
 if __name__ == "__main__":

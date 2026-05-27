@@ -201,10 +201,13 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
     def test_apply_known_table_migrations_creates_missing_caddy_state_table(self) -> None:
         fake_connection = object()
 
-        with patch.object(
-            session_module.Base.metadata.tables["caddybuddy_state"],
-            "create",
-        ) as create_table:
+        with (
+            patch.object(session_module.Base.metadata.tables["app_settings"], "create") as create_app_settings,
+            patch.object(
+                session_module.Base.metadata.tables["caddybuddy_state"],
+                "create",
+            ) as create_table,
+        ):
             migrated = session_module._apply_known_table_migrations(
                 fake_connection,
                 {
@@ -219,12 +222,14 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
             )
 
         self.assertTrue(migrated)
+        create_app_settings.assert_called_once_with(fake_connection, checkfirst=True)
         create_table.assert_called_once_with(fake_connection, checkfirst=True)
 
     def test_apply_known_table_migrations_creates_missing_ssllabs_tables(self) -> None:
         fake_connection = object()
 
         with (
+            patch.object(session_module.Base.metadata.tables["app_settings"], "create") as create_app_settings,
             patch.object(session_module.Base.metadata.tables["ssllabs_targets"], "create") as create_targets,
             patch.object(session_module.Base.metadata.tables["ssllabs_scans"], "create") as create_scans,
         ):
@@ -241,6 +246,7 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
             )
 
         self.assertTrue(migrated)
+        create_app_settings.assert_called_once_with(fake_connection, checkfirst=True)
         create_targets.assert_called_once_with(fake_connection, checkfirst=True)
         create_scans.assert_called_once_with(fake_connection, checkfirst=True)
 
@@ -264,25 +270,33 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
         self.assertEqual(
             executed_sql,
             [
-                "ALTER TABLE caddy_sites ADD COLUMN upstream_url TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE caddy_sites ADD COLUMN upstream_url TEXT NOT NULL DEFAULT 'http://placeholder.invalid'",
                 "ALTER TABLE caddy_sites ADD COLUMN caddy_directives TEXT",
                 "ALTER TABLE caddy_sites ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1",
             ],
         )
 
-    def test_apply_known_schema_migrations_is_noop_when_caddy_sites_columns_exist(self) -> None:
+    def test_apply_known_schema_migrations_repairs_empty_upstream_url_values(self) -> None:
+        executed_sql: list[str] = []
+
         class FakeConnection:
             dialect = SimpleNamespace(name="sqlite")
 
             def exec_driver_sql(self, statement: str) -> None:
-                raise AssertionError(f"Unexpected SQL executed: {statement}")
+                executed_sql.append(statement)
 
         migrated = session_module._apply_known_schema_migrations(
             FakeConnection(),
             {"caddy_sites": {"id", "domain", "upstream_url", "caddy_directives", "enabled"}},
         )
 
-        self.assertFalse(migrated)
+        self.assertTrue(migrated)
+        self.assertEqual(
+            executed_sql,
+            [
+                "UPDATE caddy_sites SET upstream_url = 'http://placeholder.invalid' WHERE upstream_url = ''",
+            ],
+        )
 
     def test_apply_known_schema_migrations_is_noop_for_non_sqlite(self) -> None:
         class FakeConnection:

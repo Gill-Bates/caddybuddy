@@ -75,26 +75,29 @@
                     </h2>
                 </div>
                 <div class="panel-card__body">
-                    <div class="mb-3">
-                        <label class="form-label text-body-secondary">Configured Email</label>
-                        <div class="fw-semibold">
-                            {% if ssllabs_masked_email %}
-                            {{ ssllabs_masked_email }}
-                            {% else %}
-                            <span class="text-warning">Not configured</span>
-                            {% endif %}
-                        </div>
+                    <form action="{{ request.app.url_path_for('update_ssllabs_settings') }}" method="post"
+                        data-loading-submit-form class="mb-3">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <label for="ssllabs_email" class="form-label">Configured Email</label>
+                        <input type="email" class="form-control" id="ssllabs_email" name="ssllabs_email"
+                            value="{{ ssllabs_email or '' }}" placeholder="team@example.com" maxlength="320"
+                            inputmode="email" autocapitalize="off" autocomplete="email">
                         <div class="form-text">
-                            {% if ssllabs_email %}
-                            Set via <code>CB_SSLLABS_EMAIL</code> environment variable.
-                            {% else %}
-                            Configure via <code>CB_SSLLABS_EMAIL</code> environment variable to enable SSL Labs scans.
-                            {% endif %}
+                            Used for SSL Labs API registration and scan requests. Leave empty to disable SSL Labs.
                         </div>
-                    </div>
+                        {% if ssllabs_masked_email %}
+                        <div class="form-text">Current stored address: {{ ssllabs_masked_email }}</div>
+                        {% endif %}
+                        <div class="mt-3">
+                            <button type="submit" class="btn btn-primary" data-loading-submit-button
+                                data-loading-label="Saving...">
+                                Save SSL Labs Email
+                            </button>
+                        </div>
+                    </form>
 
                     <div class="mb-3">
-                        <label class="form-label text-body-secondary">Registration Status</label>
+                        <div class="form-label text-body-secondary">Registration Status</div>
                         <div id="ssllabs-status">
                             <span class="spinner-border spinner-border-sm text-secondary" role="status">
                                 <span class="visually-hidden">Loading...</span>
@@ -107,8 +110,11 @@
                     <form action="{{ request.app.url_path_for('register_ssllabs_email') }}" method="post"
                         data-loading-submit-form>
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                        <button type="submit" class="btn btn-outline-primary d-none" id="ssllabs-register-btn"
-                            data-loading-submit-button data-loading-label="Registering...">
+                        <button type="submit" class="btn btn-outline-primary js-confirm" id="ssllabs-register-btn"
+                            data-loading-submit-button data-loading-label="Registering..."
+                            data-confirm-title="Register SSL Labs email"
+                            data-confirm="Register the configured email address with the SSL Labs API?"
+                            data-confirm-accept="Register" data-confirm-btn-class="btn-primary">
                             Register with SSL Labs
                         </button>
                     </form>
@@ -139,13 +145,13 @@
                         <div class="mb-3">
                             <label for="current_password" class="form-label">Current Password</label>
                             <input type="password" class="form-control" id="current_password" name="current_password"
-                                required autocomplete="current-password">
+                                required autocomplete="current-password" maxlength="4096">
                         </div>
 
                         <div class="mb-3">
                             <label for="new_password" class="form-label">New Password</label>
                             <input type="password" class="form-control" id="new_password" name="new_password" required
-                                minlength="12" autocomplete="new-password">
+                                minlength="12" maxlength="4096" autocomplete="new-password">
                             <div class="form-text">
                                 At least 12 characters with uppercase, lowercase, digit, and special character.
                             </div>
@@ -154,11 +160,11 @@
                         <div class="mb-3">
                             <label for="confirm_password" class="form-label">Confirm New Password</label>
                             <input type="password" class="form-control" id="confirm_password" name="confirm_password"
-                                required minlength="12" autocomplete="new-password">
+                                required minlength="12" maxlength="4096" autocomplete="new-password">
                         </div>
 
                         <button type="submit" class="btn btn-primary" data-loading-submit-button
-                            data-loading-label="Changing...">
+                            data-loading-label="Changing password...">
                             Change Password
                         </button>
                     </form>

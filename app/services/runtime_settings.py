@@ -4,21 +4,21 @@
 # Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
 #
 
-"""
-Runtime settings service providing cached access to database-stored configuration.
-
-These settings were previously environment variables but are now managed via the UI.
-"""
+"""Runtime settings service for database-stored configuration."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from urllib.parse import urlsplit, urlunsplit
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.app_settings import DEFAULTS, app_settings_repository
+
+
+_SIMPLE_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,29 +34,12 @@ class CaddyConfig:
         return str(self.caddyfile_path) if self.caddyfile_path else ""
 
 
-async def get_caddy_config(session: AsyncSession) -> CaddyConfig:
-    """
-    Load Caddy configuration from database settings.
-
-    Returns:
-        CaddyConfig with admin_url and caddyfile_path from database,
-        falling back to defaults if not set.
-    """
-    settings = await app_settings_repository.get_all(session)
-
-    admin_url = settings.get("caddy_api_url", DEFAULTS["caddy_api_url"])
-
-    path_str = settings.get("caddyfile_path", DEFAULTS["caddyfile_path"])
-    caddyfile_path = Path(path_str) if path_str else None
-
-    return CaddyConfig(admin_url=admin_url, caddyfile_path=caddyfile_path)
-
-
-async def set_caddy_api_url(session: AsyncSession, url: str) -> None:
-    """Update the Caddy API URL setting."""
-    normalized = url.strip()
+def normalize_caddy_api_url(raw_url: str) -> str:
+    """Return a canonical Caddy Admin API URL."""
+    normalized = raw_url.strip()
     if not normalized:
         raise ValueError("Caddy API URL cannot be empty")
+
     parsed = urlsplit(normalized)
     if parsed.scheme not in {"http", "https"}:
         raise ValueError("caddy_api_url must use http or https.")
@@ -79,19 +62,48 @@ async def set_caddy_api_url(session: AsyncSession, url: str) -> None:
         raise ValueError("caddy_api_url must include a host.")
     if ":" in host:
         host = f"[{host}]"
-    normalized = urlunsplit((parsed.scheme, f"{host}:{port}" if port is not None else host, "", "", ""))
-    await app_settings_repository.set(session, "caddy_api_url", normalized)
+    return urlunsplit((parsed.scheme, f"{host}:{port}" if port is not None else host, "", "", ""))
+
+
+def normalize_caddyfile_path(raw_path: str) -> str:
+    """Return a validated absolute Caddyfile path."""
+    normalized = raw_path.strip()
+    if not normalized:
+        raise ValueError("Caddyfile path cannot be empty")
+    if "\x00" in normalized:
+        raise ValueError("Caddyfile path contains an invalid character.")
+
+    candidate = Path(normalized)
+    if not candidate.is_absolute():
+        raise ValueError("Caddyfile path must be absolute.")
+    return str(candidate)
+
+
+async def get_caddy_config(session: AsyncSession) -> CaddyConfig:
+    """Load and validate Caddy configuration from persisted runtime settings."""
+    settings = await app_settings_repository.get_all(session)
+
+    admin_url_value = settings.get("caddy_api_url") or DEFAULTS["caddy_api_url"]
+    path_value = settings.get("caddyfile_path") or DEFAULTS.get("caddyfile_path", "")
+
+    admin_url = normalize_caddy_api_url(str(admin_url_value))
+    caddyfile_path = Path(normalize_caddyfile_path(str(path_value))) if path_value else None
+
+    return CaddyConfig(admin_url=admin_url, caddyfile_path=caddyfile_path)
+
+
+async def set_caddy_api_url(session: AsyncSession, url: str) -> None:
+    """Stage a normalized Caddy API URL update in the current transaction."""
+    await app_settings_repository.set(session, "caddy_api_url", normalize_caddy_api_url(url))
 
 
 async def set_caddyfile_path(session: AsyncSession, path: str) -> None:
-    """Update the Caddyfile path setting."""
-    normalized = path.strip()
-    if not normalized:
-        raise ValueError("Caddyfile path cannot be empty")
-    await app_settings_repository.set(session, "caddyfile_path", normalized)
+    """Stage a validated Caddyfile path update in the current transaction."""
+    await app_settings_repository.set(session, "caddyfile_path", normalize_caddyfile_path(path))
 
 
 async def set_caddy_config(session: AsyncSession, *, api_url: str, caddyfile_path: str) -> None:
+    """Stage Caddy runtime setting updates in the current transaction."""
     await set_caddy_api_url(session, api_url)
     await set_caddyfile_path(session, caddyfile_path)
 
@@ -105,3 +117,26 @@ async def get_rate_limit_enabled(session: AsyncSession) -> bool:
 async def set_rate_limit_enabled(session: AsyncSession, enabled: bool) -> None:
     """Update rate limiting enabled state."""
     await app_settings_repository.set(session, "rate_limit_enabled", "true" if enabled else "false")
+
+
+def normalize_ssllabs_email(raw_email: str) -> str:
+    """Return a validated SSL Labs contact email."""
+    normalized = raw_email.strip().lower()
+    if not normalized:
+        return ""
+    if not _SIMPLE_EMAIL_PATTERN.fullmatch(normalized):
+        raise ValueError("ssllabs_email must be a valid email address.")
+    return normalized
+
+
+async def get_ssllabs_email(session: AsyncSession) -> str | None:
+    """Get the persisted SSL Labs email, or None when unset."""
+    value = await app_settings_repository.get(session, "ssllabs_email")
+    normalized = normalize_ssllabs_email(value)
+    return normalized or None
+
+
+async def set_ssllabs_email(session: AsyncSession, email: str) -> None:
+    """Update the persisted SSL Labs email."""
+    normalized = normalize_ssllabs_email(email)
+    await app_settings_repository.set(session, "ssllabs_email", normalized)

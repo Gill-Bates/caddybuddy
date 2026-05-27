@@ -18,6 +18,7 @@ DEFAULTS: dict[str, str] = {
     "caddy_api_url": DEFAULT_CADDY_ADMIN_URL,
     "caddyfile_path": str(DEFAULT_CADDYFILE_PATH),
     "rate_limit_enabled": "true",
+    "ssllabs_email": "",
 }
 
 

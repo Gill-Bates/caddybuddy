@@ -128,6 +128,36 @@ class ApiRouterTests(unittest.TestCase):
             {"status": "ok", "app": "CaddyBuddy", "version": "1.2.3"},
         )
 
+    def test_ssllabs_registration_status_uses_database_email(self) -> None:
+        app = _build_app(SimpleNamespace())
+
+        with (
+            TestClient(app) as client,
+            patch.object(system_api, "get_session_user", new=AsyncMock(return_value=SimpleNamespace(id=1))),
+            patch.object(system_api, "get_settings", return_value=SimpleNamespace(ssllabs_api_base_url="https://api.ssllabs.com/api/v4")),
+            patch.object(system_api, "get_ssllabs_email", new=AsyncMock(return_value="team@example.com")),
+            patch.object(system_api, "check_email_registration_status", new=AsyncMock(return_value=True)),
+        ):
+            response = client.get("/api/v1/ssllabs/registration-status")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["email"], "team@example.com")
+        self.assertTrue(response.json()["is_registered"])
+
+    def test_ssllabs_registration_status_reports_missing_database_email(self) -> None:
+        app = _build_app(SimpleNamespace())
+
+        with (
+            TestClient(app) as client,
+            patch.object(system_api, "get_session_user", new=AsyncMock(return_value=SimpleNamespace(id=1))),
+            patch.object(system_api, "get_settings", return_value=SimpleNamespace(ssllabs_api_base_url="https://api.ssllabs.com/api/v4")),
+            patch.object(system_api, "get_ssllabs_email", new=AsyncMock(return_value=None)),
+        ):
+            response = client.get("/api/v1/ssllabs/registration-status")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["message"], "No SSL Labs email configured.")
+
 
 class EventStreamTests(unittest.IsolatedAsyncioTestCase):
     async def test_format_sse_data_prefixes_each_line(self) -> None:

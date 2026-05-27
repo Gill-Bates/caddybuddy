@@ -6,23 +6,28 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config.limiter import limiter, update_rate_limit_enabled
 from app.config.settings import get_settings
 from app.database.session import get_db_session
 from app.dependencies.web import push_flash, redirect_to, render_template
 from app.repositories.users import user_repository
-from app.services.auth import AuthService, WeakPasswordError
-from app.config.limiter import update_rate_limit_enabled
+from app.services.auth import WeakPasswordError, auth_service
 from app.services.runtime_settings import (
     get_caddy_config,
     get_rate_limit_enabled,
+    get_ssllabs_email,
     set_caddy_config,
     set_rate_limit_enabled,
+    set_ssllabs_email,
 )
 from app.services.ssllabs import (
+    clear_registration_status_cache,
     register_email_with_ssllabs,
 )
 from app.utils.ssllabs import mask_email
@@ -30,6 +35,7 @@ from app.utils.ssllabs import mask_email
 from ._common import require_admin, validated_form
 
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -42,10 +48,9 @@ async def settings_page(
     if current_user is None:
         return redirect_to("/login")
 
-    settings = get_settings()
     caddy_config = await get_caddy_config(session)
     rate_limit_enabled = await get_rate_limit_enabled(session)
-    ssllabs_email = getattr(settings, "ssllabs_email", None)
+    ssllabs_email = await get_ssllabs_email(session)
     masked_email = mask_email(ssllabs_email) if ssllabs_email else None
 
     context = {
@@ -90,7 +95,39 @@ async def update_caddy_settings(
     return redirect_to("/settings")
 
 
+@router.post("/settings/ssllabs", response_class=HTMLResponse)
+async def update_ssllabs_settings(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+):
+    current_user = await require_admin(request, session)
+    if current_user is None:
+        return redirect_to("/login")
+
+    form = await validated_form(request)
+    ssllabs_email = str(form.get("ssllabs_email", ""))
+
+    try:
+        previous_email = await get_ssllabs_email(session)
+        await set_ssllabs_email(session, ssllabs_email)
+    except ValueError as exc:
+        push_flash(request, "danger", str(exc))
+        return redirect_to("/settings")
+
+    await session.commit()
+    new_email = ssllabs_email.strip().lower() or None
+    if previous_email and previous_email != new_email:
+        clear_registration_status_cache(previous_email)
+    if new_email:
+        clear_registration_status_cache(new_email)
+        push_flash(request, "success", "SSL Labs email updated.")
+    else:
+        push_flash(request, "success", "SSL Labs email removed.")
+    return redirect_to("/settings")
+
+
 @router.post("/settings/change-password", response_class=HTMLResponse)
+@limiter.limit("5/minute")
 async def change_password(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
@@ -100,9 +137,9 @@ async def change_password(
         return redirect_to("/login")
 
     form = await validated_form(request)
-    current_password = form.get("current_password", "").strip()
-    new_password = form.get("new_password", "").strip()
-    confirm_password = form.get("confirm_password", "").strip()
+    current_password = str(form.get("current_password", ""))
+    new_password = str(form.get("new_password", ""))
+    confirm_password = str(form.get("confirm_password", ""))
 
     if not current_password or not new_password or not confirm_password:
         push_flash(request, "danger", "All password fields are required.")
@@ -113,7 +150,6 @@ async def change_password(
         return redirect_to("/settings")
 
     # Verify current password
-    auth_service = AuthService()
     verified = await auth_service.verify_password(current_password, current_user.password_hash)
     if not verified:
         push_flash(request, "danger", "Current password is incorrect.")
@@ -137,6 +173,7 @@ async def change_password(
 
 
 @router.post("/settings/register-ssllabs", response_class=HTMLResponse)
+@limiter.limit("3/hour")
 async def register_ssllabs_email(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
@@ -146,10 +183,10 @@ async def register_ssllabs_email(
         return redirect_to("/login")
 
     settings = get_settings()
-    email = getattr(settings, "ssllabs_email", None)
+    email = await get_ssllabs_email(session)
 
     if not email:
-        push_flash(request, "danger", "No SSL Labs email configured. Set CB_SSLLABS_EMAIL environment variable.")
+        push_flash(request, "danger", "No SSL Labs email configured.")
         return redirect_to("/settings")
 
     try:
@@ -161,7 +198,8 @@ async def register_ssllabs_email(
             push_flash(request, "success", "Successfully registered with SSL Labs API.")
         else:
             push_flash(request, "danger", "Registration failed.")
-    except Exception as e:
-        push_flash(request, "danger", f"Registration failed: {e}")
+    except Exception:
+        logger.exception("Unexpected SSL Labs registration failure.")
+        push_flash(request, "danger", "Registration failed due to an unexpected error.")
 
     return redirect_to("/settings")

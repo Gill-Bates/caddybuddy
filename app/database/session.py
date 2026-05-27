@@ -211,7 +211,13 @@ def _apply_known_schema_migrations(
     if site_columns is not None and "upstream_url" not in site_columns:
         logger.info("Applying known SQLite schema migration: caddy_sites.upstream_url")
         sync_connection.exec_driver_sql(
-            "ALTER TABLE caddy_sites ADD COLUMN upstream_url TEXT NOT NULL DEFAULT ''"
+            "ALTER TABLE caddy_sites ADD COLUMN upstream_url TEXT NOT NULL DEFAULT 'http://placeholder.invalid'"
+        )
+        migrated = True
+    if site_columns is not None and "upstream_url" in site_columns:
+        logger.info("Repairing empty upstream_url values in caddy_sites")
+        sync_connection.exec_driver_sql(
+            "UPDATE caddy_sites SET upstream_url = 'http://placeholder.invalid' WHERE upstream_url = ''"
         )
         migrated = True
     if site_columns is not None and "caddy_directives" not in site_columns:

@@ -42,8 +42,7 @@ CaddyBuddy combines a server-rendered FastAPI UI, SQLite, and secure defaults in
 
 - Docker and Docker Compose for the recommended path
 - Or Python 3.13 if you want to run it locally without containers
-- A strong random session secret
-- A non-default admin password for the first startup
+- A strong random session secret (`CB_SECRET_KEY`)
 
 ## Quick Start
 
@@ -71,13 +70,10 @@ Release images are built for `docker.cirrio.de/caddybuddy`. The badges above rem
    ls -l /etc/caddy/Caddyfile
    ```
 
-4. Export the required variables:
+4. Export the required variable:
 
    ```bash
    export CB_SECRET_KEY="$(head -c 32 /dev/urandom | base64)"
-   export CB_ADMIN_PASSWORD="ChangeThisAdminPassword-Now-123A"
-   export HOST_CADDYFILE_PATH=/etc/caddy/Caddyfile
-   export PORT=8000
    ```
 
 5. Start the container:
@@ -101,8 +97,6 @@ pip install --upgrade pip
 pip install -r requirements.txt
 
 export CB_SECRET_KEY="$(head -c 32 /dev/urandom | base64)"
-export CB_ADMIN_PASSWORD="admin"
-export SESSION_HTTPS_ONLY=false
 export LOG_LEVEL="DEBUG"
 
 python run.py
@@ -110,32 +104,24 @@ python run.py
 
 The local server listens on `http://127.0.0.1:8000` by default.
 
-Never disable `SESSION_HTTPS_ONLY` in production. Rate limiting can be toggled in the Settings page.
-
 ## First Startup Behavior
 
-- On an empty database, CaddyBuddy creates the initial `admin` user with the password from `CB_ADMIN_PASSWORD`.
+- On an empty database, CaddyBuddy creates the initial `admin` user with the default password `admin`.
 - The SQLite database lives in `data/app.db` by default.
-- Caddy Admin URL and mounted Caddyfile path are configured after login on the Settings page.
-- Automatic onboarding during startup requires `CADDYBUDDY_AUTO_ONBOARD=true` and a reachable Caddy Admin API.
-- Without automatic onboarding, the application reports that onboarding is required and you can trigger it from the UI or API.
+- Caddy Admin URL, Caddyfile path, and rate limiting are configured in the Settings page after login.
+- Without Caddy onboarding, the application reports that onboarding is required and you can trigger it from the UI or API.
 
 Change the initial admin password immediately after the first login.
 
-## Runtime Settings That Usually Matter
+## Environment Variables
 
 | Variable | Meaning |
 | --- | --- |
 | `CB_SECRET_KEY` | Required session secret (generate with `head -c 32 /dev/urandom \| base64`) |
-| `CB_ADMIN_PASSWORD` | Initial admin password for a fresh database |
-| `SESSION_HTTPS_ONLY` | Set to `false` only for local plain-HTTP testing |
-| `CADDYBUDDY_AUTO_ONBOARD` | Enables automatic Caddy onboarding during startup |
-| `CADDYBUDDY_RELOAD` | Enables auto-reload for local development |
-| `PORT` | HTTP port for the web UI (default: `8000`) |
-| `LOG_LEVEL` | Application log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+| `LOG_LEVEL` | Application log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`; default: `INFO`) |
 | `TZ` | Container or process timezone (e.g., `Europe/Berlin`) |
 
-The Caddy Admin URL and mounted Caddyfile path are managed in the web UI under Settings.
+All other settings (Caddy Admin URL, Caddyfile path, rate limiting) are managed in the web UI under Settings.
 
 ## Health And Readiness
 

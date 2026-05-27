@@ -22,6 +22,7 @@ from app.services.build_info import get_build_info
 from app.services.caddyfile_manager import get_caddy_runtime_status
 from app.services.dashboard import get_caddy_status
 from app.services.events import ResourceEvent, SubscriberLimitReachedError, event_bus
+from app.services.runtime_settings import get_ssllabs_email
 
 
 router = APIRouter(prefix="/api/v1", tags=["system"])
@@ -171,17 +172,18 @@ class SslLabsRegisterResponse(BaseModel):
 @router.get("/ssllabs/registration-status", response_model=SslLabsRegistrationStatusResponse)
 async def ssllabs_registration_status(
     _current_user: User = Depends(_require_api_user),
+    session: AsyncSession = Depends(get_db_session),
 ) -> SslLabsRegistrationStatusResponse:
     """Check the SSL Labs email registration status."""
     settings = get_settings()
-    email = getattr(settings, "ssllabs_email", None)
+    email = await get_ssllabs_email(session)
 
     if not email:
         return SslLabsRegistrationStatusResponse(
             email=None,
             masked_email=None,
             is_registered=None,
-            message="No SSL Labs email configured. Set CB_SSLLABS_EMAIL environment variable.",
+            message="No SSL Labs email configured.",
         )
 
     try:
@@ -208,15 +210,16 @@ async def ssllabs_registration_status(
 @router.post("/ssllabs/register", response_model=SslLabsRegisterResponse)
 async def ssllabs_register(
     _current_user: User = Depends(_require_api_user),
+    session: AsyncSession = Depends(get_db_session),
 ) -> SslLabsRegisterResponse:
     """Register the configured email with SSL Labs API."""
     settings = get_settings()
-    email = getattr(settings, "ssllabs_email", None)
+    email = await get_ssllabs_email(session)
 
     if not email:
         raise HTTPException(
             status_code=400,
-            detail="No SSL Labs email configured. Set CB_SSLLABS_EMAIL environment variable.",
+            detail="No SSL Labs email configured.",
         )
 
     # First check if already registered
@@ -257,17 +260,18 @@ async def ssllabs_register(
 @router.post("/ssllabs/refresh-status", response_model=SslLabsRegistrationStatusResponse)
 async def ssllabs_refresh_status(
     _current_user: User = Depends(_require_api_user),
+    session: AsyncSession = Depends(get_db_session),
 ) -> SslLabsRegistrationStatusResponse:
     """Force refresh the SSL Labs registration status (bypasses cache)."""
     settings = get_settings()
-    email = getattr(settings, "ssllabs_email", None)
+    email = await get_ssllabs_email(session)
 
     if not email:
         return SslLabsRegistrationStatusResponse(
             email=None,
             masked_email=None,
             is_registered=None,
-            message="No SSL Labs email configured. Set CB_SSLLABS_EMAIL environment variable.",
+            message="No SSL Labs email configured.",
         )
 
     # Clear cache and check fresh

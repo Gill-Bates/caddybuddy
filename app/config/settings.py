@@ -214,15 +214,6 @@ class Settings(BaseSettings):
             "ssllabs_api_base_url",
         ),
     )
-    ssllabs_email: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices(
-            "CB_SSLLABS_EMAIL",
-            "CADDYBUDDY_SSLLABS_EMAIL",
-            "SSLLABS_EMAIL",
-            "ssllabs_email",
-        ),
-    )
     ssllabs_timeout_seconds: float = Field(
         default=20.0,
         gt=0,
@@ -360,21 +351,6 @@ class Settings(BaseSettings):
             raise ValueError("Caddy admin API path must not contain query or fragment.")
         if normalized != "/load":
             raise ValueError("Only the Caddy /load endpoint is supported.")
-        return normalized
-
-    @field_validator("ssllabs_email", mode="before")
-    @classmethod
-    def _normalize_optional_email(cls, value: object) -> object:
-        if value is None:
-            return None
-        if not isinstance(value, str):
-            return value
-
-        normalized = value.strip()
-        if not normalized:
-            return None
-        if not re.fullmatch(_SIMPLE_EMAIL_PATTERN, normalized):
-            raise ValueError("ssllabs_email must be a valid email address.")
         return normalized
 
     @field_validator("mounted_caddyfile_path", "caddy_certificates_path", mode="before")

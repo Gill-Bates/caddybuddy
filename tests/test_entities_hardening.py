@@ -8,7 +8,15 @@ from __future__ import annotations
 
 import unittest
 
-from app.models.entities import CaddyConfigVersion, CaddySyncEvent, CaddyfileSnapshot, Site
+from app.models.entities import (
+    CaddyConfigVersion,
+    CaddySyncEvent,
+    CaddyfileSnapshot,
+    Site,
+    SslLabsScan,
+    SslLabsTarget,
+    User,
+)
 
 
 class EntityHardeningTests(unittest.TestCase):
@@ -43,6 +51,31 @@ class EntityHardeningTests(unittest.TestCase):
                 upstream_url="http://backend.internal:8080\nheader_down x y",
                 enabled=True,
             )
+
+    def test_user_normalizes_role_and_email(self) -> None:
+        user = User(
+            username="admin",
+            email=" Admin@Example.com ",
+            password_hash="hash",
+            role=" ADMIN ",
+            is_active=True,
+        )
+
+        self.assertEqual(user.role, "admin")
+        self.assertEqual(user.email, "admin@example.com")
+        self.assertTrue(user.is_admin)
+
+    def test_user_rejects_invalid_role(self) -> None:
+        with self.assertRaisesRegex(ValueError, "invalid user role"):
+            User(username="admin", email=None, password_hash="hash", role="root", is_active=True)
+
+    def test_ssllabs_target_rejects_url_like_host(self) -> None:
+        with self.assertRaisesRegex(ValueError, "hostname|public hostname"):
+            SslLabsTarget(site_id=1, host="https://example.com")
+
+    def test_ssllabs_scan_rejects_negative_endpoint_count(self) -> None:
+        with self.assertRaisesRegex(ValueError, "endpoint_count must be non-negative"):
+            SslLabsScan(target_id=1, site_id=1, host="example.com", endpoint_count=-1)
 
     def test_snapshot_rejects_invalid_sha256(self) -> None:
         with self.assertRaisesRegex(ValueError, "invalid sha256"):

@@ -21,11 +21,34 @@
 </head>
 
 <body class="app-body{% if not current_user %} app-body--public{% endif %}">
-    {% macro nav_link(path, label, exact=False) -%}
+    {% macro nav_icon(icon) -%}
+    <svg class="app-nav__icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+        {% if icon == 'dashboard' %}
+        <path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z" />
+        {% elif icon == 'article' %}
+        <path
+            d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm0 2.5L18.5 9H14zM8 13h8v2H8zm0 4h8v2H8zm0-8h4v2H8z" />
+        {% elif icon == 'dns' %}
+        <path
+            d="M7 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 2c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zm0 8a3 3 0 1 1 0-6 3 3 0 0 1 0 6zm10-8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 2c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zm0 8a3 3 0 1 1 0-6 3 3 0 0 1 0 6z" />
+        {% elif icon == 'verified_user' %}
+        <path
+            d="M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5zm-2 16-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9z" />
+        {% elif icon == 'settings' %}
+        <path
+            d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.07-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.03 7.03 0 0 0-1.66-.96l-.36-2.54A.5.5 0 0 0 13.86 2h-3.72a.5.5 0 0 0-.5.42l-.36 2.54c-.6.24-1.16.56-1.66.96l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.5a.5.5 0 0 0 .12.64l2.03 1.58c-.05.31-.08.63-.08.94s.03.63.08.94L2.83 14.2a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.4 1.06.72 1.66.96l.36 2.54a.5.5 0 0 0 .5.42h3.72a.5.5 0 0 0 .5-.42l.36-2.54c.6-.24 1.16-.56 1.66-.96l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64zM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5z" />
+        {% endif %}
+    </svg>
+    {%- endmacro %}
+    {% macro nav_link(path, label, icon, exact=False) -%}
     {% set current_path = request.url.path %}
     {% set is_active = current_path == path if exact else current_path == path or current_path.startswith(path ~ '/') %}
     <a class="app-nav__link {% if is_active %}is-active{% endif %}" href="{{ path }}" {% if is_active
-        %}aria-current="page" {% endif %}>{{ label }}{% if caller is defined %}{{ caller() }}{% endif %}</a>
+        %}aria-current="page" {% endif %}>
+        {{ nav_icon(icon) }}
+        <span class="app-nav__label">{{ label }}</span>
+        {% if caller is defined %}{{ caller() }}{% endif %}
+    </a>
     {%- endmacro %}
     <a class="app-skip-link" href="#main-content" data-ui-lint-ignore-click-target>Skip to main content</a>
     {% if current_user %}
@@ -54,16 +77,16 @@
                     <span class="brand-mark__name">{{ app_name }}</span>
                 </a>
                 <nav class="nav flex-column app-nav mt-4 gap-2" aria-label="Primary navigation">
-                    {{ nav_link(request.app.url_path_for('home_page'), 'Home', exact=True) }}
-                    {{ nav_link(request.app.url_path_for('caddyfile_page'), 'Caddyfile') }}
-                    {{ nav_link(request.app.url_path_for('sites_page'), 'Sites') }}
+                    {{ nav_link(request.app.url_path_for('home_page'), 'Home', 'dashboard', exact=True) }}
+                    {{ nav_link(request.app.url_path_for('caddyfile_page'), 'Caddyfile', 'article') }}
+                    {{ nav_link(request.app.url_path_for('sites_page'), 'Sites', 'dns') }}
                     {% set ssllabs_path = optional_url_path_for(request, 'ssllabs_page') %}
                     {% if ssllabs_path %}
-                    {{ nav_link(ssllabs_path, 'SSL Labs') }}
+                    {{ nav_link(ssllabs_path, 'SSL Labs', 'verified_user') }}
                     {% endif %}
                     {% set settings_path = optional_url_path_for(request, 'settings_page') %}
                     {% if settings_path %}
-                    {{ nav_link(settings_path, 'Settings') }}
+                    {{ nav_link(settings_path, 'Settings', 'settings') }}
                     {% endif %}
                 </nav>
             </div>

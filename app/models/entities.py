@@ -16,6 +16,7 @@ from sqlalchemy.orm import Mapped, mapped_column, validates
 from app.models.base import Base, TimestampMixin, UTCDateTime, utc_now
 from app.utils.caddyfile import normalize_caddy_directives
 from app.utils.domains import normalize_domain_list
+from app.utils.ssllabs import validate_ssllabs_host
 
 
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$", re.ASCII)
@@ -37,6 +38,11 @@ _SSLLABS_SCAN_STATUSES = (
     "rate_limited",
 )
 _SSLLABS_SCHEDULE_FREQUENCIES = ("weekly", "monthly")
+_USER_ROLES = ("user", "admin")
+
+
+def _sql_string_list(values: tuple[str, ...]) -> str:
+    return ", ".join(f"'{value}'" for value in values)
 
 
 def _normalize_domain_name(value: str) -> str:
@@ -96,6 +102,12 @@ def _normalize_ssllabs_schedule_frequency(value: str | None) -> str | None:
 
 class User(TimestampMixin, Base):
     __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint(
+            f"role IN ({_sql_string_list(_USER_ROLES)})",
+            name="ck_users_role",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     username: Mapped[str] = mapped_column(
@@ -113,6 +125,21 @@ class User(TimestampMixin, Base):
     @property
     def is_admin(self) -> bool:
         return self.role == "admin"
+
+    @validates("role")
+    def _validate_role(self, _key: str, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in _USER_ROLES:
+            raise ValueError("invalid user role")
+        return normalized
+
+    @validates("email")
+    def _validate_email(self, _key: str, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        return normalized or None
+
 
 class CaddyBuddyState(Base):
     __tablename__ = "caddybuddy_state"
@@ -244,7 +271,7 @@ class SslLabsTarget(TimestampMixin, Base):
 
     @validates("host")
     def _validate_host(self, _key: str, value: str) -> str:
-        return value.strip().rstrip(".").lower()
+        return validate_ssllabs_host(value)
 
     @validates("schedule_frequency")
     def _validate_schedule_frequency(self, _key: str, value: str | None) -> str | None:
@@ -258,6 +285,10 @@ class SslLabsScan(Base):
         CheckConstraint(
             "status IN ('queued', 'starting', 'dns', 'in_progress', 'ready', 'error', 'failed', 'rate_limited')",
             name="ck_ssllabs_scans_status",
+        ),
+        CheckConstraint(
+            "endpoint_count >= 0",
+            name="ck_ssllabs_scans_endpoint_count_non_negative",
         ),
     )
 
@@ -285,17 +316,24 @@ class SslLabsScan(Base):
 
     @validates("host")
     def _validate_host(self, _key: str, value: str) -> str:
-        return value.strip().rstrip(".").lower()
+        return validate_ssllabs_host(value)
 
     @validates("status")
     def _validate_status(self, _key: str, value: str) -> str:
         return _normalize_ssllabs_scan_status(value)
+
+    @validates("endpoint_count")
+    def _validate_endpoint_count(self, _key: str, value: int) -> int:
+        if value < 0:
+            raise ValueError("endpoint_count must be non-negative")
+        return value
 
 
 _APP_SETTING_KEYS = (
     "caddy_api_url",
     "caddyfile_path",
     "rate_limit_enabled",
+    "ssllabs_email",
 )
 
 
@@ -305,7 +343,7 @@ class AppSetting(Base, TimestampMixin):
     __tablename__ = "app_settings"
     __table_args__ = (
         CheckConstraint(
-            f"key IN {_APP_SETTING_KEYS!r}",
+            f"key IN ({_sql_string_list(_APP_SETTING_KEYS)})",
             name="ck_app_settings_key",
         ),
     )

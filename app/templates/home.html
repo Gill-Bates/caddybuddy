@@ -17,7 +17,7 @@
             </p>
         </div>
 
-        <div class="dashboard-status" id="caddy-status-badge">
+        <div class="dashboard-status" id="caddy-status-badge" data-status-url="/api/v1/caddy/status">
             <span id="caddy-status-dot"
                 class="status-dot {% if service_running %}status-dot--online{% else %}status-dot--offline{% endif %}"
                 aria-hidden="true"></span>
@@ -38,6 +38,13 @@
             {% endif %}
         </div>
     </div>
+
+    {% if runtime_status is defined and runtime_status.error %}
+    <div class="alert alert-warning border-0 shadow-sm mb-4" role="alert">
+        <strong>Caddy runtime needs attention.</strong>
+        {{ runtime_status.error }}
+    </div>
+    {% endif %}
 
     <section class="row metric-grid" aria-label="Key metrics">
         <div class="col-12 col-md-4">
@@ -89,63 +96,4 @@
     </section>
     {% endif %}
 </section>
-{% endblock %}
-
-{% block scripts %}
-<script>
-    (function () {
-        "use strict";
-
-        const REFRESH_INTERVAL_MS = 10000;
-        const statusDot = document.getElementById("caddy-status-dot");
-        const statusMeta = document.getElementById("caddy-status-meta");
-        const versionWrapper = document.getElementById("caddy-version-wrapper");
-
-        if (!statusDot || !statusMeta) {
-            return;
-        }
-
-        const updateBadge = async () => {
-            try {
-                const response = await fetch("/api/v1/caddy/status", {
-                    credentials: "same-origin",
-                    headers: { "Accept": "application/json" }
-                });
-                if (!response.ok) {
-                    return;
-                }
-                const data = await response.json();
-
-                statusDot.classList.toggle("status-dot--online", data.running);
-                statusDot.classList.toggle("status-dot--offline", !data.running);
-
-                if (data.running && data.uptime && data.uptime !== "Unavailable") {
-                    statusMeta.textContent = "· Uptime " + data.uptime;
-                } else {
-                    statusMeta.textContent = "· " + data.status;
-                }
-
-                if (versionWrapper && data.version && data.version !== "Unavailable" && data.version !== "Unknown") {
-                    versionWrapper.innerHTML = '(<span class="version-badge">' + data.version + '</span>)';
-                } else if (versionWrapper) {
-                    versionWrapper.innerHTML = "";
-                }
-            } catch {
-                // Silently ignore network errors.
-            }
-        };
-
-        let intervalId = setInterval(updateBadge, REFRESH_INTERVAL_MS);
-
-        document.addEventListener("visibilitychange", () => {
-            if (document.hidden) {
-                clearInterval(intervalId);
-                intervalId = null;
-            } else if (!intervalId) {
-                updateBadge();
-                intervalId = setInterval(updateBadge, REFRESH_INTERVAL_MS);
-            }
-        });
-    })();
-</script>
 {% endblock %}

@@ -21,6 +21,7 @@ from app.repositories.sites import site_repository
 from app.repositories.ssllabs import TERMINAL_SCAN_STATUSES, ssllabs_repository
 from app.schemas.ssllabs import SslLabsScanStatus, SslLabsScheduleFrequency
 from app.services.events import publish_resource_event
+from app.services.runtime_settings import get_ssllabs_email
 from app.utils.ssllabs import mask_email, next_schedule_time, validate_ssllabs_host
 
 
@@ -256,6 +257,7 @@ class SslLabsClient:
     ) -> None:
         masked = mask_email(settings.email)
         logger.debug("Initializing SSL Labs client with email: %s", masked)
+        self._settings = settings
         self._client = httpx.AsyncClient(
             base_url=settings.api_base_url.rstrip("/") + "/",
             timeout=httpx.Timeout(settings.timeout_seconds),
@@ -263,6 +265,10 @@ class SslLabsClient:
             follow_redirects=False,
             transport=transport,
         )
+
+    @property
+    def settings(self) -> SslLabsClientSettings:
+        return self._settings
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -320,7 +326,7 @@ class SslLabsClient:
                 )
             raise SslLabsClientError(
                 "SSL Labs rejected request (HTTP 400). "
-                "Ensure CB_SSLLABS_EMAIL is set correctly."
+                "Ensure the configured SSL Labs email is valid."
             )
         if response.status_code == 441:
             raise SslLabsEmailNotRegisteredError("SSL Labs email is not registered.")
@@ -355,8 +361,7 @@ class SslLabsService:
             self._shutdown_event = asyncio.Event()
         return self._shutdown_event
 
-    def _client_settings_from(self, settings: Settings) -> SslLabsClientSettings:
-        email = getattr(settings, "ssllabs_email", None)
+    def _client_settings_from(self, settings: Settings, *, email: str) -> SslLabsClientSettings:
         if not email:
             raise SslLabsServiceError("SSL Labs email is not configured.")
         return SslLabsClientSettings(
@@ -365,13 +370,18 @@ class SslLabsService:
             timeout_seconds=settings.ssllabs_timeout_seconds,
         )
 
-    def masked_email(self, settings: Settings | None = None) -> str | None:
-        effective_settings = settings or get_settings()
-        return mask_email(getattr(effective_settings, "ssllabs_email", None))
+    async def masked_email(self) -> str | None:
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            return mask_email(await get_ssllabs_email(session))
 
-    async def _get_client(self, settings: Settings) -> SslLabsClient:
+    async def _get_client(self, settings: Settings, *, email: str) -> SslLabsClient:
+        client_settings = self._client_settings_from(settings, email=email)
         if self._client is None:
-            self._client = SslLabsClient(self._client_settings_from(settings))
+            self._client = SslLabsClient(client_settings)
+        elif self._client.settings != client_settings:
+            await self._client.aclose()
+            self._client = SslLabsClient(client_settings)
         return self._client
 
     async def startup(self, settings: Settings | None = None) -> None:
@@ -380,7 +390,10 @@ class SslLabsService:
         shutdown_event.clear()
         if self._scheduler_task is not None:
             return
-        if not getattr(effective_settings, "ssllabs_email", None):
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            email = await get_ssllabs_email(session)
+        if not email:
             logger.info("SSL Labs scheduler is idle until ssllabs_email is configured.")
             return
         self._scheduler_task = asyncio.create_task(self._scheduler_loop(), name="ssllabs-scheduler")
@@ -435,11 +448,13 @@ class SslLabsService:
         force_new: bool,
     ) -> SslLabsScanRequestResult:
         settings = get_settings()
-        self._client_settings_from(settings)
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            email = await get_ssllabs_email(session)
+        self._client_settings_from(settings, email=email or "")
 
         async with self._ensure_task_lock():
             if target_id in self._active_tasks:
-                session_factory = get_session_factory()
                 async with session_factory() as session:
                     active_scan = await ssllabs_repository.get_active_scan_for_target(
                         session,
@@ -573,10 +588,14 @@ class SslLabsService:
                 return
             target, _site = row
             host = validate_ssllabs_host(target.host)
+            email = await get_ssllabs_email(session)
+
+        if not email:
+            raise SslLabsServiceError("SSL Labs email is not configured.")
 
         await self._mark_scan_state(target_id=target_id, scan_id=scan_id, payload={"host": host}, status="queued")
 
-        client = await self._get_client(settings)
+        client = await self._get_client(settings, email=email)
         start_new = force_new
         from_cache = not force_new
         max_age_hours = settings.ssllabs_cache_max_age_hours if from_cache else None
@@ -594,7 +613,6 @@ class SslLabsService:
                     # Auto-register if not yet attempted
                     if not self._registration_attempted:
                         self._registration_attempted = True
-                        email = getattr(settings, "ssllabs_email", None)
                         if email and await register_email_with_ssllabs(
                             email,
                             api_base_url=settings.ssllabs_api_base_url,
