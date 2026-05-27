@@ -140,6 +140,8 @@ class SslLabsClient:
         *,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
+        masked = mask_email(settings.email)
+        logger.debug("Initializing SSL Labs client with email: %s", masked)
         self._client = httpx.AsyncClient(
             base_url=settings.api_base_url.rstrip("/") + "/",
             timeout=httpx.Timeout(settings.timeout_seconds),
