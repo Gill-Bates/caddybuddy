@@ -109,7 +109,10 @@
                                     {% if row.scan %}
                                     <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
                                         {% if row.scan.grade %}
-                                        <span class="badge {{ row.grade_badge_class }}">{{ row.scan.grade }}</span>
+                                        <a href="https://www.ssllabs.com/ssltest/analyze.html?d={{ row.target.host }}" 
+                                           target="_blank" rel="noopener" 
+                                           class="badge {{ row.grade_badge_class }} text-decoration-none" 
+                                           title="View full SSL Labs report">{{ row.scan.grade }}</a>
                                         {% else %}
                                         <span class="status-pill {{ row.badge_class }}">{{ row.scan.status.replace('_', ' ')|title }}</span>
                                         {% endif %}
@@ -133,6 +136,7 @@
                                     <div class="small text-body-secondary">
                                         {{ row.scan.status.replace('_', ' ')|title }}
                                         {% if row.scan.endpoint_count is not none %} · {{ row.scan.endpoint_count }} endpoint{% if row.scan.endpoint_count != 1 %}s{% endif %}{% endif %}
+                                        · <a href="https://www.ssllabs.com/ssltest/analyze.html?d={{ row.target.host }}" target="_blank" rel="noopener" class="text-body-secondary">View report</a>
                                     </div>
                                     {% if row.scan.error_message %}
                                     <div class="small text-body-secondary ssllabs-error-copy">{{ row.scan.error_message }}</div>
