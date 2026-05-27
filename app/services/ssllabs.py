@@ -190,6 +190,12 @@ class SslLabsClient:
                 retry_after_seconds=_retry_after_seconds(response, 30 * 60),
                 status_code=response.status_code,
             )
+        if response.status_code == 400:
+            # Usually means email header is missing or invalid
+            raise SslLabsClientError(
+                "SSL Labs rejected request (HTTP 400). "
+                "Ensure CB_SSLLABS_EMAIL is set and registered at ssllabs.com/ssltest/register.html"
+            )
         if response.status_code == 441:
             raise SslLabsClientError("SSL Labs email is not registered.")
         if response.status_code >= 400:
