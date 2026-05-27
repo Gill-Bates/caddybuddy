@@ -8,10 +8,9 @@ from __future__ import annotations
 
 import os
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
-from app.config.settings import Settings
+from app.config.settings import DEFAULT_CADDY_ADMIN_URL, DEFAULT_CADDYFILE_PATH, Settings
 
 
 def _settings_kwargs(**overrides: object) -> dict[str, object]:
@@ -25,17 +24,17 @@ def _settings_kwargs(**overrides: object) -> dict[str, object]:
 
 class SettingsValidationTests(unittest.TestCase):
     def test_caddy_admin_url_is_normalized(self) -> None:
-        settings = Settings(**_settings_kwargs(CADDYBUDDY_CADDY_ADMIN_URL="http://localhost:2019/"))
+        settings = Settings(**_settings_kwargs(caddy_admin_url="http://localhost:2019/"))
 
         self.assertEqual(settings.caddy_admin_url, "http://localhost:2019")
 
     def test_caddy_admin_url_rejects_paths(self) -> None:
         with self.assertRaisesRegex(ValueError, "caddy_admin_url must not include a path"):
-            Settings(**_settings_kwargs(CADDYBUDDY_CADDY_ADMIN_URL="http://localhost:2019/config/"))
+            Settings(**_settings_kwargs(caddy_admin_url="http://localhost:2019/config/"))
 
     def test_caddy_api_url_rejects_credentials(self) -> None:
         with self.assertRaisesRegex(ValueError, "caddy_api_url must not include username or password"):
-            Settings(**_settings_kwargs(CADDYBUDDY_CADDY_API_URL="http://user:pass@localhost"))
+            Settings(**_settings_kwargs(caddy_api_url="http://user:pass@localhost"))
 
     def test_caddy_admin_api_path_is_normalized(self) -> None:
         settings = Settings(**_settings_kwargs(CADDYBUDDY_CADDY_ADMIN_API_PATH=" load "))
@@ -72,19 +71,23 @@ class SettingsValidationTests(unittest.TestCase):
                     CADDYBUDDY_ADMIN_PASSWORD="StrongAdminPassword-123!",
                 )
 
-    def test_cb_aliases_are_supported_for_runtime_configuration(self) -> None:
-        settings = Settings(
-            CB_SECRET_KEY="StrongSecretKey-1234567890",
-            CB_ADMIN_PASSWORD="StrongAdminPassword-123!",
-            CB_CADDY_API_URL="http://localhost:2019/",
-            CB_CADDYFILE_PATH=" /etc/caddy/Caddyfile ",
-        )
+    def test_legacy_caddy_runtime_env_aliases_are_ignored(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "CB_CADDY_API_URL": "http://host.docker.internal:2019",
+                "CB_CADDYFILE_PATH": "/etc/caddy/Caddyfile",
+            },
+            clear=False,
+        ):
+            settings = Settings(
+                CB_SECRET_KEY="StrongSecretKey-1234567890",
+                CB_ADMIN_PASSWORD="StrongAdminPassword-123!",
+            )
 
-        self.assertEqual(settings.secret_key.get_secret_value(), "StrongSecretKey-1234567890")
-        self.assertEqual(settings.default_admin_password.get_secret_value(), "StrongAdminPassword-123!")
-        self.assertEqual(settings.caddy_admin_url, "http://localhost:2019")
-        self.assertEqual(settings.caddy_api_url, "http://localhost:2019")
-        self.assertEqual(settings.mounted_caddyfile_path, Path("/etc/caddy/Caddyfile"))
+        self.assertEqual(settings.caddy_admin_url, DEFAULT_CADDY_ADMIN_URL)
+        self.assertEqual(settings.caddy_api_url, DEFAULT_CADDY_ADMIN_URL)
+        self.assertEqual(settings.mounted_caddyfile_path, DEFAULT_CADDYFILE_PATH)
 
     def test_explicit_admin_bootstrap_password_is_allowed(self) -> None:
         settings = Settings(

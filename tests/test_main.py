@@ -145,6 +145,8 @@ class LifespanTests(unittest.IsolatedAsyncioTestCase):
             patch.object(main_module, "dispose_engine", new=dispose_engine),
             patch.object(main_module, "get_session_factory", return_value=session_factory),
             patch.object(main_module.auth_service, "ensure_default_admin", new=AsyncMock(return_value=None)) as ensure_admin,
+            patch.object(main_module, "get_rate_limit_enabled", new=AsyncMock(return_value=True)),
+            patch.object(main_module, "update_rate_limit_enabled"),
             patch.object(
                 main_module,
                 "get_caddy_runtime_status",

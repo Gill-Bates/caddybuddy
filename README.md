@@ -77,7 +77,6 @@ Release images are built for `docker.cirrio.de/caddybuddy`. The badges above rem
    export CB_SECRET_KEY="$(head -c 32 /dev/urandom | base64)"
    export CB_ADMIN_PASSWORD="ChangeThisAdminPassword-Now-123A"
    export HOST_CADDYFILE_PATH=/etc/caddy/Caddyfile
-   export CB_CADDY_API_URL=http://host.docker.internal:2019
    export PORT=8000
    ```
 
@@ -103,10 +102,7 @@ pip install -r requirements.txt
 
 export CB_SECRET_KEY="$(head -c 32 /dev/urandom | base64)"
 export CB_ADMIN_PASSWORD="admin"
-export CB_CADDY_API_URL="http://localhost:2019"
-export CB_CADDYFILE_PATH="/etc/caddy/Caddyfile"
 export SESSION_HTTPS_ONLY=false
-export CB_RATE_LIMIT_ENABLED=false
 export LOG_LEVEL="DEBUG"
 
 python run.py
@@ -114,13 +110,13 @@ python run.py
 
 The local server listens on `http://127.0.0.1:8000` by default.
 
-Never disable `SESSION_HTTPS_ONLY` or `CB_RATE_LIMIT_ENABLED` in production.
+Never disable `SESSION_HTTPS_ONLY` in production. Rate limiting can be toggled in the Settings page.
 
 ## First Startup Behavior
 
 - On an empty database, CaddyBuddy creates the initial `admin` user with the password from `CB_ADMIN_PASSWORD`.
 - The SQLite database lives in `data/app.db` by default.
-- If `CB_CADDYFILE_PATH` points to an existing mounted Caddyfile, CaddyBuddy can import it during onboarding.
+- Caddy Admin URL and mounted Caddyfile path are configured after login on the Settings page.
 - Automatic onboarding during startup requires `CADDYBUDDY_AUTO_ONBOARD=true` and a reachable Caddy Admin API.
 - Without automatic onboarding, the application reports that onboarding is required and you can trigger it from the UI or API.
 
@@ -132,15 +128,14 @@ Change the initial admin password immediately after the first login.
 | --- | --- |
 | `CB_SECRET_KEY` | Required session secret (generate with `head -c 32 /dev/urandom \| base64`) |
 | `CB_ADMIN_PASSWORD` | Initial admin password for a fresh database |
-| `CB_CADDY_API_URL` | Base URL of the Caddy Admin API (e.g., `http://localhost:2019`) |
-| `CB_CADDYFILE_PATH` | Mounted writable Caddyfile path used for onboarding |
-| `CB_RATE_LIMIT_ENABLED` | Set to `false` to disable rate limiting (default: `true`) |
 | `SESSION_HTTPS_ONLY` | Set to `false` only for local plain-HTTP testing |
 | `CADDYBUDDY_AUTO_ONBOARD` | Enables automatic Caddy onboarding during startup |
 | `CADDYBUDDY_RELOAD` | Enables auto-reload for local development |
 | `PORT` | HTTP port for the web UI (default: `8000`) |
 | `LOG_LEVEL` | Application log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 | `TZ` | Container or process timezone (e.g., `Europe/Berlin`) |
+
+The Caddy Admin URL and mounted Caddyfile path are managed in the web UI under Settings.
 
 ## Health And Readiness
 

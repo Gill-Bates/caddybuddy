@@ -12,6 +12,53 @@
     </div>
 
     <div class="row app-grid">
+        <div class="col-12">
+            <div class="panel-card mb-4" id="caddy-settings">
+                <div class="panel-card__header">
+                    <h2 class="h5 mb-0">Runtime Settings</h2>
+                </div>
+                <div class="panel-card__body">
+                    <form action="{{ request.app.url_path_for('update_caddy_settings') }}" method="post"
+                        data-loading-submit-form>
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+                        <div class="row g-3">
+                            <div class="col-12 col-lg-6">
+                                <label for="caddy_api_url" class="form-label">Caddy Admin URL</label>
+                                <input type="url" class="form-control" id="caddy_api_url" name="caddy_api_url"
+                                    value="{{ caddy_api_url }}" placeholder="http://localhost:2019" required>
+                                <div class="form-text">Used for health checks, onboarding, and configuration sync.</div>
+                            </div>
+                            <div class="col-12 col-lg-6">
+                                <label for="caddyfile_path" class="form-label">Mounted Caddyfile Path</label>
+                                <input type="text" class="form-control" id="caddyfile_path" name="caddyfile_path"
+                                    value="{{ caddyfile_path }}" placeholder="/app/Caddyfile" required>
+                                <div class="form-text">This file is inspected during onboarding and replaced with the
+                                    managed marker.</div>
+                            </div>
+                            <div class="col-12">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch"
+                                        id="rate_limit_enabled" name="rate_limit_enabled" {% if rate_limit_enabled
+                                        %}checked{% endif %}>
+                                    <label class="form-check-label" for="rate_limit_enabled">Enable Rate
+                                        Limiting</label>
+                                </div>
+                                <div class="form-text">Protects sensitive endpoints against brute force attacks.</div>
+                            </div>
+                        </div>
+
+                        <div class="mt-3">
+                            <button type="submit" class="btn btn-primary" data-loading-submit-button
+                                data-loading-label="Saving...">
+                                Save Settings
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
         <div class="col-12 col-lg-6">
             <!-- SSL Labs Configuration -->
             <div class="panel-card mb-4" id="ssllabs-settings">

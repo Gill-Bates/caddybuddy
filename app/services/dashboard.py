@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.settings import get_settings
 from app.repositories.sites import site_repository
 from app.services.caddy import CaddyAdminClient, CaddyServiceError
+from app.services.runtime_settings import get_caddy_config
 from app.utils.domains import split_domain_names
 
 
@@ -218,15 +219,16 @@ def _build_certificate_index(certificates_path: Path | None) -> dict[str, Certif
     return certificate_index
 
 
-async def _get_caddy_service_metrics() -> HostServiceMetrics:
+async def _get_caddy_service_metrics(session: AsyncSession) -> HostServiceMetrics:
     """Read Caddy runtime status and version from the Admin API."""
+    config = await get_caddy_config(session)
     settings = get_settings()
-    if not settings.caddy_admin_url:
+    if not config.admin_url:
         return HostServiceMetrics(status="Unknown", uptime="Unavailable", version="Unavailable")
 
     try:
         async with CaddyAdminClient(
-            settings.caddy_admin_url,
+            config.admin_url,
             timeout_seconds=min(settings.caddy_admin_timeout_seconds, 2.0),
         ) as client:
             if not await client.health():
@@ -340,9 +342,9 @@ def _scan_certificate_counts(certificates_path: Path | None) -> tuple[int, int]:
     return valid_count, expired_count
 
 
-async def get_caddy_status() -> HostServiceMetrics:
+async def get_caddy_status(session: AsyncSession) -> HostServiceMetrics:
     """Get current Caddy service status for API endpoint."""
-    return await _get_caddy_service_metrics()
+    return await _get_caddy_service_metrics(session)
 
 
 async def get_dashboard_metrics(session: AsyncSession) -> DashboardMetrics:
@@ -379,7 +381,7 @@ async def get_dashboard_metrics(session: AsyncSession) -> DashboardMetrics:
                 else:
                     expired_certificate_count += 1
 
-    host_service_metrics = await _get_caddy_service_metrics()
+    host_service_metrics = await _get_caddy_service_metrics(session)
 
     return DashboardMetrics(
         domain_count=domain_count,

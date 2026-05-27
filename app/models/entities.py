@@ -295,6 +295,7 @@ class SslLabsScan(Base):
 _APP_SETTING_KEYS = (
     "caddy_api_url",
     "caddyfile_path",
+    "rate_limit_enabled",
 )
 
 

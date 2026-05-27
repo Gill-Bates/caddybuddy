@@ -81,9 +81,10 @@ async def build_info() -> BuildInfoResponse:
 @router.get("/caddy/status", response_model=CaddyStatusResponse)
 async def caddy_status(
     _current_user: User = Depends(_require_api_user),
+    session: AsyncSession = Depends(get_db_session),
 ) -> CaddyStatusResponse:
     """Get current Caddy service status for dashboard badge refresh."""
-    metrics = await get_caddy_status()
+    metrics = await get_caddy_status(session)
     return CaddyStatusResponse(
         running=metrics.status.lower() == "running",
         status=metrics.status,

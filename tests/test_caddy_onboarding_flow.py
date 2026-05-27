@@ -26,6 +26,7 @@ class CaddyOnboardingFlowTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self._temp_dir = tempfile.TemporaryDirectory()
         self.temp_path = Path(self._temp_dir.name)
+        self.current_caddyfile_path = self.temp_path / "Caddyfile"
         database_path = self.temp_path / "test.db"
         self.engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
         async with self.engine.begin() as connection:
@@ -35,8 +36,15 @@ class CaddyOnboardingFlowTests(unittest.IsolatedAsyncioTestCase):
             expire_on_commit=False,
             class_=AsyncSession,
         )
+        self._runtime_settings_patcher = patch.object(
+            caddyfile_manager,
+            "get_caddy_config",
+            new=AsyncMock(side_effect=self._get_caddy_config),
+        )
+        self._runtime_settings_patcher.start()
 
     async def asyncTearDown(self) -> None:
+        self._runtime_settings_patcher.stop()
         await self.engine.dispose()
         self._temp_dir.cleanup()
 
@@ -48,12 +56,23 @@ class CaddyOnboardingFlowTests(unittest.IsolatedAsyncioTestCase):
             data_dir=self.temp_path / "data",
         )
 
+    def _caddy_config(self, caddyfile_path: Path) -> SimpleNamespace:
+        return SimpleNamespace(
+            admin_url="http://admin.example.com:2019",
+            caddyfile_path=caddyfile_path,
+            caddyfile_path_str=str(caddyfile_path),
+        )
+
+    async def _get_caddy_config(self, _session: AsyncSession) -> SimpleNamespace:
+        return self._caddy_config(self.current_caddyfile_path)
+
     async def _snapshot_count(self, session: AsyncSession) -> int:
         result = await session.execute(select(func.count(CaddyfileSnapshot.id)))
         return int(result.scalar_one())
 
     async def test_runtime_status_reports_missing_caddyfile(self) -> None:
         caddyfile_path = self.temp_path / "missing.Caddyfile"
+        self.current_caddyfile_path = caddyfile_path
 
         async with self.session_factory() as session:
             with (
@@ -68,6 +87,7 @@ class CaddyOnboardingFlowTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_runtime_status_reports_not_writable_caddyfile(self) -> None:
         caddyfile_path = self.temp_path / "Caddyfile"
+        self.current_caddyfile_path = caddyfile_path
         caddyfile_path.write_text('example.com {\n    respond "ok" 200\n}\n', encoding="utf-8")
 
         # Mock the file open to simulate permission denied on r+ open
@@ -92,6 +112,7 @@ class CaddyOnboardingFlowTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_onboard_imports_snapshot_replaces_marker_and_syncs(self) -> None:
         caddyfile_path = self.temp_path / "Caddyfile"
+        self.current_caddyfile_path = caddyfile_path
         original = 'example.com {\n    respond "ok" 200\n}\n'
         caddyfile_path.write_text(original, encoding="utf-8")
 
@@ -135,6 +156,7 @@ class CaddyOnboardingFlowTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_onboard_preserves_global_config_and_snippets(self) -> None:
         caddyfile_path = self.temp_path / "Caddyfile"
+        self.current_caddyfile_path = caddyfile_path
         original = """{
     admin 127.0.0.1:2019
 }
@@ -184,6 +206,7 @@ example.com {
 
     async def test_onboard_keeps_original_caddyfile_when_sync_load_fails(self) -> None:
         caddyfile_path = self.temp_path / "Caddyfile"
+        self.current_caddyfile_path = caddyfile_path
         original = 'example.com {\n    respond "ok" 200\n}\n'
         caddyfile_path.write_text(original, encoding="utf-8")
 
@@ -210,6 +233,7 @@ example.com {
 
     async def test_managed_marker_short_circuits_repeated_onboarding(self) -> None:
         caddyfile_path = self.temp_path / "Caddyfile"
+        self.current_caddyfile_path = caddyfile_path
         caddyfile_path.write_text('example.com {\n    respond "ok" 200\n}\n', encoding="utf-8")
 
         async with self.session_factory() as session:

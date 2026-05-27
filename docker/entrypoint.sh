@@ -15,12 +15,6 @@ APP_UID=1000
 APP_GID=1000
 CADDYFILE_PATH="/app/Caddyfile"
 
-if [ "${CADDYBUDDY_MOUNTED_CADDYFILE_PATH:-$CADDYFILE_PATH}" != "$CADDYFILE_PATH" ]; then
-    echo "ERROR: unsupported CADDYBUDDY_MOUNTED_CADDYFILE_PATH: ${CADDYBUDDY_MOUNTED_CADDYFILE_PATH}" >&2
-    echo "Expected: $CADDYFILE_PATH" >&2
-    exit 1
-fi
-
 # -----------------------------------------------------------------------------
 # Bootstrap: Create required directories and fix ownership (runs as root)
 # -----------------------------------------------------------------------------

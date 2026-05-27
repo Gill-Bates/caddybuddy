@@ -7,8 +7,6 @@ services:
     environment:
       CB_SECRET_KEY: ${CB_SECRET_KEY:?Set CB_SECRET_KEY to a strong random value before starting caddybuddy.} # Generate with: head -c 32 /dev/urandom | base64
       CB_ADMIN_PASSWORD: ${CB_ADMIN_PASSWORD:?Set CB_ADMIN_PASSWORD to a non-default admin password before starting caddybuddy.}
-      CB_CADDYFILE_PATH: /app/Caddyfile
-      CB_CADDY_API_URL: ${CB_CADDY_API_URL:-http://host.docker.internal:2019}
       CB_SSLLABS_EMAIL: ${CB_SSLLABS_EMAIL:-}  # Required for SSL Labs scheduled scans
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       TZ: ${TZ:-Etc/UTC}

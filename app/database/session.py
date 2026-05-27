@@ -177,6 +177,7 @@ def _apply_known_table_migrations(sync_connection, existing_tables: set[str]) ->
     """Create newly required tables for existing databases."""
     migrated = False
     for table_name in (
+        "app_settings",
         "caddybuddy_state",
         "caddyfile_snapshots",
         "caddy_config_versions",

@@ -141,7 +141,7 @@ async def _acquire_operation_guard():
 def _error_message(error_code: str) -> str:
     messages = {
         "caddyfile_path_not_configured": "Caddyfile path is not configured.",
-        "caddyfile_missing": "Caddyfile missing. Expected host-mounted file at CADDYFILE_PATH.",
+        "caddyfile_missing": "Caddyfile missing at the configured settings path.",
         "caddyfile_not_regular": "Caddyfile path is not a regular file.",
         "caddyfile_not_readable": "Caddyfile is not readable. Check Docker Compose volume permissions.",
         "caddyfile_not_writable": "Caddyfile is not writable. Check Docker Compose volume permissions.",
@@ -492,7 +492,7 @@ async def onboard_caddy(session: AsyncSession) -> CaddyOnboardingResult:
                 error=_error_message("caddyfile_missing"),
                 error_code="caddyfile_missing",
             )
-        if not await _admin_api_reachable():
+        if not await _admin_api_reachable(session):
             await _set_state_value(session, _STATE_KEY_LAST_ERROR, "caddy_admin_unavailable")
             await _set_state_value(session, _STATE_KEY_ONBOARDING_STATUS, _STATUS_ONBOARDING_FAILED)
             _record_sync_event(

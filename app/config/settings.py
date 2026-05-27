@@ -37,6 +37,8 @@ _SIMPLE_EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 
 _BASE_DIR = Path(__file__).resolve().parents[2]
 _DATA_DIR = _BASE_DIR / "data"
+DEFAULT_CADDY_ADMIN_URL = "http://localhost:2019"
+DEFAULT_CADDYFILE_PATH = Path("/app/Caddyfile")
 
 
 class Settings(BaseSettings):
@@ -149,15 +151,7 @@ class Settings(BaseSettings):
     default_admin_email: str = Field(default="admin@example.com")
 
     # Single Caddy server configuration
-    caddy_api_url: str = Field(
-        default="http://localhost",
-        validation_alias=AliasChoices(
-            "CB_CADDY_API_URL",
-            "CADDYBUDDY_CADDY_API_URL",
-            "CADDY_API_URL",
-            "caddy_api_url",
-        ),
-    )
+    caddy_api_url: str = Field(default=DEFAULT_CADDY_ADMIN_URL)
     caddy_api_port: int = Field(
         default=2019,
         ge=1,
@@ -176,15 +170,7 @@ class Settings(BaseSettings):
             "caddy_admin_api_path",
         ),
     )
-    caddy_admin_url: str = Field(
-        default="http://localhost:2019",
-        validation_alias=AliasChoices(
-            "CB_CADDY_API_URL",
-            "CADDYBUDDY_CADDY_ADMIN_URL",
-            "CADDY_ADMIN_URL",
-            "caddy_admin_url",
-        ),
-    )
+    caddy_admin_url: str = Field(default=DEFAULT_CADDY_ADMIN_URL)
     caddy_admin_timeout_seconds: float = Field(
         default=10.0,
         gt=0,
@@ -211,18 +197,7 @@ class Settings(BaseSettings):
             "caddy_baseline_caddyfile",
         ),
     )
-    mounted_caddyfile_path: Path | None = Field(
-        default=Path("/data/caddy/Caddyfile"),
-        validation_alias=AliasChoices(
-            "CB_CADDYFILE_PATH",
-            "CADDYFILE_PATH",
-            "caddyfile_path",
-            "CADDYBUDDY_CADDYFILE_PATH",
-            "CADDYBUDDY_MOUNTED_CADDYFILE_PATH",
-            "MOUNTED_CADDYFILE_PATH",
-            "mounted_caddyfile_path",
-        ),
-    )
+    mounted_caddyfile_path: Path | None = Field(default=DEFAULT_CADDYFILE_PATH)
     caddy_certificates_path: Path | None = Field(
         default=Path("/var/lib/caddy/.local/share/caddy/certificates"),
         validation_alias=AliasChoices(

@@ -9,13 +9,15 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config.settings import DEFAULT_CADDY_ADMIN_URL, DEFAULT_CADDYFILE_PATH
 from app.models.entities import AppSetting
 
 
 # Defaults used when no database entry exists
 DEFAULTS: dict[str, str] = {
-    "caddy_api_url": "http://localhost:2019",
-    "caddyfile_path": "/etc/caddy/Caddyfile",
+    "caddy_api_url": DEFAULT_CADDY_ADMIN_URL,
+    "caddyfile_path": str(DEFAULT_CADDYFILE_PATH),
+    "rate_limit_enabled": "true",
 }
 
 

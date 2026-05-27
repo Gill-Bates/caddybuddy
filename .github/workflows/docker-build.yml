@@ -198,8 +198,6 @@ jobs:
             --network "${{ matrix.network_name }}" \
             -e CADDYBUDDY_SECRET_KEY="ci-smoke-test-key-not-for-production" \
             -e CADDYBUDDY_ADMIN_PASSWORD="ci-smoke-test-admin-password" \
-            -e CADDYBUDDY_MOUNTED_CADDYFILE_PATH="/app/Caddyfile" \
-            -e CADDYBUDDY_CADDY_ADMIN_URL="http://${{ matrix.mock_container_name }}:2019" \
             -e LOG_LEVEL="DEBUG" \
             -v "$PWD/smoke-test/Caddyfile:/app/Caddyfile" \
             -v "$PWD/smoke-test/data:/app/data" \

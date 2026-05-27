@@ -17,7 +17,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.sessions import SessionMiddleware
 
-from app.config.limiter import limiter
+from app.config.limiter import limiter, update_rate_limit_enabled
 from app.config.settings import get_settings
 from app.database.session import dispose_engine, get_session_factory, init_database
 from app.dependencies.web import push_flash
@@ -29,6 +29,7 @@ from app.services.auth import auth_service
 from app.services.caddy import caddy_service
 from app.services.caddyfile_manager import get_caddy_runtime_status, onboard_caddy
 from app.services.events import event_bus
+from app.services.runtime_settings import get_rate_limit_enabled
 from app.services.ssllabs import ssllabs_service
 
 
@@ -96,6 +97,10 @@ async def lifespan(application: FastAPI):
                 )
 
         async with session_factory() as session:
+            rate_limit_enabled = await get_rate_limit_enabled(session)
+            update_rate_limit_enabled(rate_limit_enabled)
+            logger.info("Rate limiting %s", "enabled" if rate_limit_enabled else "disabled")
+
             caddy_status = await get_caddy_runtime_status(session)
             application.state.caddy_status = caddy_status
 
