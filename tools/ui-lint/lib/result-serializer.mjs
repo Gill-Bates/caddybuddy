@@ -47,6 +47,7 @@ export function serializeResultForOutput(result, { summaryPath, visualRegression
         sidebarFooterViewportGap: metrics.sidebarFooterViewportGap?.gapPx ?? null,
         sidebarFooterViewportGapPass: metrics.sidebarFooterViewportGap?.present ? (metrics.sidebarFooterViewportGap.passesMinimum ? 1 : 0) : null,
         primaryPanelPaddingMismatch: countItems(metrics.primaryPanelPadding?.mismatches),
+        pageStructureMissingRowWrapper: countItems(metrics.pageStructureConsistent?.issues),
         ghostScrollContainers: countItems(metrics.ghostScrollContainers),
         nestedScrollContainers: countItems(metrics.nestedScrollContainers),
         flexScrollTraps: countItems(metrics.flexScrollTraps),

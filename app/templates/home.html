@@ -1,0 +1,150 @@
+{% extends 'base.html' %}
+
+{% set page_title = "Dashboard" %}
+
+{% block content %}
+{% set caddy_status = metrics.caddy_service_status or 'Unknown' %}
+{% set service_running = caddy_status | lower == 'running' %}
+{% set caddy_version = metrics.caddy_version or 'Unavailable' %}
+{% set onboarding_required = runtime_status is defined and runtime_status.onboarding_required %}
+<section class="app-page">
+    <div class="app-page__header">
+        <div class="app-page__lede">
+            <p class="eyebrow mb-2">Overview</p>
+            <h1 class="page-title mb-0">Dashboard</h1>
+            <p class="text-body-secondary mb-0">
+                Managed sites, certificate state and local Caddy runtime status.
+            </p>
+        </div>
+
+        <div class="dashboard-status" id="caddy-status-badge">
+            <span id="caddy-status-dot"
+                class="status-dot {% if service_running %}status-dot--online{% else %}status-dot--offline{% endif %}"
+                aria-hidden="true"></span>
+            <span>
+                Caddy
+                <span id="caddy-version-wrapper">{% if caddy_version not in ['Unavailable', 'Unknown'] %}
+                    (<span class="version-badge" id="caddy-version">{{ caddy_version }}</span>)
+                    {% endif %}</span>
+            </span>
+            {% if service_running and metrics.caddy_service_uptime %}
+            <span class="dashboard-status__meta" id="caddy-status-meta" data-ui-lint-dynamic>
+                · Uptime {{ metrics.caddy_service_uptime }}
+            </span>
+            {% else %}
+            <span class="dashboard-status__meta" id="caddy-status-meta">
+                · {{ caddy_status }}
+            </span>
+            {% endif %}
+        </div>
+    </div>
+
+    <section class="row metric-grid" aria-label="Key metrics">
+        <div class="col-12 col-md-4">
+            <article class="metric-card hero-metric hero-metric--domains">
+                <span class="metric-card__label">Domains</span>
+                <strong class="metric-card__value">{{ metrics.domain_count or 0 }}</strong>
+                <p class="hero-metric__hint mb-0">Configured site domains tracked by CaddyBuddy.</p>
+            </article>
+        </div>
+        <div class="col-12 col-md-4">
+            <article class="metric-card hero-metric hero-metric--valid">
+                <span class="metric-card__label">Valid certificates</span>
+                <strong class="metric-card__value">{{ metrics.valid_certificate_count or 0 }}</strong>
+                <p class="hero-metric__hint mb-0">Local Caddy certificates that are still valid.</p>
+            </article>
+        </div>
+        <div class="col-12 col-md-4">
+            <article class="metric-card hero-metric hero-metric--expired">
+                <span class="metric-card__label">Expired certificates</span>
+                <strong class="metric-card__value">{{ metrics.expired_certificate_count or 0 }}</strong>
+                <p class="hero-metric__hint mb-0">Local Caddy certificates that are already expired.</p>
+            </article>
+        </div>
+    </section>
+
+    {% if (metrics.domain_count or 0) == 0 %}
+    <section class="panel-card dashboard-empty-state">
+        <div>
+            <p class="eyebrow mb-2">Next step</p>
+            {% if onboarding_required %}
+            <h2 class="h4 mb-2">Create the managed Caddyfile first</h2>
+            <p class="text-body-secondary mb-0">
+                Import the host-mounted Caddyfile into CaddyBuddy and replace it with the managed marker before creating
+                sites.
+            </p>
+            {% else %}
+            <h2 class="h4 mb-2">Create your first managed site</h2>
+            <p class="text-body-secondary mb-0">
+                Add a domain and deploy its Caddy configuration from CaddyBuddy.
+            </p>
+            {% endif %}
+        </div>
+        {% if onboarding_required %}
+        <a href="{{ request.app.url_path_for('caddyfile_page') }}" class="btn btn-primary">Open Caddyfile</a>
+        {% else %}
+        <a href="{{ request.app.url_path_for('sites_page') }}" class="btn btn-primary">Create site</a>
+        {% endif %}
+    </section>
+    {% endif %}
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    (function () {
+        "use strict";
+
+        const REFRESH_INTERVAL_MS = 10000;
+        const statusDot = document.getElementById("caddy-status-dot");
+        const statusMeta = document.getElementById("caddy-status-meta");
+        const versionWrapper = document.getElementById("caddy-version-wrapper");
+
+        if (!statusDot || !statusMeta) {
+            return;
+        }
+
+        const updateBadge = async () => {
+            try {
+                const response = await fetch("/api/v1/caddy/status", {
+                    credentials: "same-origin",
+                    headers: { "Accept": "application/json" }
+                });
+                if (!response.ok) {
+                    return;
+                }
+                const data = await response.json();
+
+                statusDot.classList.toggle("status-dot--online", data.running);
+                statusDot.classList.toggle("status-dot--offline", !data.running);
+
+                if (data.running && data.uptime && data.uptime !== "Unavailable") {
+                    statusMeta.textContent = "· Uptime " + data.uptime;
+                } else {
+                    statusMeta.textContent = "· " + data.status;
+                }
+
+                if (versionWrapper && data.version && data.version !== "Unavailable" && data.version !== "Unknown") {
+                    versionWrapper.innerHTML = '(<span class="version-badge">' + data.version + '</span>)';
+                } else if (versionWrapper) {
+                    versionWrapper.innerHTML = "";
+                }
+            } catch {
+                // Silently ignore network errors.
+            }
+        };
+
+        let intervalId = setInterval(updateBadge, REFRESH_INTERVAL_MS);
+
+        document.addEventListener("visibilitychange", () => {
+            if (document.hidden) {
+                clearInterval(intervalId);
+                intervalId = null;
+            } else if (!intervalId) {
+                updateBadge();
+                intervalId = setInterval(updateBadge, REFRESH_INTERVAL_MS);
+            }
+        });
+    })();
+</script>
+{% endblock %}

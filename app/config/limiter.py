@@ -4,14 +4,14 @@
 # Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
 #
 
+import os
+
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-from app.config.settings import get_settings
-
-settings = get_settings()
+_limiter_enabled = os.environ.get("CB_RATE_LIMIT_ENABLED", "true").lower() not in ("false", "0", "no")
 
 limiter = Limiter(
     key_func=get_remote_address,
-    enabled=not settings.allow_insecure_defaults
+    enabled=_limiter_enabled,
 )

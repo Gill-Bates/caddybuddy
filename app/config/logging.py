@@ -9,17 +9,21 @@ from __future__ import annotations
 import logging
 import re
 from copy import copy, deepcopy
+from datetime import UTC, datetime
 
 from uvicorn.config import LOGGING_CONFIG
 from uvicorn.logging import AccessFormatter, DefaultFormatter
 
 
-_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 _DARK_GRAY = "\033[90m"
 _RESET = "\033[0m"
 _VALID_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 _SENSITIVE_QUERY_PARAM_PATTERN = re.compile(
-    r"((?:token|api_key|password|secret|access_token)=)[^&\s]*",
+    r"((?:^|[?&;\s])(?:"
+    r"token|access_token|refresh_token|id_token|"
+    r"api[_-]?key|password|secret|client_secret|"
+    r"session|sessionid|sid|jwt"
+    r")=)[^&;\s]*",
     re.IGNORECASE,
 )
 _NOISY_DEBUG_LOGGERS = (
@@ -28,13 +32,18 @@ _NOISY_DEBUG_LOGGERS = (
     "httpx",
     "multipart",
     "python_multipart",
+)
+_SQLALCHEMY_QUIET_LOGGERS = (
     "sqlalchemy.engine",
     "sqlalchemy.pool",
 )
 
 
 def _redact_sensitive_query_params(value: str) -> str:
-    return _SENSITIVE_QUERY_PARAM_PATTERN.sub(r"\1***REDACTED***", value)
+    return _SENSITIVE_QUERY_PARAM_PATTERN.sub(
+        lambda match: f"{match.group(1)}***REDACTED***",
+        value,
+    )
 
 
 class SuppressVerboseDependencyFilter(logging.Filter):
@@ -49,13 +58,23 @@ class SuppressVerboseDependencyFilter(logging.Filter):
 
 class _TimestampPrefixMixin:
     def _format_timestamp(self, record: logging.LogRecord) -> str:
-        timestamp = self.formatTime(record, self.datefmt)
+        timestamp = (
+            datetime.fromtimestamp(record.created, UTC)
+            .isoformat(timespec="milliseconds")
+            .replace("+00:00", "Z")
+        )
         if getattr(self, "use_colors", False):
             return f"{_DARK_GRAY}{timestamp}{_RESET}"
         return timestamp
 
     def formatMessage(self, record: logging.LogRecord) -> str:
         record_copy = copy(record)
+        message = getattr(record_copy, "message", None)
+        if isinstance(message, str):
+            record_copy.message = _redact_sensitive_query_params(message)
+        color_message = record_copy.__dict__.get("color_message")
+        if isinstance(color_message, str):
+            record_copy.__dict__["color_message"] = _redact_sensitive_query_params(color_message)
         request_line = getattr(record_copy, "request_line", None)
         if isinstance(request_line, str):
             record_copy.request_line = _redact_sensitive_query_params(request_line)
@@ -98,13 +117,11 @@ def build_log_config(level_name: str) -> dict[str, object]:
     log_config["formatters"]["default"] = {
         "()": "app.config.logging.TimestampDefaultFormatter",
         "fmt": "%(timestamp)s %(levelprefix)s %(message)s",
-        "datefmt": _TIMESTAMP_FORMAT,
         "use_colors": None,
     }
     log_config["formatters"]["access"] = {
         "()": "app.config.logging.TimestampAccessFormatter",
         "fmt": '%(timestamp)s %(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s',
-        "datefmt": _TIMESTAMP_FORMAT,
         "use_colors": None,
     }
     log_config["root"] = {
@@ -118,39 +135,16 @@ def build_log_config(level_name: str) -> dict[str, object]:
     log_config["loggers"]["uvicorn"]["level"] = normalized_level
     log_config["loggers"]["uvicorn.access"]["level"] = normalized_level
     log_config["loggers"]["uvicorn.error"]["level"] = normalized_level
-    log_config["loggers"]["aiosqlite"] = {
-        "handlers": ["default"],
-        "level": "WARNING",
-        "propagate": False,
-    }
-    log_config["loggers"]["httpcore"] = {
-        "handlers": ["default"],
-        "level": "WARNING",
-        "propagate": False,
-    }
-    log_config["loggers"]["httpx"] = {
-        "handlers": ["default"],
-        "level": "WARNING",
-        "propagate": False,
-    }
-    log_config["loggers"]["sqlalchemy.engine"] = {
-        "handlers": ["default"],
-        "level": "WARNING",
-        "propagate": False,
-    }
-    log_config["loggers"]["sqlalchemy.pool"] = {
-        "handlers": ["default"],
-        "level": "WARNING",
-        "propagate": False,
-    }
-    log_config["loggers"]["multipart"] = {
-        "handlers": ["default"],
-        "level": "WARNING",
-        "propagate": False,
-    }
-    log_config["loggers"]["python_multipart"] = {
-        "handlers": ["default"],
-        "level": "WARNING",
-        "propagate": False,
-    }
+    for logger_name in _NOISY_DEBUG_LOGGERS:
+        log_config["loggers"][logger_name] = {
+            "handlers": ["default"],
+            "level": normalized_level,
+            "propagate": False,
+        }
+    for logger_name in _SQLALCHEMY_QUIET_LOGGERS:
+        log_config["loggers"][logger_name] = {
+            "handlers": ["default"],
+            "level": "WARNING",
+            "propagate": False,
+        }
     return log_config

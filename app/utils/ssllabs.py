@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+#
+# app/utils/ssllabs.py
+# Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
+#
+
+from __future__ import annotations
+
+import re
+from datetime import UTC, datetime, timedelta
+from ipaddress import ip_address
+
+from app.schemas.ssllabs import SslLabsScanStatus, SslLabsScheduleFrequency
+
+
+_HOST_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", re.ASCII)
+_BLOCKED_SUFFIXES = (
+    ".local",
+    ".localhost",
+    ".internal",
+    ".lan",
+    ".home",
+    ".home.arpa",
+    ".test",
+    ".invalid",
+    ".example",
+)
+_BLOCKED_HOSTS = {"localhost"}
+
+
+def validate_ssllabs_host(host: str) -> str:
+    normalized = host.strip().rstrip(".").casefold()
+    if not normalized or "*" in normalized:
+        raise ValueError("SSL Labs scans require a concrete public hostname.")
+    if any(char.isspace() for char in normalized):
+        raise ValueError("SSL Labs scans require a hostname without whitespace.")
+    if any(token in normalized for token in ("://", "/", "\\", "@", ":")):
+        raise ValueError("SSL Labs scans require a hostname, not a URL.")
+    if normalized in _BLOCKED_HOSTS or normalized.endswith(_BLOCKED_SUFFIXES):
+        raise ValueError("SSL Labs scans require a public hostname.")
+
+    try:
+        ip_address(normalized)
+    except ValueError:
+        pass
+    else:
+        raise ValueError("SSL Labs scans require a public hostname.")
+
+    labels = normalized.split(".")
+    if len(labels) < 2 or any(not label for label in labels):
+        raise ValueError("SSL Labs scans require a public hostname.")
+    if not all(_HOST_LABEL_RE.fullmatch(label) for label in labels):
+        raise ValueError("SSL Labs scans require a valid public hostname.")
+    return normalized
+
+
+def mask_email(email: str | None) -> str | None:
+    if email is None:
+        return None
+    local_part, separator, domain = email.partition("@")
+    if not separator or not local_part or not domain:
+        return "configured"
+    return f"{local_part[:1]}***@{domain}"
+
+
+def schedule_interval(frequency: SslLabsScheduleFrequency) -> timedelta:
+    if frequency == "weekly":
+        return timedelta(days=7)
+    if frequency == "monthly":
+        return timedelta(days=30)
+    raise ValueError(f"Unsupported SSL Labs schedule frequency: {frequency!r}")
+
+
+def ensure_aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def next_schedule_time(frequency: SslLabsScheduleFrequency, reference: datetime) -> datetime:
+    return ensure_aware_utc(reference) + schedule_interval(frequency)
+
+
+def status_badge_class(status: SslLabsScanStatus | str | None, grade: str | None = None) -> str:
+    normalized_status = (status or "").lower()
+    normalized_grade = (grade or "").upper()
+    if normalized_status in {"error", "failed"}:
+        return "status-pill--offline"
+    if normalized_status in {"queued", "starting", "dns", "in_progress", "rate_limited"}:
+        return "status-pill--unknown"
+    if normalized_status == "ready" and normalized_grade.startswith("A"):
+        return "status-pill--online"
+    if normalized_status == "ready":
+        return "status-pill--unknown"
+    return "status-pill--unknown"

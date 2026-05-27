@@ -16,9 +16,10 @@ def get_build_info() -> dict[str, str]:
     """Return version and commit metadata for the running build."""
     settings = get_settings()
     base_dir = settings.base_dir
-    version = os.getenv("APP_VERSION") or _read_text(base_dir / "VERSION") or "dev"
-    commit = os.getenv("GIT_SHA") or _read_text(base_dir / "BUILD_INFO") or "working-tree"
-    build_date = os.getenv("BUILD_DATE") or "unknown"
+    file_metadata = _read_build_info_file(base_dir / "BUILD_INFO")
+    version = os.getenv("APP_VERSION") or _read_text(base_dir / "VERSION") or file_metadata.get("APP_VERSION") or "dev"
+    commit = os.getenv("GIT_SHA") or file_metadata.get("GIT_SHA") or "working-tree"
+    build_date = os.getenv("BUILD_DATE") or file_metadata.get("BUILD_DATE") or "unknown"
     return {
         "version": version.splitlines()[0],
         "commit": commit.splitlines()[0],
@@ -33,3 +34,22 @@ def _read_text(path: Path) -> str | None:
     except FileNotFoundError:
         return None
     return text or None
+
+
+def _read_build_info_file(path: Path) -> dict[str, str]:
+    """Return parsed key-value metadata from BUILD_INFO."""
+    raw_text = _read_text(path)
+    if raw_text is None:
+        return {}
+
+    metadata: dict[str, str] = {}
+    for raw_line in raw_text.splitlines():
+        key, separator, value = raw_line.partition("=")
+        if not separator:
+            continue
+        normalized_key = key.strip()
+        normalized_value = value.strip()
+        if not normalized_key or not normalized_value:
+            continue
+        metadata[normalized_key] = normalized_value
+    return metadata

@@ -4,10 +4,14 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <title>{% if page_title %}{{ page_title }} | {% endif %}{{ app_name }}</title>
+    {% set title = page_title | default('') %}
+    <title>{% if title %}{{ title }} | {% endif %}{{ app_name }}</title>
     <meta name="color-scheme" content="light">
     <meta name="theme-color" content="#0f766e">
     <meta name="referrer" content="strict-origin-when-cross-origin">
+    {% if csrf_token is defined %}
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    {% endif %}
     <link href="{{ request.app.url_path_for('static', path='vendor/bootstrap/bootstrap.min.css') }}" rel="stylesheet"
         integrity="{{ asset_integrity('vendor/bootstrap/bootstrap.min.css') }}" crossorigin="anonymous">
     <link
@@ -18,7 +22,8 @@
 
 <body class="app-body{% if not current_user %} app-body--public{% endif %}">
     {% macro nav_link(path, label, exact=False) -%}
-    {% set is_active = request.url.path == path if exact else request.url.path.startswith(path) %}
+    {% set current_path = request.url.path %}
+    {% set is_active = current_path == path if exact else current_path == path or current_path.startswith(path ~ '/') %}
     <a class="app-nav__link {% if is_active %}is-active{% endif %}" href="{{ path }}" {% if is_active
         %}aria-current="page" {% endif %}>{{ label }}{% if caller is defined %}{{ caller() }}{% endif %}</a>
     {%- endmacro %}
@@ -38,37 +43,31 @@
             <line x1="6" y1="6" x2="18" y2="18"></line>
         </svg>
     </button>
-    <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+    <div class="sidebar-backdrop" id="sidebarBackdrop" aria-hidden="true"></div>
     {% endif %}
     <div class="app-shell {% if not current_user %}app-shell--public{% endif %}">
         {% if current_user %}
-        <aside class="app-sidebar" id="appSidebar">
+        <aside class="app-sidebar" id="appSidebar" aria-label="Application navigation">
             <div>
-                <a href="{{ request.app.url_path_for('dashboard') }}" class="brand-mark text-decoration-none">
+                <a href="{{ request.app.url_path_for('home_page') }}" class="brand-mark text-decoration-none">
                     <span class="brand-mark__kicker">Control plane</span>
                     <span class="brand-mark__name">{{ app_name }}</span>
                 </a>
                 <nav class="nav flex-column app-nav mt-4 gap-2" aria-label="Primary navigation">
-                    {{ nav_link(request.app.url_path_for('dashboard'), 'Dashboard', exact=True) }}
-                    {{ nav_link(request.app.url_path_for('servers_page'), 'Servers') }}
-                    {{ nav_link(request.app.url_path_for('templates_page'), 'Caddyfile') }}
+                    {{ nav_link(request.app.url_path_for('home_page'), 'Home', exact=True) }}
+                    {{ nav_link(request.app.url_path_for('caddyfile_page'), 'Caddyfile') }}
                     {{ nav_link(request.app.url_path_for('sites_page'), 'Sites') }}
-                    {{ nav_link(request.app.url_path_for('deployments_page'), 'Deployments') }}
-                    {% call nav_link(request.app.url_path_for('queue_page'), 'Queue') %}
-                    <span class="queue-badge" id="queueBadge" aria-live="polite" aria-atomic="true" hidden></span>
-                    {% endcall %}
-                    {{ nav_link(request.app.url_path_for('api_keys_page'), 'API Keys') }}
-                    {% if current_user.is_admin %}
-                    {{ nav_link(request.app.url_path_for('users_page'), 'Users') }}
-                    {{ nav_link(request.app.url_path_for('audit_logs_page'), 'Audit Logs') }}
+                    {% set ssllabs_path = optional_url_path_for(request, 'ssllabs_page') %}
+                    {% if ssllabs_path %}
+                    {{ nav_link(ssllabs_path, 'SSL Labs') }}
                     {% endif %}
-                    {{ nav_link(request.app.url_path_for('profile_page'), 'Profile') }}
                 </nav>
             </div>
 
             <div class="sidebar-footer">
                 <div class="sidebar-user mb-3">
-                    <div class="sidebar-user__avatar" aria-hidden="true">{{ current_user.username[:1].upper() }}</div>
+                    <div class="sidebar-user__avatar" aria-hidden="true">{{ (current_user.username[:1] or '?').upper()
+                        }}</div>
                     <div>
                         <div class="fw-semibold">{{ current_user.username }}</div>
                         <div class="text-body-secondary small text-uppercase">{{ current_user.role }}</div>
@@ -92,12 +91,28 @@
             <footer class="app-footer">
                 <div class="app-container app-footer__inner">
                     <span class="cb-footer-content">
-                        CaddyBuddy {{ build_info.version }} (<span class="font-monospace">{{ build_info.commit[:7] if build_info.commit else 'unknown' }}</span>)
-                        &middot; &copy;&nbsp;2026&nbsp;Gill-Bates
-                        &middot;&nbsp;
-                        <a href="https://github.com/Gill-Bates/caddybuddy" target="_blank" rel="noopener noreferrer" class="text-decoration-none cb-footer-link">
-                            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" class="cb-footer-link-icon" aria-hidden="true">
-                                <path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
+                        {% if current_user %}
+                        {% set version = build_info.version if build_info is defined and build_info.version else
+                        'unknown' %}
+                        {% set commit = build_info.commit if build_info is defined and build_info.commit else 'unknown'
+                        %}
+                        {% set build_date = build_info.build_date if build_info is defined and build_info.build_date
+                        else 'unknown' %}
+                        CaddyBuddy (<span class="version-badge">v{{ version }}</span>)
+                        (<span class="version-badge">{{ commit[:7] if commit != 'unknown' else 'unknown' }}</span>)
+                        (<span class="version-badge">build {{ build_date.split('T')[0] if build_date != 'unknown' else
+                            'unknown' }}</span>)
+                        {% else %}
+                        {{ app_name }}
+                        {% endif %}
+                        &middot; &copy;&nbsp;2026&nbsp;Gill-Bates &middot;&nbsp;
+                        <a href="https://github.com/Gill-Bates/caddybuddy" target="_blank" rel="noopener noreferrer"
+                            class="text-decoration-none cb-footer-link">
+                            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"
+                                class="cb-footer-link-icon" aria-hidden="true">
+                                <path fill-rule="evenodd"
+                                    d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z">
+                                </path>
                             </svg>
                             GitHub
                             <span class="visually-hidden">(opens in new tab)</span>
@@ -108,13 +123,15 @@
         </div>
     </div>
 
+    {% if current_user %}
     <div class="modal fade" id="confirmActionModal" tabindex="-1" aria-labelledby="confirmActionModalLabel"
         aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content">
                 <div class="modal-header">
                     <h2 class="modal-title h5" id="confirmActionModalLabel">Confirm action</h2>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"
+                        data-ui-lint-ignore-click-target></button>
                 </div>
                 <div class="modal-body">
                     <p id="confirmActionModalMessage" class="mb-0">Continue?</p>
@@ -126,11 +143,12 @@
             </div>
         </div>
     </div>
+    {% endif %}
 
     <script src="{{ request.app.url_path_for('static', path='vendor/bootstrap/bootstrap.bundle.min.js') }}"
         integrity="{{ asset_integrity('vendor/bootstrap/bootstrap.bundle.min.js') }}" crossorigin="anonymous"></script>
-    <script src="{{ request.app.url_path_for('static', path='js/app.js') }}"
-        integrity="{{ asset_integrity('js/app.js') }}" crossorigin="anonymous" defer></script>
+    <script src="{{ request.app.url_path_for('static', path='js/app.js') }}?v={{ asset_integrity('js/app.js')[-10:] }}"
+        integrity="{{ asset_integrity('js/app.js') }}" crossorigin="anonymous"></script>
     {% block scripts %}{% endblock %}
 </body>
 

@@ -1,58 +1,48 @@
 {
-	admin 0.0.0.0:2019
+	admin 172.17.0.1:2019
 	email name@domain.com
 
 	log {
 		level info
 		format json
-		output file /var/log/caddy/caddy.log {
-			roll_size 10mb
-			roll_keep 10
-			roll_keep_for 720h
-		}
+		output stdout
 	}
 }
 
 (security_headers) {
 	header {
-		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		Strict-Transport-Security "max-age=31536000"
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
 		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+		-X-Powered-By
 	}
 }
 
 (default_log) {
 	log {
-		output file /var/log/caddy/access.log {
-			roll_size 10mb
-		}
+		output stdout
 		format json
 	}
 }
 
-# Bootstrap the CaddyBuddy GUI directly, without external site imports.
 caddy.domain.com {
 	import security_headers
 	import default_log
 
-	reverse_proxy xx.xx.xx.xx:8000 {
+	encode zstd gzip
+
+	request_body {
+		max_size 10MB
+	}
+
+	reverse_proxy 127.0.0.1:8000 {
 		transport http {
 			keepalive 30s
 		}
 
 		header_up Host {host}
-		header_up Authorization {http.request.header.Authorization}
-	}
-
-	encode gzip
-
-	header {
-		-Server
-		-X-Powered-By
-	}
-
-	request_body {
-		max_size 100MB
+		header_up X-Forwarded-Proto {scheme}
 	}
 }

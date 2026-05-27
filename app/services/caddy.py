@@ -7,274 +7,248 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 import json
+import os
 import socket
 import shutil
 from contextlib import suppress
-from dataclasses import dataclass
-from datetime import UTC, datetime
 from ipaddress import IPv4Address, IPv6Address, ip_address
 from pathlib import Path
-from tempfile import NamedTemporaryFile
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from tempfile import mkstemp
+from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
-from app.models.entities import CaddyServer
-from app.utils.caddyfile import prepare_domain_directives
-
-
+_ALLOWED_ADMIN_HOSTS = frozenset({"localhost", "host.docker.internal", "caddy"})
 _FORBIDDEN_HOSTS = frozenset({"169.254.169.254", "metadata.google.internal"})
 _FORBIDDEN_IPS = frozenset({ip_address("169.254.169.254")})
 _CADDY_ADAPT_TIMEOUT = 10.0
 _CADDY_KILL_TIMEOUT = 2.0
 _DNS_RESOLUTION_TIMEOUT = 5.0
-_SECURITY_HEADERS = {
-    "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
-    "X-Content-Type-Options": "nosniff",
-    "X-Frame-Options": "DENY",
-    "Referrer-Policy": "strict-origin-when-cross-origin",
-}
+_MAX_CADDYFILE_BYTES = 512 * 1024
 type ResolvedIPAddress = IPv4Address | IPv6Address
-
-
-@dataclass(frozen=True, slots=True)
-class ImportedSiteDefinition:
-    domain: str
-    template_name: str
-    caddyfile: str
-    upstream: str | None
-    ssl_enabled: bool
 
 
 class CaddyServiceError(Exception):
     """Domain exception for Caddy Admin API transport failures."""
 
 
-def _format_size_bytes(value: int) -> str:
-    if value % 1_000_000 == 0:
-        return f"{value // 1_000_000}MB"
-    if value % 1_000 == 0:
-        return f"{value // 1_000}KB"
-    return str(value)
+def _normalize_resolved_ip(target_ip: ResolvedIPAddress) -> ResolvedIPAddress:
+    return getattr(target_ip, "ipv4_mapped", None) or target_ip
 
 
-def _format_duration_ns(value: int) -> str:
-    if value % 1_000_000_000 == 0:
-        return f"{value // 1_000_000_000}s"
-    if value % 1_000_000 == 0:
-        return f"{value // 1_000_000}ms"
-    return f"{value}ns"
+def _is_allowed_admin_ip(target_ip: ResolvedIPAddress) -> bool:
+    normalized_ip = _normalize_resolved_ip(target_ip)
+    if normalized_ip in _FORBIDDEN_IPS:
+        return False
+    if (
+        normalized_ip.is_link_local
+        or normalized_ip.is_multicast
+        or normalized_ip.is_unspecified
+        or normalized_ip.is_reserved
+    ):
+        return False
+    return normalized_ip.is_loopback or normalized_ip.is_private
 
 
-def _extract_matched_hosts(route: dict) -> list[str]:
-    hosts: list[str] = []
-    for match in route.get("match", []):
-        if not isinstance(match, dict):
+def _validate_admin_host(host: str) -> None:
+    normalized_host = host.strip().lower()
+    if normalized_host in _FORBIDDEN_HOSTS:
+        raise ValueError(f"Blocked Caddy admin target: {normalized_host!r}")
+
+    try:
+        target_ip = ip_address(normalized_host)
+    except ValueError:
+        if normalized_host not in _ALLOWED_ADMIN_HOSTS:
+            raise ValueError(f"Caddy admin host is not allowed: {normalized_host!r}") from None
+        return
+
+    if not _is_allowed_admin_ip(target_ip):
+        raise ValueError(f"Caddy admin IP target is not allowed: {target_ip!s}")
+
+
+def _authority_header(host: str, port: int | None) -> str:
+    authority_host = host
+    if ":" in authority_host:
+        authority_host = f"[{authority_host}]"
+    return f"{authority_host}:{port}" if port is not None else authority_host
+
+
+async def _resolve_target_ips(host: str, port: int | None) -> list[ResolvedIPAddress]:
+    try:
+        return [ip_address(host)]
+    except ValueError:
+        loop = asyncio.get_running_loop()
+        try:
+            address_info = await asyncio.wait_for(
+                loop.getaddrinfo(
+                    host,
+                    port,
+                    family=socket.AF_UNSPEC,
+                    type=socket.SOCK_STREAM,
+                    proto=socket.IPPROTO_TCP,
+                ),
+                timeout=_DNS_RESOLUTION_TIMEOUT,
+            )
+        except asyncio.TimeoutError as exc:
+            raise ValueError(f"DNS resolution timed out for Caddy admin host: {host!r}") from exc
+        except OSError as exc:
+            raise ValueError(f"Failed to resolve Caddy admin host: {host!r}") from exc
+
+    resolved_ips: list[ResolvedIPAddress] = []
+    seen: set[ResolvedIPAddress] = set()
+    for *_prefix, sockaddr in address_info:
+        if not sockaddr or not sockaddr[0]:
             continue
-        route_hosts = match.get("host", [])
-        if not isinstance(route_hosts, list):
+        target_ip = ip_address(sockaddr[0])
+        if target_ip in seen:
             continue
-        for host in route_hosts:
-            if isinstance(host, str) and host:
-                hosts.append(host)
-    return hosts
+        seen.add(target_ip)
+        resolved_ips.append(target_ip)
+
+    if not resolved_ips:
+        raise ValueError(f"Failed to resolve Caddy admin host: {host!r}")
+    return resolved_ips
 
 
-def _flatten_route_handlers(route: dict) -> list[dict]:
-    handlers: list[dict] = []
-    for handler in route.get("handle", []):
-        if not isinstance(handler, dict):
-            continue
-        if handler.get("handler") == "subroute":
-            for subroute in handler.get("routes", []):
-                if not isinstance(subroute, dict):
-                    continue
-                for subhandler in subroute.get("handle", []):
-                    if isinstance(subhandler, dict):
-                        handlers.append(subhandler)
-            continue
-        handlers.append(handler)
-    return handlers
+def _normalize_admin_api_path(path: str) -> str:
+    normalized = path.strip() or "/load"
+    if not normalized.startswith("/"):
+        raise ValueError("admin_api_path must start with '/'.")
+    if "?" in normalized or "#" in normalized:
+        raise ValueError("admin_api_path must not include query or fragment.")
+    if normalized != "/load":
+        raise ValueError("Only the Caddy /load endpoint is supported.")
+    return normalized
 
 
-def _extract_logger_directives(host: str, server_body: dict, logging_config: dict) -> tuple[bool, str]:
-    server_logs = server_body.get("logs", {})
-    logger_names = server_logs.get("logger_names", {}) if isinstance(server_logs, dict) else {}
-    host_loggers = logger_names.get(host, []) if isinstance(logger_names, dict) else []
-    if not isinstance(host_loggers, list) or not host_loggers:
-        return False, ""
-
-    default_log = False
-    lines: list[str] = []
-    for logger_name in host_loggers:
-        if not isinstance(logger_name, str):
-            continue
-        logger_body = logging_config.get(logger_name, {}) if isinstance(logging_config, dict) else {}
-        if not isinstance(logger_body, dict):
-            continue
-        writer = logger_body.get("writer", {})
-        encoder = logger_body.get("encoder", {})
-        filename = writer.get("filename") if isinstance(writer, dict) else None
-        encoder_format = encoder.get("format") if isinstance(encoder, dict) else None
-
-        if filename == "/var/log/caddy/access.log" and encoder_format == "json":
-            default_log = True
-            continue
-
-        if isinstance(filename, str) and filename:
-            roll_size_mb = writer.get("roll_size_mb") if isinstance(writer, dict) else None
-            if isinstance(roll_size_mb, int) and roll_size_mb > 0:
-                lines.extend([
-                    f"output file {filename} {{",
-                    f"    roll_size {roll_size_mb}mb",
-                    "}",
-                ])
-            else:
-                lines.append(f"output file {filename}")
-        if encoder_format == "json":
-            lines.append("format json")
-
-    return default_log, "\n".join(lines).strip()
+def _validate_caddyfile_size(caddyfile: str) -> None:
+    if len(caddyfile.encode("utf-8")) > _MAX_CADDYFILE_BYTES:
+        raise CaddyServiceError(f"Caddyfile exceeds the {_MAX_CADDYFILE_BYTES} byte limit.")
 
 
-def _build_imported_site_definition(
-    host: str,
-    handlers: list[dict],
-    server_body: dict,
-    logging_config: dict,
-    *,
-    template_name_prefix: str,
-) -> ImportedSiteDefinition | None:
-    upstream: str | None = None
-    reverse_proxy_options: list[str] = []
-    encode_directives = ""
-    header_lines: list[str] = []
-    request_body_directives = ""
-    log_directives = ""
-    imports: list[str] = []
-    pending_security_headers = dict(_SECURITY_HEADERS)
+class CaddyAdminClient:
+    _LIMITS = httpx.Limits(max_connections=20, max_keepalive_connections=10)
 
-    default_log, extracted_log_directives = _extract_logger_directives(host, server_body, logging_config)
-    if default_log:
-        imports.append("default_log")
-    elif extracted_log_directives:
-        log_directives = extracted_log_directives
+    def __init__(self, base_url: str, timeout_seconds: float) -> None:
+        self._base_url = self._normalize_base_url(base_url)
+        self._timeout = httpx.Timeout(timeout_seconds)
+        self._client: httpx.AsyncClient | None = None
 
-    for handler in handlers:
-        handler_name = handler.get("handler")
+    @staticmethod
+    def _normalize_base_url(base_url: str) -> str:
+        parsed = urlsplit(base_url)
+        if parsed.scheme not in {"http", "https"}:
+            raise ValueError(f"Unsupported Caddy admin scheme: {parsed.scheme!r}")
+        if not parsed.hostname:
+            raise ValueError("Caddy admin URL must include a host.")
+        if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+            raise ValueError("Caddy admin URL must not include a path, query, or fragment.")
 
-        if handler_name == "headers":
-            response = handler.get("response", {})
-            if isinstance(response, dict):
-                set_headers = response.get("set", {})
-                if isinstance(set_headers, dict):
-                    for header_name, values in set_headers.items():
-                        if not isinstance(header_name, str) or not isinstance(values, list) or len(values) != 1:
-                            continue
-                        header_value = values[0]
-                        if not isinstance(header_value, str):
-                            continue
-                        if pending_security_headers.get(header_name) == header_value:
-                            pending_security_headers.pop(header_name, None)
-                            continue
-                        header_lines.append(f'{header_name} "{header_value}"')
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        host = parsed.hostname
+        if ":" in host:
+            host = f"[{host}]"
+        return urlunsplit((parsed.scheme, f"{host}:{port}", "", "", ""))
 
-                deleted_headers = response.get("delete", [])
-                if isinstance(deleted_headers, list):
-                    for header_name in deleted_headers:
-                        if isinstance(header_name, str) and header_name:
-                            header_lines.append(f"-{header_name}")
-            continue
+    def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=self._timeout, limits=self._LIMITS)
+        return self._client
 
-        if handler_name == "request_body":
-            max_size = handler.get("max_size")
-            if isinstance(max_size, int) and max_size > 0:
-                request_body_directives = f"max_size {_format_size_bytes(max_size)}"
-            continue
+    async def aclose(self) -> None:
+        if self._client is None:
+            return
+        await self._client.aclose()
+        self._client = None
 
-        if handler_name == "encode":
-            encoding_names: list[str] = []
-            prefer = handler.get("prefer", [])
-            if isinstance(prefer, list):
-                encoding_names.extend(name for name in prefer if isinstance(name, str))
-            encodings = handler.get("encodings", {})
-            if isinstance(encodings, dict):
-                for name in encodings:
-                    if isinstance(name, str) and name not in encoding_names:
-                        encoding_names.append(name)
-            encode_directives = " ".join(encoding_names)
-            continue
+    async def __aenter__(self) -> CaddyAdminClient:
+        return self
 
-        if handler_name == "reverse_proxy":
-            upstreams = handler.get("upstreams", [])
-            if isinstance(upstreams, list) and len(upstreams) == 1 and isinstance(upstreams[0], dict):
-                dial = upstreams[0].get("dial")
-                if isinstance(dial, str) and dial:
-                    upstream = dial
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.aclose()
 
-            transport = handler.get("transport", {})
-            if isinstance(transport, dict) and transport.get("protocol") == "http":
-                keep_alive = transport.get("keep_alive", {})
-                if isinstance(keep_alive, dict):
-                    idle_timeout = keep_alive.get("idle_timeout")
-                    if isinstance(idle_timeout, int) and idle_timeout > 0:
-                        reverse_proxy_options.extend([
-                            "transport http {",
-                            f"    keepalive {_format_duration_ns(idle_timeout)}",
-                            "}",
-                        ])
+    async def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
+        parsed = urlsplit(self._base_url)
+        host = (parsed.hostname or "").lower()
 
-            request_headers = handler.get("headers", {}).get("request", {}).get("set", {})
-            if isinstance(request_headers, dict):
-                for header_name, values in request_headers.items():
-                    if not isinstance(header_name, str) or not isinstance(values, list) or len(values) != 1:
-                        continue
-                    header_value = values[0]
-                    if not isinstance(header_value, str):
-                        continue
-                    if header_name == "Host" and header_value == "{http.request.host}":
-                        header_value = "{host}"
-                    reverse_proxy_options.append(f"header_up {header_name} {header_value}")
-            continue
+        try:
+            _validate_admin_host(host)
+            resolved_ips = await _resolve_target_ips(host, parsed.port)
+            validated_ip: ResolvedIPAddress | None = None
+            for target_ip in resolved_ips:
+                if not _is_allowed_admin_ip(target_ip):
+                    raise CaddyServiceError(
+                        "Only loopback or private Caddy admin targets are allowed."
+                    )
+                if validated_ip is None:
+                    validated_ip = target_ip
 
-    if not pending_security_headers:
-        imports.insert(0, "security_headers")
+            if validated_ip is None:
+                raise CaddyServiceError(f"Failed to resolve Caddy admin host: {host!r}")
 
-    prepared = prepare_domain_directives(
-        upstream="{{upstream}}" if upstream else None,
-        reverse_proxy_options="\n".join(reverse_proxy_options),
-        encode_directives=encode_directives,
-        header_directives="\n".join(header_lines),
-        request_body_directives=request_body_directives,
-        log_directives=log_directives,
-        tls_directives="",
-        basic_auth_directives="",
-        custom_directives="",
-    )
-    if prepared.errors:
-        return None
+            pinned_host = str(validated_ip)
+            if ":" in pinned_host:
+                pinned_host = f"[{pinned_host}]"
 
-    directives = prepared.caddy_directives or ""
-    if imports:
-        directives = "\n\n".join([*(f"import {name}" for name in imports), directives]).strip()
-    if not directives:
-        return None
+            endpoint = urlunsplit((parsed.scheme, f"{pinned_host}:{parsed.port}", path, "", ""))
+            response = await self._get_client().request(
+                method,
+                endpoint,
+                headers={"Host": _authority_header(parsed.hostname or host, parsed.port)},
+                **kwargs,
+            )
+            response.raise_for_status()
+            return response
+        except CaddyServiceError:
+            raise
+        except httpx.TimeoutException as exc:
+            raise CaddyServiceError("Caddy Admin API request timed out.") from exc
+        except httpx.HTTPStatusError as exc:
+            raise CaddyServiceError(
+                f"Caddy Admin API request failed with status {exc.response.status_code}."
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise CaddyServiceError("Caddy Admin API unavailable.") from exc
+        except ValueError as exc:
+            raise CaddyServiceError(str(exc)) from exc
 
-    listeners = server_body.get("listen", [])
-    ssl_enabled = True
-    if isinstance(listeners, list) and listeners:
-        normalized_listeners = {listener for listener in listeners if isinstance(listener, str)}
-        ssl_enabled = ":443" in normalized_listeners or all(listener != ":80" for listener in normalized_listeners)
+    async def health(self) -> bool:
+        try:
+            await self._request("GET", "/config/")
+        except CaddyServiceError:
+            return False
+        return True
 
-    return ImportedSiteDefinition(
-        domain=host,
-        template_name=f"{template_name_prefix} ({host})",
-        caddyfile=directives,
-        upstream=upstream,
-        ssl_enabled=ssl_enabled,
-    )
+    async def load_config(self, config: dict[str, Any]) -> None:
+        if not isinstance(config, dict):
+            raise TypeError("config must be a JSON object.")
+        await self._request("POST", "/load", json=config)
+
+    async def get_config(self) -> dict[str, Any]:
+        response = await self._request("GET", "/config/")
+        try:
+            payload = response.json()
+        except json.JSONDecodeError as exc:
+            raise CaddyServiceError("Failed to parse Caddy Admin API JSON response.") from exc
+        if not isinstance(payload, dict):
+            raise CaddyServiceError("Caddy Admin API response must be a JSON object.")
+        return payload
+
+    async def get_version(self) -> str | None:
+        """Fetch Caddy version from the Admin API root endpoint."""
+        try:
+            response = await self._request("GET", "/")
+            payload = response.text.strip()
+            # Root endpoint returns plain text like "Caddy v2.8.4 h1:..."
+            if payload.startswith("Caddy "):
+                parts = payload.split()
+                if len(parts) >= 2:
+                    return parts[1]  # e.g., "v2.8.4"
+            return None
+        except CaddyServiceError:
+            return None
 
 
 class CaddyService:
@@ -284,15 +258,16 @@ class CaddyService:
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None
         self._caddy_path: str | None = None
-        self._checked_caddy = False
+        self._deploy_lock = asyncio.Lock()
 
     def _find_caddy_binary(self) -> str | None:
-        if self._checked_caddy:
+        if self._caddy_path is not None:
             return self._caddy_path
 
-        self._checked_caddy = True
-        self._caddy_path = shutil.which("caddy")
-        return self._caddy_path
+        caddy_path = shutil.which("caddy")
+        if caddy_path is not None:
+            self._caddy_path = caddy_path
+        return caddy_path
 
     @staticmethod
     async def _kill_process(process: asyncio.subprocess.Process) -> None:
@@ -338,14 +313,18 @@ class CaddyService:
 
     @staticmethod
     def _write_temp_caddyfile(caddyfile: str) -> Path:
-        with NamedTemporaryFile(
-            mode="w",
-            suffix=".caddyfile",
-            delete=False,
-            encoding="utf-8",
-        ) as tmp:
-            tmp.write(caddyfile)
-            return Path(tmp.name)
+        fd, raw_path = mkstemp(suffix=".caddyfile", text=True)
+        path = Path(raw_path)
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as tmp:
+                tmp.write(caddyfile)
+            return path
+        except Exception:
+            with suppress(OSError):
+                os.close(fd)
+            path.unlink(missing_ok=True)
+            raise
 
     @staticmethod
     def _parse_caddy_errors(stderr: str) -> tuple[str, ...]:
@@ -365,6 +344,7 @@ class CaddyService:
         return tuple(errors) if errors else (stderr.strip(),)
 
     async def adapt_caddyfile_to_json(self, caddyfile: str) -> dict:
+        _validate_caddyfile_size(caddyfile)
         tmp_path = await asyncio.to_thread(self._write_temp_caddyfile, caddyfile)
 
         try:
@@ -403,11 +383,11 @@ class CaddyService:
         self._client = None
 
     @staticmethod
-    def _base_url(server: CaddyServer) -> str:
-        if not isinstance(server.api_port, int) or not 1 <= server.api_port <= 65535:
+    def _settings_base_url(api_url: str, api_port: int) -> str:
+        if not isinstance(api_port, int) or not 1 <= api_port <= 65535:
             raise ValueError("api_port must be a valid integer port between 1 and 65535.")
 
-        parsed = urlsplit(server.api_url)
+        parsed = urlsplit(api_url)
         if parsed.scheme not in {"http", "https"}:
             raise ValueError(f"Unsupported Caddy admin scheme: {parsed.scheme!r}")
         if not parsed.hostname:
@@ -420,98 +400,29 @@ class CaddyService:
         host = parsed.hostname
         if ":" in host:
             host = f"[{host}]"
-        return urlunsplit((parsed.scheme, f"{host}:{server.api_port}", "", "", ""))
+        return urlunsplit((parsed.scheme, f"{host}:{api_port}", "", "", ""))
 
     @staticmethod
-    def _relative_admin_api_path(server: CaddyServer) -> str:
-        path = server.admin_api_path
-        if not isinstance(path, str):
-            raise ValueError("admin_api_path must be a string.")
-
-        path = path.strip()
-        if path.startswith(("http://", "https://", "//")):
-            raise ValueError("admin_api_path must be a relative path, not an absolute URL.")
-        parsed = urlsplit(path)
-        if parsed.scheme or parsed.netloc:
-            raise ValueError("admin_api_path must be a relative path, not an absolute URL.")
-        normalized = path.lstrip("/")
-        if not normalized:
-            raise ValueError("admin_api_path must not be empty.")
-        return normalized
-
-    def _endpoint(self, server: CaddyServer) -> str:
-        return urljoin(f"{self._base_url(server)}/", self._relative_admin_api_path(server))
-
-    @staticmethod
-    def _load_endpoint(server: CaddyServer) -> str:
-        return urljoin(f"{CaddyService._base_url(server)}/", "load")
-
-    @staticmethod
-    def _pinned_base_url(server: CaddyServer, validated_ip: ResolvedIPAddress) -> str:
-        parsed = urlsplit(CaddyService._base_url(server))
-        host = str(validated_ip)
-        if ":" in host:
-            host = f"[{host}]"
-        return urlunsplit((parsed.scheme, f"{host}:{parsed.port}", "", "", ""))
-
-    @staticmethod
-    def _request_host_header(server: CaddyServer) -> str:
-        parsed = urlsplit(CaddyService._base_url(server))
+    def _request_host_header(api_url: str, api_port: int) -> str:
+        parsed = urlsplit(CaddyService._settings_base_url(api_url, api_port))
         if not parsed.hostname:
             raise ValueError("Caddy admin URL must include a host.")
-        return parsed.hostname
+        return _authority_header(parsed.hostname, parsed.port)
 
-    @staticmethod
-    def _normalize_resolved_ip(target_ip: ResolvedIPAddress) -> ResolvedIPAddress:
-        return getattr(target_ip, "ipv4_mapped", None) or target_ip
+    async def _resolve_target_ips(self, host: str, port: int | None) -> list[ResolvedIPAddress]:
+        return await _resolve_target_ips(host, port)
 
-    @classmethod
-    def _is_forbidden_resolved_ip(cls, target_ip: ResolvedIPAddress) -> bool:
-        normalized_ip = cls._normalize_resolved_ip(target_ip)
-        return normalized_ip.is_link_local or normalized_ip in _FORBIDDEN_IPS
-
-    async def _resolve_target_ips(self, host: str, port: int | None) -> set[ResolvedIPAddress]:
-        try:
-            return {ip_address(host)}
-        except ValueError:
-            loop = asyncio.get_running_loop()
-            try:
-                address_info = await asyncio.wait_for(
-                    loop.getaddrinfo(
-                        host,
-                        port,
-                        family=socket.AF_UNSPEC,
-                        type=socket.SOCK_STREAM,
-                        proto=socket.IPPROTO_TCP,
-                    ),
-                    timeout=_DNS_RESOLUTION_TIMEOUT,
-                )
-            except asyncio.TimeoutError as exc:
-                raise ValueError(f"DNS resolution timed out for Caddy admin host: {host!r}") from exc
-            except OSError as exc:
-                raise ValueError(f"Failed to resolve Caddy admin host: {host!r}") from exc
-
-        resolved_ips = {
-            ip_address(sockaddr[0])
-            for *_prefix, sockaddr in address_info
-            if sockaddr and sockaddr[0]
-        }
-        if not resolved_ips:
-            raise ValueError(f"Failed to resolve Caddy admin host: {host!r}")
-        return resolved_ips
-
-    async def _validate_target(self, server: CaddyServer) -> ResolvedIPAddress:
-        parsed = urlsplit(self._base_url(server))
+    async def _validate_settings_target(self, api_url: str, api_port: int) -> ResolvedIPAddress:
+        parsed = urlsplit(self._settings_base_url(api_url, api_port))
         host = (parsed.hostname or "").lower()
-        if host in _FORBIDDEN_HOSTS:
-            raise ValueError(f"Blocked Caddy admin target: {host!r}")
+        _validate_admin_host(host)
 
         resolved_ips = await self._resolve_target_ips(host, parsed.port)
         validated_ip: ResolvedIPAddress | None = None
         for target_ip in resolved_ips:
-            if self._is_forbidden_resolved_ip(target_ip):
+            if not _is_allowed_admin_ip(target_ip):
                 raise ValueError(
-                    f"Link-local or metadata Caddy admin targets are not allowed: {target_ip!s}"
+                    f"Only loopback or private Caddy admin targets are allowed: {target_ip!s}"
                 )
             if validated_ip is None:
                 validated_ip = target_ip
@@ -520,274 +431,69 @@ class CaddyService:
             raise ValueError(f"Failed to resolve Caddy admin host: {host!r}")
         return validated_ip
 
-    async def test_connection(self, server: CaddyServer) -> dict:
-        return await self.fetch_config(server)
-
-    async def fetch_config(self, server: CaddyServer) -> dict:
-        validated_ip = await self._validate_target(server)
-        endpoint = urljoin(f"{self._pinned_base_url(server, validated_ip)}/", self._relative_admin_api_path(server))
-        headers = {"Host": self._request_host_header(server)}
-        client = self._get_client()
-        try:
-            response = await client.get(endpoint, headers=headers)
-            response.raise_for_status()
-        except httpx.HTTPError as exc:
-            raise CaddyServiceError(f"Caddy API request failed: {exc}") from exc
-        try:
-            payload = response.json()
-        except ValueError as exc:
-            raise CaddyServiceError(f"Non-JSON response from Caddy API: {exc}") from exc
-        if not isinstance(payload, dict):
-            raise CaddyServiceError("Caddy API response must be a JSON object.")
-        return payload
-
-    async def deploy_config(self, server: CaddyServer, config_payload: dict) -> dict:
-        validated_ip = await self._validate_target(server)
-        endpoint = urljoin(f"{self._pinned_base_url(server, validated_ip)}/", "load")
-        headers = {"Host": self._request_host_header(server)}
-        client = self._get_client()
-        try:
-            response = await client.post(endpoint, json=config_payload, headers=headers)
-            response.raise_for_status()
-        except httpx.HTTPError as exc:
-            raise CaddyServiceError(f"Caddy API request failed: {exc}") from exc
-        if not response.content:
-            return {"status": "ok"}
-        try:
-            payload = response.json()
-        except ValueError as exc:
-            raise CaddyServiceError(f"Non-JSON response from Caddy API: {exc}") from exc
-        if not isinstance(payload, dict):
-            raise CaddyServiceError("Caddy API response must be a JSON object.")
-        return payload
-
-    @staticmethod
-    def mark_server_online(server: CaddyServer) -> None:
-        server.status = "online"
-        server.last_pinged = datetime.now(UTC)
-
-    @staticmethod
-    def mark_server_offline(server: CaddyServer) -> None:
-        server.status = "offline"
-        server.last_pinged = datetime.now(UTC)
-
-    @staticmethod
-    def extract_sites(config_payload: dict) -> list[str]:
-        apps = config_payload.get("apps")
-        if not isinstance(apps, dict):
-            return []
-
-        http_app = apps.get("http")
-        if not isinstance(http_app, dict):
-            return []
-
-        servers = http_app.get("servers")
-        if not isinstance(servers, dict):
-            return []
-
-        sites: list[str] = []
-        seen_sites: set[str] = set()
-        for server_body in servers.values():
-            if not isinstance(server_body, dict):
-                continue
-            routes = server_body.get("routes", [])
-            if not isinstance(routes, list):
-                continue
-            for route in routes:
-                if not isinstance(route, dict):
-                    continue
-                matches = route.get("match", [])
-                if not isinstance(matches, list):
-                    continue
-                for match in matches:
-                    if not isinstance(match, dict):
-                        continue
-                    hosts = match.get("host", [])
-                    if not isinstance(hosts, list):
-                        continue
-                    for host in hosts:
-                        if not isinstance(host, str) or not host or host in seen_sites:
-                            continue
-                        seen_sites.add(host)
-                        sites.append(host)
-        return sites
-
-    @staticmethod
-    def _server_listen_key(server_body: dict) -> tuple[str, ...]:
-        listeners = server_body.get("listen", [])
-        if not isinstance(listeners, list):
-            return ()
-        return tuple(sorted(listener for listener in listeners if isinstance(listener, str)))
-
-    @staticmethod
-    def _remove_managed_routes(server_body: dict, managed_domains: set[str]) -> None:
-        routes = server_body.get("routes", [])
-        if isinstance(routes, list):
-            server_body["routes"] = [
-                route
-                for route in routes
-                if managed_domains.isdisjoint(_extract_matched_hosts(route) if isinstance(route, dict) else [])
-            ]
-
-        logs = server_body.get("logs")
-        if not isinstance(logs, dict):
-            return
-        logger_names = logs.get("logger_names")
-        if not isinstance(logger_names, dict):
-            return
-
-        filtered_logger_names = {
-            host: names
-            for host, names in logger_names.items()
-            if isinstance(host, str) and host not in managed_domains
-        }
-        if filtered_logger_names:
-            logs["logger_names"] = filtered_logger_names
-            return
-        logs.pop("logger_names", None)
-        if not logs:
-            server_body.pop("logs", None)
-
-    @classmethod
-    def merge_managed_config(
-        cls,
-        existing_config: dict,
-        managed_config: dict,
+    async def validate_and_deploy_caddyfile(
+        self,
+        caddyfile: str,
         *,
-        managed_domains: set[str],
-    ) -> dict:
-        if not managed_domains:
-            return copy.deepcopy(managed_config)
+        api_url: str,
+        api_port: int,
+        admin_api_path: str,
+    ) -> tuple[bool, str]:
+        """Validate and deploy a Caddyfile in one operation.
 
-        merged_config = copy.deepcopy(existing_config)
-        merged_apps = merged_config.setdefault("apps", {})
-        managed_apps = managed_config.get("apps", {})
-        if not isinstance(merged_apps, dict) or not isinstance(managed_apps, dict):
-            return copy.deepcopy(managed_config)
+        Returns:
+            Tuple of (success, message).
+            On success: (True, "Configuration deployed successfully")
+            On failure: (False, error_message)
+        """
+        async with self._deploy_lock:
+            try:
+                config_payload = await self.adapt_caddyfile_to_json(caddyfile)
+            except CaddyServiceError as exc:
+                return False, f"Validation failed: {exc}"
 
-        managed_http = managed_apps.get("http")
-        if not isinstance(managed_http, dict):
-            return merged_config
+            try:
+                validated_ip = await self._validate_settings_target(api_url, api_port)
+                load_path = _normalize_admin_api_path(admin_api_path)
+                base_url = self._settings_base_url(api_url, api_port)
+                parsed = urlsplit(base_url)
+                host_header = self._request_host_header(api_url, api_port)
+                validated_host = str(validated_ip)
+                if ":" in validated_host:
+                    pinned_host = f"[{validated_ip}]:{parsed.port}"
+                else:
+                    pinned_host = f"{validated_ip}:{parsed.port}"
+                endpoint = urlunsplit((parsed.scheme, pinned_host, load_path, "", ""))
+                headers = {"Host": host_header}
+                client = self._get_client()
+                response = await client.post(endpoint, json=config_payload, headers=headers)
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                return False, f"Deployment failed with HTTP {exc.response.status_code}."
+            except httpx.TimeoutException:
+                return False, "Deployment failed: Caddy Admin API request timed out."
+            except httpx.HTTPError:
+                return False, "Deployment failed: Caddy Admin API unavailable."
+            except ValueError as exc:
+                return False, f"Configuration error: {exc}"
+            except CaddyServiceError as exc:
+                return False, f"Deployment failed: {exc}"
 
-        existing_http = merged_apps.get("http")
-        if not isinstance(existing_http, dict):
-            merged_apps["http"] = copy.deepcopy(managed_http)
-        else:
-            existing_servers = existing_http.setdefault("servers", {})
-            if not isinstance(existing_servers, dict):
-                existing_servers = {}
-                existing_http["servers"] = existing_servers
+        return True, "Configuration deployed successfully"
 
-            for server_body in existing_servers.values():
-                if isinstance(server_body, dict):
-                    cls._remove_managed_routes(server_body, managed_domains)
+    async def validate_caddyfile(self, caddyfile: str) -> tuple[bool, str]:
+        """Validate a Caddyfile without deploying.
 
-            managed_servers = managed_http.get("servers", {})
-            if isinstance(managed_servers, dict):
-                for managed_name, managed_server in managed_servers.items():
-                    if not isinstance(managed_server, dict):
-                        continue
-                    target_server_name = next(
-                        (
-                            existing_name
-                            for existing_name, existing_server in existing_servers.items()
-                            if isinstance(existing_server, dict)
-                            and cls._server_listen_key(existing_server) == cls._server_listen_key(managed_server)
-                        ),
-                        None,
-                    )
-                    if target_server_name is None:
-                        candidate_name = managed_name
-                        suffix = 1
-                        while candidate_name in existing_servers:
-                            candidate_name = f"{managed_name}_{suffix}"
-                            suffix += 1
-                        existing_servers[candidate_name] = copy.deepcopy(managed_server)
-                        continue
-
-                    target_server = existing_servers[target_server_name]
-                    target_routes = target_server.setdefault("routes", [])
-                    managed_routes = managed_server.get("routes", [])
-                    if isinstance(target_routes, list) and isinstance(managed_routes, list):
-                        target_routes.extend(copy.deepcopy(managed_routes))
-
-                    managed_logs = managed_server.get("logs")
-                    if isinstance(managed_logs, dict):
-                        target_logs = target_server.setdefault("logs", {})
-                        if isinstance(target_logs, dict):
-                            managed_logger_names = managed_logs.get("logger_names")
-                            if isinstance(managed_logger_names, dict):
-                                target_logger_names = target_logs.setdefault("logger_names", {})
-                                if isinstance(target_logger_names, dict):
-                                    for host, names in managed_logger_names.items():
-                                        if isinstance(host, str):
-                                            target_logger_names[host] = copy.deepcopy(names)
-
-        managed_logging = managed_config.get("logging")
-        if isinstance(managed_logging, dict):
-            merged_logging = merged_config.setdefault("logging", {})
-            if isinstance(merged_logging, dict):
-                merged_logs = merged_logging.setdefault("logs", {})
-                managed_logs = managed_logging.get("logs", {})
-                if isinstance(merged_logs, dict) and isinstance(managed_logs, dict):
-                    for log_name, log_config in managed_logs.items():
-                        merged_logs[log_name] = copy.deepcopy(log_config)
-
-        return merged_config
-
-    @staticmethod
-    def extract_site_definitions(
-        config_payload: dict,
-        *,
-        template_name_prefix: str,
-    ) -> list[ImportedSiteDefinition]:
-        apps = config_payload.get("apps")
-        if not isinstance(apps, dict):
-            return []
-
-        http_app = apps.get("http")
-        if not isinstance(http_app, dict):
-            return []
-
-        servers = http_app.get("servers")
-        if not isinstance(servers, dict):
-            return []
-
-        logging_config = config_payload.get("logging", {}).get("logs", {})
-        imported_sites: list[ImportedSiteDefinition] = []
-        seen_domains: set[str] = set()
-
-        for server_body in servers.values():
-            if not isinstance(server_body, dict):
-                continue
-            routes = server_body.get("routes", [])
-            if not isinstance(routes, list):
-                continue
-            for route in routes:
-                if not isinstance(route, dict):
-                    continue
-                hosts = _extract_matched_hosts(route)
-                if not hosts:
-                    continue
-                handlers = _flatten_route_handlers(route)
-                if not handlers:
-                    continue
-                for host in hosts:
-                    if host in seen_domains:
-                        continue
-                    imported_site = _build_imported_site_definition(
-                        host,
-                        handlers,
-                        server_body,
-                        logging_config if isinstance(logging_config, dict) else {},
-                        template_name_prefix=template_name_prefix,
-                    )
-                    if imported_site is None:
-                        continue
-                    seen_domains.add(host)
-                    imported_sites.append(imported_site)
-
-        return imported_sites
+        Returns:
+            Tuple of (valid, message).
+            On success: (True, "Configuration is valid")
+            On failure: (False, error_message)
+        """
+        try:
+            await self.adapt_caddyfile_to_json(caddyfile)
+            return True, "Configuration is valid"
+        except CaddyServiceError as exc:
+            return False, str(exc)
 
 
 caddy_service = CaddyService()

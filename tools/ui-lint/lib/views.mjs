@@ -25,17 +25,9 @@ export const LOGIN_FAILURE_VIEW_DEFS = [
 ];
 
 export const VIEW_DEFS = [
-    { name: 'dashboard', url: '/', scope: 'dashboard' },
-    { name: 'servers', url: '/servers', scope: 'servers' },
-    { name: 'configs', url: '/templates', scope: 'configs' },
+    { name: 'caddyfile', url: '/caddyfile', scope: 'caddyfile' },
     { name: 'sites', url: '/sites', scope: 'sites' },
-    { name: 'deployments', url: '/deployments', scope: 'deployments' },
-    { name: 'queue', url: '/queue', scope: 'queue' },
-    { name: 'api-keys', url: '/api-keys', scope: 'api-keys' },
-    { name: 'users', url: '/users', scope: 'users' },
-    { name: 'audit-logs', url: '/audit-logs', scope: 'audit-logs' },
-    { name: 'audit-logs-filtered', url: '/audit-logs?action=login_success', scope: 'audit-logs' },
-    { name: 'profile', url: '/profile', scope: 'profile' },
+    { name: 'ssllabs', url: '/ssl-labs', scope: 'ssllabs' },
 ];
 
 /**

@@ -1,94 +1,70 @@
-name: Docker Build
+name: Docker Multi-Arch Build
 
 on:
   push:
     tags:
-      - 'v*'
-  pull_request:
-    branches:
-      - main
-  workflow_dispatch:  # Manual trigger (won't tag as :latest)
+      - "v*"
+  workflow_dispatch:
 
-# Minimal permissions - only what's needed
+concurrency:
+  group: docker-release-caddybuddy
+  cancel-in-progress: false
+
 permissions:
-  contents: write  # Required for creating releases
+  contents: read
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  REGISTRY: docker.cirrio.de
+  PROJECT: caddybuddy
 
 jobs:
-  build:
+  meta:
+    name: Validate build metadata
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      build_date: ${{ steps.meta.outputs.build_date }}
+      version: ${{ steps.meta.outputs.version }}
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
-          fetch-depth: 0  # Full history for robust changelog/release notes handling
+          fetch-depth: 1
 
-      - name: Set up Python for Tests & Linting
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-          cache: 'pip'
-          cache-dependency-path: 'requirements.txt'
-
-      - name: Install Dependencies
+      - name: Validate registry secrets
         run: |
-          python -m venv .venv
-          ./.venv/bin/pip install --upgrade pip
-          ./.venv/bin/pip install -r requirements.txt
-          ./.venv/bin/pip install pytest==8.3.4 pytest-asyncio==0.25.0 ruff==0.9.0
-
-      - name: Lint with Ruff
-        run: ./.venv/bin/ruff check app/ tests/ --output-format=github
-        continue-on-error: true
-
-      - name: Run Unit Tests
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-        run: |
-          export CADDYBUDDY_SECRET_KEY=$(python -c 'import secrets; print(secrets.token_hex(32))')
-          export CADDYBUDDY_ADMIN_PASSWORD=$(python -c 'import secrets; print(secrets.token_urlsafe(24))')
-          ./.venv/bin/pytest tests/ -v --tb=short
-
-      - name: Generate BUILD_INFO
-        run: git rev-parse HEAD > BUILD_INFO
-
-      # Required for arm64 builds on GitHub runners
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          set -euo pipefail
+          test -n "${{ secrets.REGISTRY_USERNAME }}" || {
+            echo "ERROR: Missing REGISTRY_USERNAME secret"
+            exit 1
+          }
+          test -n "${{ secrets.REGISTRY_PASSWORD }}" || {
+            echo "ERROR: Missing REGISTRY_PASSWORD secret"
+            exit 1
+          }
 
       - name: Validate and set build metadata
         id: meta
         run: |
           set -euo pipefail
-          
-          # Validate VERSION file exists
+
           if [ ! -f VERSION ]; then
             echo "ERROR: VERSION file not found"
             exit 1
           fi
-          
-          VERSION="$(cat VERSION | tr -d '[:space:]')"
-          
-          # Validate version format (X.Y or X.Y.Z with optional suffix)
-          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+(\.[0-9]+)?(-[a-zA-Z0-9.]+)?$'; then
-            echo "ERROR: Invalid version format: '$VERSION' (expected: X.Y, X.Y.Z, or X.Y.Z-suffix)"
+
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
+            echo "ERROR: Invalid version format: '$VERSION' (expected: X.Y.Z or X.Y.Z-suffix)"
             exit 1
           fi
-          
-          # Validate tag matches VERSION on tag pushes
+
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             TAG_VERSION="${GITHUB_REF_NAME#v}"
             if [[ "$TAG_VERSION" != "$VERSION" ]]; then
@@ -96,269 +72,347 @@ jobs:
               exit 1
             fi
           fi
-          
+
           BUILD_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          TAG="v${VERSION}"
-          
+
           echo "build_date=${BUILD_DATE}" >> "$GITHUB_OUTPUT"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Build for local smoke test (amd64 only)
+  build:
+    name: Build ${{ matrix.arch }} image
+    needs: meta
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      VERSION: ${{ needs.meta.outputs.version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            platform: linux/amd64
+            cache_scope: caddybuddy-amd64
+            test_image: caddybuddy:test-amd64
+            container_name: caddybuddy-test-amd64
+            mock_container_name: caddybuddy-caddy-mock-amd64
+            network_name: caddybuddy-smoke-amd64
+            image_suffix: amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            cache_scope: caddybuddy-arm64
+            test_image: caddybuddy:test-arm64
+            container_name: caddybuddy-test-arm64
+            mock_container_name: caddybuddy-caddy-mock-arm64
+            network_name: caddybuddy-smoke-arm64
+            image_suffix: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Generate BUILD_INFO
+        run: |
+          set -euo pipefail
+          cat > BUILD_INFO <<EOF
+          APP_VERSION=${{ needs.meta.outputs.version }}
+          GIT_SHA=${{ github.sha }}
+          BUILD_DATE=${{ needs.meta.outputs.build_date }}
+          EOF
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          cache-binary: false
+          driver-opts: |
+            image=moby/buildkit:v0.16.0
+
+      - name: Log in to registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Build image for smoke test
         run: |
           set -euo pipefail
           docker buildx build \
-            --platform linux/amd64 \
-            --target runtime \
+            --pull \
+            --platform "${{ matrix.platform }}" \
             --load \
-            --cache-from type=gha,scope=amd64 \
-            --cache-to type=gha,mode=max,scope=amd64 \
-            --build-arg "APP_VERSION=${{ steps.meta.outputs.tag }}" \
-            --build-arg "BUILD_DATE=${{ steps.meta.outputs.build_date }}" \
+            --cache-from type=gha,scope=${{ matrix.cache_scope }} \
+            --cache-to type=gha,mode=max,scope=${{ matrix.cache_scope }} \
+            --build-arg "APP_VERSION=${{ needs.meta.outputs.version }}" \
             --build-arg "GIT_SHA=${{ github.sha }}" \
-            -t caddybuddy:test \
+            --build-arg "BUILD_DATE=${{ needs.meta.outputs.build_date }}" \
+            -t "${{ matrix.test_image }}" \
             -f docker/Dockerfile \
             .
 
       - name: Smoke test
         run: |
           set -euo pipefail
-          
-          # Start container in background (no --rm so we can inspect logs on failure)
-          docker run -d --name caddybuddy-test \
-            -p 127.0.0.1:0:8000 \
-            -e CADDYBUDDY_SECRET_KEY="ci-smoke-test-key-32-characters-long" \
-            -e CADDYBUDDY_ALLOW_INSECURE_DEFAULTS="true" \
-            caddybuddy:test
-          
-          # Wait for startup with active polling (max 30s)
-          echo "Waiting for container to start..."
-          for i in $(seq 1 30); do
-            # Check if container is still running
-            if ! docker ps -q -f name=caddybuddy-test | grep -q .; then
+
+          cleanup() {
+            docker rm -f "${{ matrix.container_name }}" 2>/dev/null || true
+            docker rm -f "${{ matrix.mock_container_name }}" 2>/dev/null || true
+            docker network rm "${{ matrix.network_name }}" 2>/dev/null || true
+            rm -rf smoke-test
+          }
+          trap cleanup EXIT
+
+          mkdir -p smoke-test/data
+          printf '### MANAGED BY CADDYBUDDY ###\n' > smoke-test/Caddyfile
+
+          docker network create "${{ matrix.network_name }}"
+
+          docker run -d --name "${{ matrix.mock_container_name }}" \
+            --network "${{ matrix.network_name }}" \
+            python:3.13-alpine \
+            python -c 'from http.server import BaseHTTPRequestHandler, HTTPServer
+          class H(BaseHTTPRequestHandler):
+              def do_GET(self):
+                  self.send_response(200)
+                  self.send_header("Content-Type", "application/json")
+                  self.end_headers()
+                  self.wfile.write(b"{}")
+              def do_POST(self):
+                  self.send_response(200)
+                  self.send_header("Content-Type", "application/json")
+                  self.end_headers()
+                  self.wfile.write(b"{}")
+              def log_message(self, *_):
+                  pass
+          HTTPServer(("0.0.0.0", 2019), H).serve_forever()'
+
+          docker run -d --name "${{ matrix.container_name }}" \
+            --platform "${{ matrix.platform }}" \
+            --network "${{ matrix.network_name }}" \
+            -e CADDYBUDDY_SECRET_KEY="ci-smoke-test-key-not-for-production" \
+            -e CADDYBUDDY_ADMIN_PASSWORD="ci-smoke-test-admin-password" \
+            -e CADDYBUDDY_MOUNTED_CADDYFILE_PATH="/app/Caddyfile" \
+            -e CADDYBUDDY_CADDY_ADMIN_URL="http://${{ matrix.mock_container_name }}:2019" \
+            -e LOG_LEVEL="DEBUG" \
+            -v "$PWD/smoke-test/Caddyfile:/app/Caddyfile" \
+            -v "$PWD/smoke-test/data:/app/data" \
+            "${{ matrix.test_image }}"
+
+          echo "Waiting for CaddyBuddy health endpoint..."
+          for i in $(seq 1 45); do
+            if ! docker ps -q -f name="${{ matrix.container_name }}" | grep -q .; then
               echo "✗ Container exited during startup after ${i}s"
               echo "=== Container logs ==="
-              docker logs caddybuddy-test 2>&1 || echo "Could not retrieve logs"
-              docker rm -f caddybuddy-test 2>/dev/null || true
+              docker logs "${{ matrix.container_name }}" 2>&1 || echo "Could not retrieve logs"
               exit 1
             fi
-            
-            # Health check from inside container (avoids host header validation issues)
-            if docker exec caddybuddy-test curl -fsS --max-time 2 \
-                http://127.0.0.1:8000/api/v1/health > /dev/null 2>&1; then
-              echo "✓ Container ready after ${i}s"
-              docker stop caddybuddy-test
-              docker rm caddybuddy-test
+
+            if docker exec "${{ matrix.container_name }}" \
+                python -c 'import sys, urllib.request; response = urllib.request.urlopen("http://127.0.0.1:8000/api/v1/health", timeout=3); sys.exit(0 if response.status < 500 else 1)' > /dev/null 2>&1; then
+              echo "✓ Health check passed after ${i}s"
               exit 0
             fi
+
             sleep 1
           done
-          
-          # Timeout after 30s
-          echo "✗ Health check timeout after 30s"
+
+          echo "✗ Health check timeout after 45s"
           echo "=== Container logs ==="
-          docker logs caddybuddy-test 2>&1 || echo "Could not retrieve logs"
+          docker logs "${{ matrix.container_name }}" 2>&1 || echo "Could not retrieve logs"
           echo "=== Container status ==="
-          docker ps -a -f name=caddybuddy-test
-          docker stop caddybuddy-test 2>/dev/null || true
-          docker rm -f caddybuddy-test 2>/dev/null || true
+          docker ps -a -f name="${{ matrix.container_name }}"
           exit 1
 
-      - name: Trivy scan Python dependencies (requirements.txt)
-        uses: aquasecurity/trivy-action@0.35.0
-        with:
-          scan-type: 'fs'
-          scan-ref: 'requirements.txt'
-          format: 'table'
-          exit-code: '1'
-          ignore-unfixed: true
-          severity: 'CRITICAL,HIGH'
-          timeout: '5m'
-
-      - name: Trivy vulnerability scan (amd64)
-        uses: aquasecurity/trivy-action@0.35.0
-        with:
-          image-ref: 'caddybuddy:test'
-          format: 'table'
-          exit-code: '1'
-          ignore-unfixed: true
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
-          timeout: '10m'
-          trivyignores: '.trivyignore'
-
-      - name: Build for security scan (arm64)
+      - name: Tag image for push
         run: |
           set -euo pipefail
-          docker buildx build \
-            --platform linux/arm64 \
-            --target runtime \
-            --load \
-            --cache-from type=gha,scope=arm64 \
-            --cache-to type=gha,mode=max,scope=arm64 \
-            --build-arg "APP_VERSION=${{ steps.meta.outputs.tag }}" \
-            --build-arg "BUILD_DATE=${{ steps.meta.outputs.build_date }}" \
-            --build-arg "GIT_SHA=${{ github.sha }}" \
-            -t caddybuddy:test-arm64 \
-            -f docker/Dockerfile \
-            .
+          IMAGE_NAME="${{ env.REGISTRY }}/${{ env.PROJECT }}"
+          docker tag "${{ matrix.test_image }}" "${IMAGE_NAME}:${VERSION}-${{ matrix.image_suffix }}"
 
-      - name: Trivy vulnerability scan (arm64)
+      - name: Trivy vulnerability scan
         uses: aquasecurity/trivy-action@0.35.0
         with:
-          image-ref: 'caddybuddy:test-arm64'
-          format: 'table'
-          exit-code: '1'
+          cache: "false"
+          image-ref: "${{ matrix.test_image }}"
+          format: "table"
+          exit-code: "1"
           ignore-unfixed: true
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
-          timeout: '10m'
-          trivyignores: '.trivyignore'
+          vuln-type: "os,library"
+          severity: "CRITICAL,HIGH"
+          timeout: "10m"
+          trivyignores: ".trivyignore"
 
-      - name: Build & push multi-arch image (amd64 + arm64)
+      - name: Push arch-specific image
         run: |
           set -euo pipefail
-          
-          # Build tags array to prevent shell injection
-          TAGS=()
-          TAGS+=("-t" "giiibates/caddybuddy:${{ steps.meta.outputs.tag }}")
-          
-          # Only tag :latest on actual tag pushes (not workflow_dispatch)
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            TAGS+=("-t" "giiibates/caddybuddy:latest")
-            echo "Building release: tagging as :latest"
-          else
-            echo "Manual build: NOT tagging as :latest"
+          IMAGE_NAME="${{ env.REGISTRY }}/${{ env.PROJECT }}"
+          docker push "${IMAGE_NAME}:${VERSION}-${{ matrix.image_suffix }}"
+
+  create-manifest:
+    name: Create multi-arch manifest
+    needs: [meta, build]
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-24.04
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    permissions:
+      contents: read
+
+    steps:
+      - name: Log in to registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Create and push manifest
+        run: |
+          set -euo pipefail
+          IMAGE_NAME="${{ env.REGISTRY }}/${{ env.PROJECT }}"
+          VERSION="${{ needs.meta.outputs.version }}"
+
+          docker buildx imagetools create \
+            --tag "${IMAGE_NAME}:${VERSION}" \
+            "${IMAGE_NAME}:${VERSION}-amd64" \
+            "${IMAGE_NAME}:${VERSION}-arm64"
+
+          if [[ "$VERSION" != *"-"* ]]; then
+            docker buildx imagetools create \
+              --tag "${IMAGE_NAME}:latest" \
+              "${IMAGE_NAME}:${VERSION}-amd64" \
+              "${IMAGE_NAME}:${VERSION}-arm64"
           fi
-          
-          # Build and push (use both arch caches)
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --target runtime \
-            --cache-from type=gha,scope=amd64 \
-            --cache-from type=gha,scope=arm64 \
-            --cache-to type=gha,mode=max,scope=final \
-            --build-arg "APP_VERSION=${{ steps.meta.outputs.tag }}" \
-            --build-arg "BUILD_DATE=${{ steps.meta.outputs.build_date }}" \
-            --build-arg "GIT_SHA=${{ github.sha }}" \
-            "${TAGS[@]}" \
-            -f docker/Dockerfile \
-            --push \
-            .
 
-      - name: Cleanup old Docker Hub tags
-        if: startsWith(github.ref, 'refs/tags/v')
-        continue-on-error: true
-        env:
-          DH_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          
-          REPO="${DH_USERNAME}/caddybuddy"
-          CURRENT_TAG="${{ steps.meta.outputs.tag }}"
-          KEEP_COUNT=3  # Keep latest + 3 most recent version tags
-          
-          echo "Fetching Docker Hub token..."
-          TOKEN=$(jq -n \
-            --arg user "$DH_USERNAME" \
-            --arg pass "$DH_TOKEN" \
-            '{"username": $user, "password": $pass}' | \
-            curl -s -X POST \
-              -H "Content-Type: application/json" \
-              -d @- \
-              https://hub.docker.com/v2/users/login/ | jq -r .token)
-          
-          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
-            echo "ERROR: Failed to authenticate with Docker Hub"
-            exit 1
+          echo "Pushed manifests:"
+          echo "  ${IMAGE_NAME}:${VERSION}"
+          if [[ "$VERSION" != *"-"* ]]; then
+            echo "  ${IMAGE_NAME}:latest"
           fi
-          
-          # Fetch all tags with pagination
-          echo "Fetching all tags for ${REPO}..."
-          ALL_TAGS=""
-          NEXT_URL="https://hub.docker.com/v2/repositories/${REPO}/tags/?page_size=100"
-          
-          while [ -n "$NEXT_URL" ] && [ "$NEXT_URL" != "null" ]; do
-            RESPONSE=$(curl -s -H "Authorization: JWT ${TOKEN}" "$NEXT_URL")
-            PAGE_TAGS=$(echo "$RESPONSE" | jq -r '.results[].name')
-            ALL_TAGS="${ALL_TAGS}${PAGE_TAGS}\n"
-            NEXT_URL=$(echo "$RESPONSE" | jq -r '.next // empty')
-          done
-          
-          # Get version tags sorted by semver (newest first), keep top N
-          VERSIONED_TAGS=$(echo -e "$ALL_TAGS" | grep -E '^v[0-9]' | sort -Vr | head -n "$KEEP_COUNT")
-          
-          echo "Current tag: ${CURRENT_TAG}"
-          echo "Keeping version tags: ${VERSIONED_TAGS}"
-          
-          # Delete tags not in keep list (only touch version tags)
-          echo -e "$ALL_TAGS" | while read -r TAG; do
-            [ -z "$TAG" ] && continue
-            
-            # Only manage version tags (v* format), never delete other tags
-            if ! echo "$TAG" | grep -qE '^v[0-9]'; then
-              echo "Skipping non-version tag: ${TAG}"
-              continue
-            fi
-            
-            if [ "$TAG" = "$CURRENT_TAG" ] || echo "$VERSIONED_TAGS" | grep -qx "$TAG"; then
-              echo "Keeping version tag: ${TAG}"
-            else
-              echo "Deleting old version tag: ${TAG}"
-              curl -s -X DELETE \
-                -H "Authorization: JWT ${TOKEN}" \
-                "https://hub.docker.com/v2/repositories/${REPO}/tags/${TAG}/" || \
-                echo "Warning: Failed to delete ${TAG}"
-            fi
-          done
-          
-          echo "✓ Cleanup completed. Kept 'latest' + ${KEEP_COUNT} most recent versions."
 
-      - name: Generate Release Notes
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          set -euo pipefail
-          VERSION="${{ steps.meta.outputs.version }}"
-          export VERSION
-          python <<'PY'
-          from pathlib import Path
-          import os
+  create-release:
+    name: Create GitHub Release
+    needs: [meta, create-manifest]
+    if: needs.create-manifest.result == 'success'
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      VERSION: ${{ needs.meta.outputs.version }}
+      IMAGE_NAME: ${{ env.REGISTRY }}/${{ env.PROJECT }}
+    permissions:
+      contents: write
 
-          version = os.environ["VERSION"]
-          changelog_path = Path("CHANGELOG.md")
-          notes_path = Path("RELEASE_NOTES.md")
-          header = f"## [{version}]"
-
-          lines = changelog_path.read_text(encoding="utf-8").splitlines()
-          start_index = next((index for index, line in enumerate(lines) if line.startswith(header)), None)
-          if start_index is None:
-              raise SystemExit(f"Missing changelog entry for version {version} in CHANGELOG.md")
-
-          collected: list[str] = []
-          for index, line in enumerate(lines[start_index:], start=start_index):
-              if index > start_index and line.startswith("## ["):
-                  break
-              if line.startswith("<details"):
-                  break
-              collected.append(line)
-
-          notes = "\n".join(collected).strip()
-          if not notes:
-              raise SystemExit(f"Changelog entry for version {version} is empty")
-
-          notes_path.write_text(f"{notes}\n", encoding="utf-8")
-          PY
-
-          echo "Generated release notes:"
-          cat RELEASE_NOTES.md
-
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
         with:
-          tag_name: ${{ steps.meta.outputs.tag }}
-          name: ${{ steps.meta.outputs.tag }}
-          body_path: RELEASE_NOTES.md
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
+
+      - name: Create or update GitHub Release
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('node:fs');
+            const version = process.env.VERSION;
+            const imageName = process.env.IMAGE_NAME;
+            const isPrerelease = version.includes('-');
+
+            function extractVersionSection(markdown, targetVersion) {
+              const headingPattern = /^## \[([^\]]+)\] - .+$/gm;
+              let startIndex = -1;
+              let endIndex = markdown.length;
+              let match;
+
+              while ((match = headingPattern.exec(markdown)) !== null) {
+                if (startIndex === -1 && match[1] === targetVersion) {
+                  startIndex = match.index;
+                  continue;
+                }
+                if (startIndex !== -1) {
+                  endIndex = match.index;
+                  break;
+                }
+              }
+
+              if (startIndex === -1) {
+                return null;
+              }
+              return markdown.slice(startIndex, endIndex).trim();
+            }
+
+            let changelogSection = null;
+            try {
+              const changelogText = fs.readFileSync('CHANGELOG.md', 'utf8');
+              changelogSection = extractVersionSection(changelogText, version);
+              if (!changelogSection) {
+                console.log('No matching changelog section found for version ' + version);
+              }
+            } catch (err) {
+              console.log('Could not read CHANGELOG.md: ' + err.message);
+            }
+
+            const tags = [
+              '- `' + imageName + ':' + version + '` (multi-arch)',
+              '- `' + imageName + ':' + version + '-amd64`',
+              '- `' + imageName + ':' + version + '-arm64`'
+            ];
+
+            if (!isPrerelease) {
+              tags.push('- `' + imageName + ':latest`');
+            }
+
+            const body = [
+              '## CaddyBuddy ' + version,
+              '',
+              '**Docker Image:** `docker pull ' + imageName + ':' + version + '`',
+              '',
+              '### Available Tags',
+              ...tags,
+              '',
+              '### Changelog',
+              changelogSection || '_No matching CHANGELOG entry found for this version._',
+              '',
+              '**Source:** [CaddyBuddy Repository](https://github.com/' + context.repo.owner + '/' + context.repo.repo + ')'
+            ].join('\n');
+
+            try {
+              await github.rest.repos.createRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: 'v' + version,
+                name: 'CaddyBuddy ' + version,
+                body: body,
+                draft: false,
+                prerelease: isPrerelease
+              });
+              console.log('Created release v' + version);
+            } catch (e) {
+              if (e.status === 422) {
+                console.log('Release v' + version + ' already exists, updating...');
+                const { data: release } = await github.rest.repos.getReleaseByTag({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  tag: 'v' + version
+                });
+                await github.rest.repos.updateRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  release_id: release.id,
+                  tag_name: 'v' + version,
+                  name: 'CaddyBuddy ' + version,
+                  body: body,
+                  draft: false,
+                  prerelease: isPrerelease
+                });
+                console.log('Updated release v' + version);
+              } else {
+                throw e;
+              }
+            }

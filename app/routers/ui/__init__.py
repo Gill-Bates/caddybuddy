@@ -4,36 +4,32 @@
 # Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
 #
 
-"""Aggregated UI router."""
+"""Aggregated UI router - simplified architecture."""
 
 from __future__ import annotations
 
 from fastapi import APIRouter
 
-from . import (
-    api_keys,
-    audit_logs,
-    auth,
-    dashboard,
-    deployments,
-    profile,
-    queue,
-    servers,
-    sites,
-    templates,
-    users,
-)
+_router: APIRouter | None = None
 
-router = APIRouter()
 
-router.include_router(auth.router)
-router.include_router(dashboard.router)
-router.include_router(servers.router)
-router.include_router(sites.router)
-router.include_router(templates.router)
-router.include_router(deployments.router)
-router.include_router(queue.router)
-router.include_router(api_keys.router)
-router.include_router(users.router)
-router.include_router(audit_logs.router)
-router.include_router(profile.router)
+def _build_router() -> APIRouter:
+    from . import auth, caddyfile, dashboard, sites, ssllabs
+
+    ui_router = APIRouter()
+    ui_router.include_router(auth.router)
+    ui_router.include_router(dashboard.router)
+    ui_router.include_router(caddyfile.router)
+    ui_router.include_router(sites.router)
+    ui_router.include_router(ssllabs.router)
+    return ui_router
+
+
+def __getattr__(name: str):
+    if name != "router":
+        raise AttributeError(name)
+
+    global _router
+    if _router is None:
+        _router = _build_router()
+    return _router

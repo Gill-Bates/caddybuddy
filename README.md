@@ -16,295 +16,183 @@
 </p>
 
 <p align="center">
-  <a href="#overview">📚 Documentation</a> •
-  <a href="#quick-start">🚀 Quick Start</a> •
+   <a href="#overview">📚 Documentation</a> •
+   <a href="#quick-start">🚀 Quick Start</a> •
   <a href="CHANGELOG.md">📋 Changelog</a>
 </p>
 
 > A lightweight control plane for managing Caddy servers, reusable Caddyfile snippets, sites, deployments, and access control from one web UI.
 
-CaddyBuddy combines a server-rendered FastAPI UI, an async SQLite backend, and secure operational defaults into a compact management application for Caddy-based environments. It is designed for teams that want to track servers, assign site definitions, reuse Caddyfile snippets, deploy configurations, and audit administrative changes without building a larger control plane first.
-
-## Table Of Contents
-
-- [Overview](#overview)
-- [Feature Set](#feature-set)
-- [How The Caddy Model Works](#how-the-caddy-model-works)
-- [Tech Stack](#tech-stack)
-- [Quick Start](#quick-start)
-- [Configuration](#configuration)
-- [API And Realtime](#api-and-realtime)
-- [Project Structure](#project-structure)
-- [Quality And Tooling](#quality-and-tooling)
-- [Deployment Notes](#deployment-notes)
-
 ## Overview
 
-CaddyBuddy manages the operational metadata around Caddy, not the entire host system. The application currently includes browser UI flows for:
+CaddyBuddy combines a server-rendered FastAPI UI, SQLite, and secure defaults into a compact control plane for a single Caddy installation. This README focuses on one thing: getting the application up and running quickly.
 
-- Dashboard
-- Servers
-- Caddyfile
-- Sites
-- Queue
-- Deployments
-- API Keys
-- Users
-- Audit Logs
-- Profile
+## Features
 
-On first startup with an empty database, the application creates an initial admin account. It also exposes a small system API for health, build information, and Server-Sent Events.
+- **Dashboard** — Real-time Caddy status, version info, uptime, and certificate metrics at a glance
+- **Sites Management** — Create, edit, and deploy site configurations with domain validation
+- **Caddyfile Editor** — Edit the global Caddyfile with syntax validation before deployment
+- **Certificate Monitoring** — Track SSL certificate validity and expiration dates
+- **SSL Labs Integration** — Schedule and view Qualys SSL Labs assessments for your domains
+- **Onboarding Wizard** — Guided setup to initialize CaddyBuddy with your existing Caddyfile
+- **Dark Mode** — Full light/dark theme support
+- **Secure by Default** — CSRF protection, security headers, rate limiting, and session management
 
-## Feature Set
+## What You Need
 
-- Manage multiple Caddy admin endpoints, including status tracking and connectivity checks.
-- Store reusable Caddyfile snippets and attach them to sites.
-- Model sites as domain plus upstream plus reusable Caddyfile content.
-- Render and deploy site configurations to registered Caddy servers.
-- Track deployment history and deployment state transitions.
-- Manage local users, roles, sessions, and API keys.
-- Record audit logs for authentication and administrative actions.
-- Publish realtime resource events over SSE at `/api/v1/events`.
-- Enforce secure defaults for session handling, CSRF checks, rate limits, and security headers.
-- Embed release metadata from `VERSION`, `BUILD_INFO`, and optional build args.
-
-## How The Caddy Model Works
-
-CaddyBuddy separates global Caddy configuration from per-site configuration.
-
-The global Caddy config remains outside the app. This usually contains:
-
-- the top-level `{ ... }` global options block
-- reusable snippets such as `(security_headers)` or `(default_log)`
-- the final `import /path/to/sites/*.caddy`
-
-Inside the UI, the `Caddyfile` section stores only the inner directives for a single site. The app combines those directives with the selected site's hostname and renders the outer site block automatically.
-
-Example UI input:
-
-`Site Hostname`
-
-```text
-example.com
-```
-
-`Upstream`
-
-```text
-127.0.0.1:8080
-```
-
-`Caddyfile`
-
-```caddyfile
-import security_headers
-import default_log
-
-reverse_proxy {{upstream}} {
-  transport http {
-    keepalive 30s
-  }
-  header_up Host {host}
-  header_up X-Real-IP {remote_host}
-  header_up X-Forwarded-For {remote_host}
-  header_up X-Forwarded-Proto {scheme}
-}
-
-encode gzip zstd
-
-header {
-  -Server
-  -X-Powered-By
-}
-```
-
-Rendered result:
-
-```caddyfile
-example.com {
-  import security_headers
-  import default_log
-
-  reverse_proxy 127.0.0.1:8080 {
-    transport http {
-      keepalive 30s
-    }
-    header_up Host {host}
-    header_up X-Real-IP {remote_host}
-    header_up X-Forwarded-For {remote_host}
-    header_up X-Forwarded-Proto {scheme}
-  }
-
-  encode gzip zstd
-
-  header {
-    -Server
-    -X-Powered-By
-  }
-}
-```
-
-## Tech Stack
-
-| Area | Technology |
-| --- | --- |
-| Backend | Python 3.13, FastAPI, Uvicorn |
-| Database | SQLite in WAL mode, SQLAlchemy 2.x, aiosqlite |
-| Frontend | Jinja2, Bootstrap 5, Vanilla JavaScript |
-| Security | SlowAPI, SessionMiddleware, CSRF validation, security headers |
-| Realtime | Server-Sent Events |
-| Tooling | Docker, Buildx, Playwright-based UI lint |
+- Docker and Docker Compose for the recommended path
+- Or Python 3.13 if you want to run it locally without containers
+- A strong random session secret
+- A non-default admin password for the first startup
 
 ## Quick Start
+
+### Docker Compose
+
+The repository ships an example Compose file at `docker/docker-compose.yml.example`.
+
+Release images are built for `docker.cirrio.de/caddybuddy`. The badges above remain unchanged.
+
+1. Create a persistent data directory:
+
+   ```bash
+   mkdir -p data
+   ```
+
+2. Make sure the Caddy Admin API is reachable from the container.
+
+   Do not expose the Caddy Admin API publicly. Bind it to localhost, a private Docker network, or another trusted internal address only.
+
+   The example Compose file already defines `host.docker.internal` via `host-gateway` for Linux hosts.
+
+3. If you want to import an existing Caddyfile during onboarding, make sure the host file already exists and is writable:
+
+   ```bash
+   ls -l /etc/caddy/Caddyfile
+   ```
+
+4. Export the required variables:
+
+   ```bash
+   export CB_SECRET_KEY="$(head -c 32 /dev/urandom | base64)"
+   export CB_ADMIN_PASSWORD="ChangeThisAdminPassword-Now-123A"
+   export HOST_CADDYFILE_PATH=/etc/caddy/Caddyfile
+   export CB_CADDY_API_URL=http://host.docker.internal:2019
+   export PORT=8000
+   ```
+
+5. Start the container:
+
+   ```bash
+   docker compose -f docker/docker-compose.yml.example up -d
+   ```
+
+6. Open the UI:
+
+   ```text
+   http://127.0.0.1:8000
+   ```
 
 ### Local Development
 
 ```bash
 python3.13 -m venv .venv
-source .venv/bin/activate
+. .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 
-export CADDYBUDDY_SECRET_KEY="$(head -c 32 /dev/urandom | base64)"
-export CADDYBUDDY_ADMIN_PASSWORD="LocalDevAdminPassword-Change-Me"
-export CADDYBUDDY_RELOAD=true
-export CADDYBUDDY_SESSION_HTTPS_ONLY=false
-export LOG_LEVEL=DEBUG
-export TZ=Europe/Berlin
+export CB_SECRET_KEY="$(head -c 32 /dev/urandom | base64)"
+export CB_ADMIN_PASSWORD="admin"
+export CB_CADDY_API_URL="http://localhost:2019"
+export CB_CADDYFILE_PATH="/etc/caddy/Caddyfile"
+export SESSION_HTTPS_ONLY=false
+export CB_RATE_LIMIT_ENABLED=false
+export LOG_LEVEL="DEBUG"
 
 python run.py
 ```
 
-The application is available at `http://127.0.0.1:8000` by default.
+The local server listens on `http://127.0.0.1:8000` by default.
 
-### Build And Run Locally With Docker
+Never disable `SESSION_HTTPS_ONLY` or `CB_RATE_LIMIT_ENABLED` in production.
 
-```bash
-mkdir -p data
-printf '%s\n' "dev" > BUILD_INFO
+## First Startup Behavior
 
-docker build -f docker/Dockerfile -t caddybuddy:local .
+- On an empty database, CaddyBuddy creates the initial `admin` user with the password from `CB_ADMIN_PASSWORD`.
+- The SQLite database lives in `data/app.db` by default.
+- If `CB_CADDYFILE_PATH` points to an existing mounted Caddyfile, CaddyBuddy can import it during onboarding.
+- Automatic onboarding during startup requires `CADDYBUDDY_AUTO_ONBOARD=true` and a reachable Caddy Admin API.
+- Without automatic onboarding, the application reports that onboarding is required and you can trigger it from the UI or API.
 
-docker run --rm \
-  -p 8000:8000 \
-  -e CADDYBUDDY_SECRET_KEY="$(head -c 32 /dev/urandom | base64)" \
-  -e CADDYBUDDY_ADMIN_PASSWORD="LocalDockerAdminPassword-Change-Me" \
-  -e CADDYBUDDY_SESSION_HTTPS_ONLY=false \
-  -e TZ=Europe/Berlin \
-  -v "$PWD/data:/app/data" \
-  caddybuddy:local
-```
+Change the initial admin password immediately after the first login.
 
-If you want release metadata in `/api/v1/build-info`, set `VERSION` and `BUILD_INFO` before building.
+## Runtime Settings That Usually Matter
 
-## Configuration
-
-The most important runtime settings are exposed via environment variables:
-
-| Variable | Example | Description |
-| --- | --- | --- |
-| `CADDYBUDDY_SECRET_KEY` | Base64 string | Required; signs and protects browser sessions. |
-| `CADDYBUDDY_ADMIN_PASSWORD` | `replace-me` | Initial admin password used on first startup of an empty database. |
-| `CADDYBUDDY_ALLOW_INSECURE_DEFAULTS` | `true` | Allows disposable local setups to start with insecure defaults intentionally. |
-| `CADDYBUDDY_RELOAD` | `true` | Enables Uvicorn reload mode for local development. |
-| `CADDYBUDDY_SESSION_HTTPS_ONLY` | `false` | Disables `Secure` cookies for local plain-HTTP testing. |
-| `CADDYBUDDY_SESSION_SAMESITE` | `lax` | Sets the session cookie `SameSite` policy. |
-| `CADDYBUDDY_PORT` or `PORT` | `8000` | HTTP port for the application. |
-| `CADDYBUDDY_FORWARDED_ALLOW_IPS` | `127.0.0.1` | Trusted proxy IPs for forwarded headers. |
-| `DATABASE_URL` | `sqlite+aiosqlite:///data/app.db` | Database connection URL. |
-| `LOG_LEVEL` | `INFO` | Application logging level. |
-| `TZ` | `Europe/Berlin` | IANA timezone name. |
-
-Important runtime notes:
-
-- A strong secret key is required unless insecure defaults are explicitly enabled.
-- The default admin password is validated only when an initial admin must actually be created.
-- For local HTTP testing, set `CADDYBUDDY_SESSION_HTTPS_ONLY=false`.
-- The default SQLite database location is `data/app.db`.
-
-## API And Realtime
-
-The system API is intentionally small and operationally focused:
-
-| Endpoint | Purpose |
+| Variable | Meaning |
 | --- | --- |
-| `GET /api/v1/health` | Health status, app name, and version |
-| `GET /api/v1/build-info` | Version, commit, and build date |
-| `GET /api/v1/events` | Server-Sent Events stream for resource updates |
-| `GET /api/v1/queue/count` | Count of sites pending deployment for authenticated users |
+| `CB_SECRET_KEY` | Required session secret (generate with `head -c 32 /dev/urandom \| base64`) |
+| `CB_ADMIN_PASSWORD` | Initial admin password for a fresh database |
+| `CB_CADDY_API_URL` | Base URL of the Caddy Admin API (e.g., `http://localhost:2019`) |
+| `CB_CADDYFILE_PATH` | Mounted writable Caddyfile path used for onboarding |
+| `CB_RATE_LIMIT_ENABLED` | Set to `false` to disable rate limiting (default: `true`) |
+| `SESSION_HTTPS_ONLY` | Set to `false` only for local plain-HTTP testing |
+| `CADDYBUDDY_AUTO_ONBOARD` | Enables automatic Caddy onboarding during startup |
+| `CADDYBUDDY_RELOAD` | Enables auto-reload for local development |
+| `PORT` | HTTP port for the web UI (default: `8000`) |
+| `LOG_LEVEL` | Application log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+| `TZ` | Container or process timezone (e.g., `Europe/Berlin`) |
 
-Example:
+## Health And Readiness
 
 ```bash
 curl http://127.0.0.1:8000/api/v1/health
+curl http://127.0.0.1:8000/api/v1/ready
 ```
 
-## Project Structure
+`/health` checks whether the web process is alive. `/ready` also verifies whether Caddy onboarding is complete and the Caddy runtime integration is usable.
 
-```text
-caddybuddy/
-├── app/
-│   ├── config/            # settings, limiter, logging
-│   ├── database/          # engine, sessions, schema init
-│   ├── dependencies/      # request helpers, CSRF, session helpers
-│   ├── middleware/        # security middleware
-│   ├── models/            # SQLAlchemy entities
-│   ├── repositories/      # database access layer
-│   ├── routers/
-│   │   ├── api.py         # system API
-│   │   └── ui/            # browser UI routes by area
-│   ├── schemas/           # Pydantic models
-│   ├── services/          # auth, caddy, deployments, events, build info
-│   ├── static/            # CSS, JS, images, vendor assets
-│   ├── templates/         # Jinja2 templates
-│   └── utils/             # helpers, parsing, banner, caddyfile utils
-├── data/                  # runtime data, including SQLite
-├── docker/                # Dockerfile and compose example
-├── tests/                 # focused regression tests
-├── tools/ui-lint/         # browser-based UI auditing
-├── VERSION                # release version
-├── BUILD_INFO             # commit/build metadata
-└── run.py                 # Uvicorn entrypoint
+## Operational Notes
+
+- Run CaddyBuddy behind HTTPS in production.
+- Persist the `data/` directory.
+- Do not expose the Caddy Admin API publicly.
+- The mounted Caddyfile must exist and be writable before the first container start if you want onboarding import.
+- CaddyBuddy manages application state and generated Caddy configuration; it does not replace the rest of your host setup.
+
+## Reverse Proxy Configuration
+
+When running CaddyBuddy behind a reverse proxy (like Caddy itself), ensure the proxy passes the correct headers:
+
+```caddyfile
+caddy.example.com {
+    reverse_proxy 127.0.0.1:8000 {
+        header_up Host {host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+}
 ```
 
-## Quality And Tooling
+The `X-Forwarded-Proto` header is required for CSRF protection to work correctly over HTTPS.
+
+## Development
 
 ### UI Lint
+
+CaddyBuddy includes a Playwright-based UI lint tool for visual regression testing and accessibility checks:
 
 ```bash
 cd tools/ui-lint
 npm install
-npm run install:browsers
+npx playwright install chromium firefox webkit
 
-UI_LINT_BASE_URL=http://127.0.0.1:8000 \
+UI_LINT_BASE_URL=http://localhost:8000 \
 UI_LINT_USERNAME=admin \
 UI_LINT_PASSWORD=admin \
 npm run audit
 ```
 
-The UI lint checks layout, accessibility, interaction quality, and browser-facing regressions.
+Results are saved to `tools/ui-lint/test-results/`.
 
-### Quick Python Syntax Check
+## License
 
-```bash
-python -m py_compile run.py app/main.py
-```
-
-### Focused Tests
-
-```bash
-python -m unittest tests.test_database_session tests.test_config_renderer
-```
-
-## Deployment Notes
-
-- Run CaddyBuddy behind HTTPS in production.
-- Mount `data/` persistently.
-- The example `docker/docker-compose.yml` is project-specific infrastructure, not a generic production template.
-- For release builds, set `VERSION`, `BUILD_INFO`, and optionally build args such as `APP_VERSION`, `GIT_SHA`, and `BUILD_DATE` deliberately.
-- On first startup with an empty database, change the configured initial admin password immediately.
-- Deployments currently require a `caddy` binary available in the application runtime, because CaddyBuddy adapts rendered Caddyfile content before sending JSON to the Caddy admin API.
-
----
-
-CaddyBuddy is intentionally small: a focused Python application for teams that want auditable Caddy operations without adopting a much heavier platform.
+[AGPL-3.0](LICENSE)

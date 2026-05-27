@@ -34,7 +34,6 @@ function detectViewContext(name) {
         isMobile: normalizedName.includes('mobile-') || normalizedName.includes('mobile'),
         isDesktop: normalizedName.includes('desktop-'),
         isLoginError: normalizedName.includes('login-error'),
-        isAuditLogs: normalizedName.includes('audit-logs'),
     };
 }
 
@@ -90,7 +89,7 @@ export function summarizeFindings(result) {
         diff: source.diff && typeof source.diff === 'object' ? { ...source.diff } : source.diff,
         network: source.network && typeof source.network === 'object' ? { ...source.network } : source.network,
     };
-    const { name, isMobile, isDesktop, isLoginError, isAuditLogs } = detectViewContext(report.name);
+    const { name, isMobile, isDesktop, isLoginError } = detectViewContext(report.name);
 
     const metrics = report.metrics && typeof report.metrics === 'object' ? report.metrics : {};
     report.metrics = metrics;
@@ -129,6 +128,7 @@ export function summarizeFindings(result) {
     });
     ensureObject(metrics, 'layoutShift', { value: 0 });
     ensureObject(metrics, 'state', { loadingWithoutDisabled: [], missingAriaBusy: [] });
+    ensureObject(metrics, 'caddyfileValidationGuard', { present: false, emptyStateAllowsValidation: false });
     ensureObject(metrics, 'components', {
         modal: { multipleOpen: false, count: 0 },
         toast: { count: 0, stackingIssue: false },
@@ -174,11 +174,11 @@ export function summarizeFindings(result) {
     if (metrics.unlabeledControls.length) pushHard(`unlabeledControls=${metrics.unlabeledControls.length}`);
     if (metrics.namelessButtons.length) pushHard(`namelessButtons=${metrics.namelessButtons.length}`);
     if (metrics.headingSkips.length) pushWarning(`headingSkips=${metrics.headingSkips.length}`);
-    if (!isAuditLogs && metrics.tablesWithoutHeaders.length) pushWarning(`tablesWithoutHeaders=${metrics.tablesWithoutHeaders.length}`);
-    if (!isAuditLogs && metrics.tableCellOverlapIssues?.length) pushHard(`tableCellOverlaps=${metrics.tableCellOverlapIssues.length}`);
-    if (!isAuditLogs && metrics.tablesWithoutResponsive?.length) pushWarning(`tablesWithoutResponsive=${metrics.tablesWithoutResponsive.length}`);
+    if (metrics.tablesWithoutHeaders.length) pushWarning(`tablesWithoutHeaders=${metrics.tablesWithoutHeaders.length}`);
+    if (metrics.tableCellOverlapIssues?.length) pushHard(`tableCellOverlaps=${metrics.tableCellOverlapIssues.length}`);
+    if (metrics.tablesWithoutResponsive?.length) pushWarning(`tablesWithoutResponsive=${metrics.tablesWithoutResponsive.length}`);
 
-    if (isDesktop && !isAuditLogs && metrics.spacing.desktopTableTypography) {
+    if (isDesktop && metrics.spacing.desktopTableTypography) {
         const tableTypography = metrics.spacing.desktopTableTypography;
         if (tableTypography.headFontSizePass === false) {
             pushWarning(`desktopTableHeadFont=${tableTypography.headFontSize}/${DESKTOP_TABLE_HEAD_MIN_FONT_SIZE_PX}`);
@@ -188,8 +188,8 @@ export function summarizeFindings(result) {
         }
     }
 
-    if (!isAuditLogs && metrics.ghostScroll) pushWarning('ghostScrollDetected');
-    if (!isAuditLogs && metrics.ghostScrollContainers?.length) pushWarning(`ghostScrollContainers=${metrics.ghostScrollContainers.length}`);
+    if (metrics.ghostScroll) pushWarning('ghostScrollDetected');
+    if (metrics.ghostScrollContainers?.length) pushWarning(`ghostScrollContainers=${metrics.ghostScrollContainers.length}`);
     if (metrics.horizontalOverflow.hasOverflow) pushHard('horizontalOverflow');
     if (metrics.horizontalOverflow.hasOverflow && metrics.horizontalOverflow.offenders.length) {
         pushHard(`overflowOffenders=${metrics.horizontalOverflow.offenders.length}`);
@@ -206,13 +206,16 @@ export function summarizeFindings(result) {
     if (metrics.focusIndicatorMissing?.length) pushWarning(`focusIndicatorMissing=${metrics.focusIndicatorMissing.length}`);
     if (metrics.state.loadingWithoutDisabled.length) pushHard(`loadingWithoutDisabled=${metrics.state.loadingWithoutDisabled.length}`);
     if (metrics.state.missingAriaBusy.length) pushWarning(`missingAriaBusy=${metrics.state.missingAriaBusy.length}`);
+    if (metrics.caddyfileValidationGuard.present && metrics.caddyfileValidationGuard.emptyStateAllowsValidation) {
+        pushHard('caddyfileEmptyValidateEnabled');
+    }
     if (metrics.components.modal.multipleOpen) pushHard(`multipleModalsOpen=${metrics.components.modal.count}`);
     if (metrics.modalThemeIssues?.length) pushHard(`modalThemeIssues=${metrics.modalThemeIssues.length}`);
     if (metrics.components.toast.stackingIssue) pushWarning(`toastStacking=${metrics.components.toast.count}`);
     if ((metrics.tokens.hardcodedStyles || 0) > 0) pushWarning(`hardcodedStyles=${metrics.tokens.hardcodedStyles}`);
     if (metrics.scrollEdgeCrowding?.length) pushWarning(`scrollEdgeCrowding=${metrics.scrollEdgeCrowding.length}`);
     if (metrics.scrollBottomCrowding?.length) pushWarning(`scrollBottomCrowding=${metrics.scrollBottomCrowding.length}`);
-    if (!isAuditLogs && metrics.nestedScrollContainers?.length) pushWarning(`nestedScrollContainers=${metrics.nestedScrollContainers.length}`);
+    if (metrics.nestedScrollContainers?.length) pushWarning(`nestedScrollContainers=${metrics.nestedScrollContainers.length}`);
 
     if (metrics.flexScrollTraps?.length) {
         const message = `flexScrollTraps=${metrics.flexScrollTraps.length}`;
@@ -253,6 +256,9 @@ export function summarizeFindings(result) {
         pushWarning(
             `primaryPanelPaddingMismatch=${first.paddingTop}/${first.paddingRight}/${first.paddingBottom}/${first.paddingLeft}`
         );
+    }
+    if (metrics.pageStructureConsistent?.present && metrics.pageStructureConsistent.issues?.length) {
+        pushHard(`pageStructureMissingRowWrapper=${metrics.pageStructureConsistent.issues.length}`);
     }
     if (metrics.pageHeaderContentGap.present && metrics.pageHeaderContentGap.passesMaximum === false) {
         pushWarning(`pageHeaderContentGap=${metrics.pageHeaderContentGap.gapPx}/${metrics.pageHeaderContentGap.maximum}`);

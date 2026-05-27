@@ -42,10 +42,18 @@ def _read_text(path: Path, default: str) -> str:
 
 
 def _load_version_info() -> tuple[str, str]:
-    """Return version and build metadata for the startup banner."""
+    """Return version and git commit short hash for the startup banner."""
     version = _read_text(_VERSION_FILE, "dev")
-    build_info = _read_text(_BUILD_INFO_FILE, "working-tree")
-    return version, build_info
+    build_info_raw = _read_text(_BUILD_INFO_FILE, "")
+    
+    # Parse BUILD_INFO key=value format to extract GIT_SHA
+    git_sha = ""
+    for line in build_info_raw.splitlines():
+        if line.startswith("GIT_SHA="):
+            git_sha = line.split("=", 1)[1].strip()[:7]
+            break
+    
+    return version, git_sha or "dev"
 
 
 def _supports_color() -> bool:
@@ -55,8 +63,7 @@ def _supports_color() -> bool:
 
 def print_banner() -> None:
     """Print the CaddyBuddy startup banner."""
-    version, build_info = _load_version_info()
-    build_short = build_info[:7] if build_info else "dev"
+    version, git_short = _load_version_info()
 
     ascii_art = r"""
                _     _       _               _     _       
@@ -68,7 +75,7 @@ def print_banner() -> None:
 """.strip("\n")
 
     text_lines = [
-        f"CaddyBuddy v{version} ({build_short})",
+        f"CaddyBuddy v{version} ({git_short})",
         "Manage Caddy with ease.",
         "(C) 2026 Gill-Bates (https://github.com/Gill-Bates/caddybuddy)",
     ]

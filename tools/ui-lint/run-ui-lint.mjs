@@ -48,11 +48,15 @@ function normalizeBaseUrl(rawValue) {
     try {
         url = new URL(rawValue);
     } catch (error) {
-        throw new Error(`Invalid UI_LINT_BASE_URL: ${rawValue}`, { cause: error });
+        throw new Error('Invalid UI_LINT_BASE_URL.', { cause: error });
     }
 
     if (!['http:', 'https:'].includes(url.protocol)) {
-        throw new Error(`UI_LINT_BASE_URL must use http or https: ${rawValue}`);
+        throw new Error('UI_LINT_BASE_URL must use http or https.');
+    }
+
+    if (url.username || url.password) {
+        throw new Error('UI_LINT_BASE_URL must not include username or password.');
     }
 
     url.hash = '';
@@ -60,9 +64,47 @@ function normalizeBaseUrl(rawValue) {
     return url.toString().replace(/\/$/, '');
 }
 
+function parseBrowserTypes() {
+    const requested = (process.env.UI_LINT_BROWSERS || 'chromium')
+        .split(',')
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean);
+
+    const supported = new Set(['chromium', 'firefox', 'webkit']);
+    const invalid = requested.filter((name) => !supported.has(name));
+
+    if (invalid.length) {
+        throw new Error(`Unsupported UI_LINT_BROWSERS value(s): ${invalid.join(', ')}`);
+    }
+
+    if (!requested.length) {
+        throw new Error('UI_LINT_BROWSERS must contain at least one browser.');
+    }
+
+    return requested;
+}
+
+function parsePositiveIntegerEnv(rawValue, fallback, label) {
+    const value = Number.parseInt(String(rawValue ?? fallback), 10);
+    if (!Number.isFinite(value) || value <= 0) {
+        throw new Error(`${label} must be a positive integer.`);
+    }
+    return value;
+}
+
+function parseBoundedFloatEnv(rawValue, fallback, label, min, max) {
+    const value = Number.parseFloat(String(rawValue ?? fallback));
+    if (!Number.isFinite(value) || value < min || value > max) {
+        throw new Error(`${label} must be a number between ${min} and ${max}.`);
+    }
+    return value;
+}
+
 const BASE_URL = normalizeBaseUrl(process.env.UI_LINT_BASE_URL || 'http://localhost:8000');
 const CREDENTIALS_FILE = process.env.UI_LINT_CREDENTIALS_FILE;
-const RATE_LIMIT_USERNAME = process.env.UI_LINT_RATE_LIMIT_USERNAME || `ui_lint_rate_limit_${randomUUID()}`;
+const SESSION_ID = randomUUID();
+const RATE_LIMIT_USERNAME = process.env.UI_LINT_RATE_LIMIT_USERNAME || `ui_lint_rate_limit_${SESSION_ID}`;
+const LOGIN_FAILURE_USERNAME = process.env.UI_LINT_LOGIN_FAILURE_USERNAME || `ui_lint_invalid_${SESSION_ID}`;
 let cachedCredentials = null;
 
 
@@ -72,6 +114,9 @@ async function loadCredentials() {
     }
 
     if (process.env.UI_LINT_USERNAME && process.env.UI_LINT_PASSWORD) {
+        if (!process.env.CI) {
+            console.warn('Warning: using UI lint credentials from environment variables. Prefer UI_LINT_CREDENTIALS_FILE locally.');
+        }
         cachedCredentials = Object.freeze({
             username: process.env.UI_LINT_USERNAME,
             password: process.env.UI_LINT_PASSWORD,
@@ -84,12 +129,20 @@ async function loadCredentials() {
     }
 
     const resolvedPath = path.resolve(CREDENTIALS_FILE);
+    const linkStats = await fs.lstat(resolvedPath);
+    if (linkStats.isSymbolicLink()) {
+        throw new Error(`UI lint credentials file must not be a symlink: ${resolvedPath}`);
+    }
+
     const stats = await fs.stat(resolvedPath);
     if (!stats.isFile()) {
         throw new Error(`UI lint credentials path must be a file: ${resolvedPath}`);
     }
     if ((stats.mode & 0o077) !== 0) {
         throw new Error(`UI lint credentials file must not be group/world accessible: ${resolvedPath}`);
+    }
+    if (typeof process.getuid === 'function' && stats.uid !== process.getuid()) {
+        throw new Error(`UI lint credentials file must be owned by the current user: ${resolvedPath}`);
     }
 
     let parsed;
@@ -153,8 +206,6 @@ if (!CREDENTIALS_FILE && (!process.env.UI_LINT_USERNAME || !process.env.UI_LINT_
     process.exit(1);
 }
 
-// Generate unique session ID for this test run to avoid conflicts
-const SESSION_ID = randomUUID();
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = process.env.UI_LINT_OUTPUT_DIR || path.join(SCRIPT_DIR, 'test-results');
 const SCREENSHOT_DIR = path.resolve(
@@ -169,12 +220,29 @@ const UI_LINT_LOCALE = process.env.UI_LINT_LOCALE || 'en-US';
 const UI_LINT_TIMEZONE = process.env.UI_LINT_TIMEZONE || 'UTC';
 const UI_LINT_EXPECTED_CHROMIUM_MAJOR = process.env.UI_LINT_EXPECTED_CHROMIUM_MAJOR || '';
 const UI_LINT_BASELINE_GC = (process.env.UI_LINT_BASELINE_GC || 'warn').toLowerCase();
-const UI_LINT_DISABLE_RAF = process.env.UI_LINT_DISABLE_RAF === '1';
+const UI_LINT_MOCK_RAF = process.env.UI_LINT_MOCK_RAF != null
+    ? process.env.UI_LINT_MOCK_RAF === '1'
+    : process.env.UI_LINT_DISABLE_RAF !== '1';
 const UI_LINT_DISABLE_RESIZE_OBSERVER = process.env.UI_LINT_DISABLE_RESIZE_OBSERVER === '1';
 const UI_LINT_VIEW_RETRIES = Math.max(1, Number.parseInt(process.env.UI_LINT_VIEW_RETRIES || '2', 10) || 2);
-const FAIL_THRESHOLD = Number.isFinite(Number.parseFloat(process.env.UI_LINT_FAIL_THRESHOLD || '65'))
-    ? Number.parseFloat(process.env.UI_LINT_FAIL_THRESHOLD || '65')
-    : 65;
+const UI_LINT_RATE_LIMIT_ATTEMPTS = Math.max(1, Number.parseInt(process.env.UI_LINT_RATE_LIMIT_ATTEMPTS || '6', 10) || 6);
+const UI_LINT_BROWSER_CONCURRENCY = parsePositiveIntegerEnv(
+    process.env.UI_LINT_BROWSER_CONCURRENCY,
+    1,
+    'UI_LINT_BROWSER_CONCURRENCY',
+);
+const UI_LINT_DEVICE_CONCURRENCY = parsePositiveIntegerEnv(
+    process.env.UI_LINT_DEVICE_CONCURRENCY,
+    1,
+    'UI_LINT_DEVICE_CONCURRENCY',
+);
+const FAIL_THRESHOLD = parseBoundedFloatEnv(
+    process.env.UI_LINT_FAIL_THRESHOLD,
+    65,
+    'UI_LINT_FAIL_THRESHOLD',
+    0,
+    100,
+);
 const REQUIRED_SECURITY_HEADERS = [
     'content-security-policy',
     'x-frame-options',
@@ -190,7 +258,7 @@ const DEVICE_CONTEXT_OPTIONS = new Map([
 ]);
 
 async function installUiLintInitScript(context) {
-    await context.addInitScript(({ disableRaf, disableResizeObserver, evalConstants, fixedNowIso, selectors }) => {
+    await context.addInitScript(({ disableResizeObserver, evalConstants, fixedNowIso, mockRaf, selectors }) => {
         window.__UI_LINT__ = true;
         window.__uiLintRuntimeConfig = {
             constants: evalConstants,
@@ -218,7 +286,7 @@ async function installUiLintInitScript(context) {
             window.Date = FixedDate;
         }
 
-        if (!disableRaf) {
+        if (mockRaf) {
             const setTimer = window.setTimeout.bind(window);
             const clearTimer = window.clearTimeout.bind(window);
             window.requestAnimationFrame = (cb) => setTimer(() => cb(performance.now()), 16);
@@ -235,10 +303,10 @@ async function installUiLintInitScript(context) {
             };
         }
     }, {
-        disableRaf: UI_LINT_DISABLE_RAF,
         disableResizeObserver: UI_LINT_DISABLE_RESIZE_OBSERVER,
         evalConstants: UI_EVAL_CONSTANTS,
         fixedNowIso: UI_LINT_FIXED_NOW_ISO,
+        mockRaf: UI_LINT_MOCK_RAF,
         selectors: SELECTORS,
     });
 }
@@ -263,6 +331,22 @@ function delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function runWithConcurrency(items, concurrency, worker) {
+    const queue = [...items];
+    const workerCount = Math.max(1, Math.min(concurrency, queue.length || 1));
+    const workers = Array.from({ length: workerCount }, async () => {
+        while (queue.length > 0) {
+            const item = queue.shift();
+            if (item === undefined) {
+                return;
+            }
+            await worker(item);
+        }
+    });
+
+    await Promise.all(workers);
+}
+
 async function assertBaseUrlReachable() {
     const loginUrl = new URL('/login', BASE_URL).toString();
     const controller = new AbortController();
@@ -274,6 +358,16 @@ async function assertBaseUrlReachable() {
             redirect: 'manual',
             signal: controller.signal,
         });
+        if (response.status >= 300 && response.status < 400) {
+            const location = response.headers.get('location');
+            if (location) {
+                const source = new URL(loginUrl);
+                const target = new URL(location, loginUrl);
+                if (target.origin !== source.origin) {
+                    throw new Error(`Unexpected external redirect from /login to ${target.origin}`);
+                }
+            }
+        }
         if (!response.ok && (response.status < 300 || response.status >= 400)) {
             throw new Error(`HTTP ${response.status} from ${loginUrl}`);
         }
@@ -297,16 +391,25 @@ async function pathExists(targetPath) {
     }
 }
 
+function isPathInside(parentPath, targetPath) {
+    const parent = path.resolve(parentPath);
+    const target = path.resolve(targetPath);
+    const relative = path.relative(parent, target);
+
+    return relative !== ''
+        && !relative.startsWith('..')
+        && !path.isAbsolute(relative);
+}
+
 
 function assertSafeGeneratedOutputDir(targetPath, label) {
     const resolved = path.resolve(targetPath);
+    const expectedProjectResults = path.resolve(path.join(SCRIPT_DIR, 'test-results'));
     const allowedTempRoots = ['/tmp', '/var/tmp'].map((root) => path.resolve(root));
-    const isUnderTempRoot = allowedTempRoots.some((root) => resolved.startsWith(`${root}${path.sep}`));
+    const isUnderTempRoot = allowedTempRoots.some((root) => isPathInside(root, resolved));
     const hasExpectedName = path.basename(resolved).startsWith('caddybuddy-ui-lint-') || path.basename(resolved) === 'test-results';
 
-    const isProjectLocalResults = resolved.startsWith(SCRIPT_DIR) && path.basename(resolved) === 'test-results';
-
-    if (isProjectLocalResults) {
+    if (resolved === expectedProjectResults) {
         return resolved;
     }
 
@@ -314,9 +417,9 @@ function assertSafeGeneratedOutputDir(targetPath, label) {
         throw new Error(`Refusing to clean unsafe ${label}: ${resolved}`);
     }
 
-    if (!(isUnderTempRoot && hasExpectedName) && process.env.UI_LINT_FORCE_OUTPUT !== '1') {
+    if (!(isUnderTempRoot && hasExpectedName)) {
         throw new Error(
-            `Refusing to clean unsafe ${label}: ${resolved}. Use UI_LINT_FORCE_OUTPUT=1 to override.`,
+            `Refusing to clean unsafe ${label}: ${resolved}.`,
         );
     }
 
@@ -395,10 +498,17 @@ function applySummary(result) {
     result.warnings = summarized.warnings;
 
     const missingSecurityHeaders = result.securityHeaders?.missing || [];
+    const weakSecurityHeaders = result.securityHeaders?.weak || [];
     if (missingSecurityHeaders.length) {
         result.hardFindings = [
             ...result.hardFindings,
             `missingSecurityHeaders=${missingSecurityHeaders.join(',')}`,
+        ];
+    }
+    if (weakSecurityHeaders.length) {
+        result.hardFindings = [
+            ...result.hardFindings,
+            ...weakSecurityHeaders,
         ];
     }
 
@@ -428,8 +538,47 @@ function collectSecurityHeaders(response) {
         Object.entries(rawHeaders).map(([key, value]) => [String(key).toLowerCase(), value]),
     );
     const requiredHeaders = response ? requiredSecurityHeadersForResponse(response) : REQUIRED_SECURITY_HEADERS;
+    const weak = [];
+
+    const csp = String(headers['content-security-policy'] || '');
+    if (csp) {
+        const requiredDirectives = [
+            "default-src 'self'",
+            "object-src 'none'",
+            "frame-ancestors 'none'",
+            "base-uri 'self'",
+        ];
+        for (const directive of requiredDirectives) {
+            if (!csp.includes(directive)) {
+                weak.push(`weakCspMissing=${directive}`);
+            }
+        }
+    }
+
+    const xFrameOptions = String(headers['x-frame-options'] || '').toLowerCase();
+    if (headers['x-frame-options'] && !['deny', 'sameorigin'].includes(xFrameOptions)) {
+        weak.push('weakXFrameOptions');
+    }
+
+    const xContentTypeOptions = String(headers['x-content-type-options'] || '').toLowerCase();
+    if (headers['x-content-type-options'] && xContentTypeOptions !== 'nosniff') {
+        weak.push('weakXContentTypeOptions');
+    }
+
+    try {
+        if (response && new URL(response.url()).protocol === 'https:') {
+            const hsts = String(headers['strict-transport-security'] || '');
+            if (hsts && !/max-age=\d+/i.test(hsts)) {
+                weak.push('missingOrWeakHsts');
+            }
+        }
+    } catch {
+        weak.push('securityHeaderUrlParseError');
+    }
+
     return {
         missing: requiredHeaders.filter((header) => !headers[header]),
+        weak,
     };
 }
 
@@ -437,7 +586,9 @@ async function prepareOutputDirs() {
     const resolvedOutputDir = assertSafeGeneratedOutputDir(OUTPUT_DIR, 'UI lint output directory');
     const resolvedScreenshotDir = assertPathWithinParent(SCREENSHOT_DIR, resolvedOutputDir, 'UI lint screenshot directory');
 
-    await fs.rm(resolvedOutputDir, { recursive: true, force: true });
+    if (await pathExists(resolvedOutputDir)) {
+        await fs.rm(resolvedOutputDir, { recursive: true, force: true });
+    }
     await fs.mkdir(resolvedOutputDir, { recursive: true, mode: 0o700 });
     await fs.mkdir(resolvedScreenshotDir, { recursive: true, mode: 0o700 });
 
@@ -447,7 +598,7 @@ async function prepareOutputDirs() {
 
         await fs.rm(currentDir, { recursive: true, force: true });
         await fs.rm(diffDir, { recursive: true, force: true });
-        ensureVisualRegressionDirs(VISUAL_REGRESSION);
+        await ensureVisualRegressionDirs(VISUAL_REGRESSION);
     }
 }
 
@@ -491,10 +642,13 @@ function mergeMetricsPatch(metrics, patch) {
         return metrics;
     }
 
-    for (const [key, value] of Object.entries(patch)) {
-        if (!Object.hasOwn(patch, key)) {
-            continue;
-        }
+    assignSafeObject(metrics, patch);
+
+    return metrics;
+}
+
+function assignSafeObject(target, source) {
+    for (const [key, value] of Object.entries(source || {})) {
         if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
             continue;
         }
@@ -502,18 +656,17 @@ function mergeMetricsPatch(metrics, patch) {
             value
             && typeof value === 'object'
             && !Array.isArray(value)
-            && Object.hasOwn(metrics, key)
-            && metrics[key]
-            && typeof metrics[key] === 'object'
-            && !Array.isArray(metrics[key])
+            && target[key]
+            && typeof target[key] === 'object'
+            && !Array.isArray(target[key])
         ) {
-            metrics[key] = { ...metrics[key], ...value };
+            assignSafeObject(target[key], value);
             continue;
         }
-        metrics[key] = value;
+        target[key] = value;
     }
 
-    return metrics;
+    return target;
 }
 
 function stripAbortedRequests(network) {
@@ -573,7 +726,7 @@ async function captureArtifacts(page, view) {
     let visualRegression = null;
     if (VISUAL_REGRESSION.enabled) {
         await captureVisualSnapshot(page, view.name, VISUAL_REGRESSION);
-        visualRegression = compareVisualSnapshot(view.name, VISUAL_REGRESSION);
+        visualRegression = await compareVisualSnapshot(view.name, VISUAL_REGRESSION);
     }
 
     return {
@@ -672,19 +825,58 @@ async function auditPageFlow(page, view, {
 }
 
 async function waitForLoginFailureUi(page) {
-    await page.locator('.alert[role="alert"]').first().waitFor({ state: 'visible', timeout: 30000 });
     await page.waitForFunction(() => {
-        const alert = document.querySelector('.alert[role="alert"]');
-        const submitButton = document.querySelector('form[action="/login"] button[type="submit"]');
-        if (!alert || !submitButton) {
+        const normalizeLoginFailureText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const extractLoginFailureText = (documentRoot = document) => {
+            const candidates = [
+                '.app-flash-stack .alert[role="alert"]',
+                '.alert[role="alert"]',
+                '.alert-danger',
+                '.login-error',
+                '.error-message',
+                '[data-testid="login-error"]',
+            ];
+
+            const isVisible = (element) => {
+                if (!element || !element.isConnected) return false;
+                if (element.closest('.d-none, [hidden], [aria-hidden="true"]')) return false;
+                const style = window.getComputedStyle(element);
+                if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+                const rect = element.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0;
+            };
+
+            for (const selector of candidates) {
+                const matches = Array.from(documentRoot.querySelectorAll(selector));
+                const visibleMatch = matches.find((element) => isVisible(element));
+                if (visibleMatch) {
+                    return normalizeLoginFailureText(visibleMatch.textContent);
+                }
+            }
+
+            const bodyText = normalizeLoginFailureText(documentRoot.body?.textContent || '');
+            const patterns = [
+                /invalid credentials\.?/i,
+                /too many[^.]*attempts[^.]*\.?/i,
+                /rate limit[^.]*\.?/i,
+                /locked[^.]*\.?/i,
+            ];
+            for (const pattern of patterns) {
+                const match = bodyText.match(pattern);
+                if (match) {
+                    return normalizeLoginFailureText(match[0]);
+                }
+            }
+
+            return '';
+        };
+
+        const submitButton = document.querySelector('form[action$="/login"] button[type="submit"], form.auth-form button[type="submit"]');
+        const errorText = extractLoginFailureText(document);
+        if (!submitButton) {
             return false;
         }
-        const style = window.getComputedStyle(alert);
-        const rect = alert.getBoundingClientRect();
-        return style.display !== 'none'
-            && style.visibility !== 'hidden'
-            && rect.width > 0
-            && rect.height > 0
+        return errorText.length > 0
             && submitButton.disabled === false;
     }, { timeout: Math.max(LOGIN_ERROR_SETTLE_MS, 3000) });
 }
@@ -697,6 +889,34 @@ async function auditView(page, view) {
                 waitUntil: getNavigationWaitUntil(view),
                 timeout: 30000,
             });
+        },
+        prepare: async ({ page, view }) => {
+            if (!view.name.includes('-caddyfile-')) {
+                return {};
+            }
+
+            const caddyfileValidationGuard = await page.evaluate(() => {
+                const form = document.querySelector('form[data-caddyfile-config-form]');
+                if (!(form instanceof HTMLFormElement)) {
+                    return { present: false, emptyStateAllowsValidation: false };
+                }
+
+                const caddyfileInput = form.elements.namedItem('caddyfile');
+                const validateButton = form.querySelector('[data-validate-form-button]');
+                if (!(caddyfileInput instanceof HTMLTextAreaElement) || !(validateButton instanceof HTMLButtonElement)) {
+                    return { present: false, emptyStateAllowsValidation: false };
+                }
+
+                const emptyState = caddyfileInput.value.trim() === '';
+                return {
+                    present: true,
+                    emptyStateAllowsValidation: emptyState && validateButton.disabled === false,
+                };
+            });
+
+            return {
+                metricsPatch: { caddyfileValidationGuard },
+            };
         },
         finalize: async ({ network, response, view }) => {
             const statusUnavailableExpected = isExpectedStatusUnavailable(view, response);
@@ -725,9 +945,8 @@ async function auditLoginFailureView(page, view) {
         load: () => page.goto(`${BASE_URL}${view.url}`, { waitUntil: 'domcontentloaded', timeout: 10000 }),
         afterLoad: () => applyTheme(page, { baseUrl: BASE_URL, theme: view.theme, label: view.name }),
         prepare: async () => {
-            const { username } = await credentialProvider.getCredentials();
             const invalidPassword = randomBytes(24).toString('hex');
-            await page.fill('#username', username);
+            await page.fill('#username', LOGIN_FAILURE_USERNAME);
             await page.fill('#password', invalidPassword);
 
             const [loginResponse, redirectResponse] = await Promise.all([
@@ -761,6 +980,7 @@ async function auditLoginFailureView(page, view) {
             await waitForLoginFailureUi(page);
 
             const loginFailure = await page.evaluate(() => {
+                const normalizeLoginFailureText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
                 const isVisible = (element) => {
                     if (!element || !element.isConnected) return false;
                     if (element.closest('.d-none, [hidden], [aria-hidden="true"]')) return false;
@@ -769,14 +989,50 @@ async function auditLoginFailureView(page, view) {
                     const rect = element.getBoundingClientRect();
                     return rect.width > 0 && rect.height > 0;
                 };
+                const extractLoginFailureText = (documentRoot = document) => {
+                    const candidates = [
+                        '.app-flash-stack .alert[role="alert"]',
+                        '.alert[role="alert"]',
+                        '.alert-danger',
+                        '.login-error',
+                        '.error-message',
+                        '[data-testid="login-error"]',
+                    ];
 
-                const alert = Array.from(document.querySelectorAll('.alert[role="alert"]')).find((element) => isVisible(element)) || null;
-                const submitButton = document.querySelector('form[action="/login"] button[type="submit"]');
+                    for (const selector of candidates) {
+                        const matches = Array.from(documentRoot.querySelectorAll(selector));
+                        const visibleMatch = matches.find((element) => isVisible(element));
+                        if (visibleMatch) {
+                            return normalizeLoginFailureText(visibleMatch.textContent);
+                        }
+                    }
+
+                    const bodyText = normalizeLoginFailureText(documentRoot.body?.textContent || '');
+                    const patterns = [
+                        /invalid credentials\.?/i,
+                        /too many[^.]*attempts[^.]*\.?/i,
+                        /rate limit[^.]*\.?/i,
+                        /locked[^.]*\.?/i,
+                    ];
+                    for (const pattern of patterns) {
+                        const match = bodyText.match(pattern);
+                        if (match) {
+                            return normalizeLoginFailureText(match[0]);
+                        }
+                    }
+
+                    return '';
+                };
+
+                const alert = Array.from(document.querySelectorAll('.app-flash-stack .alert[role="alert"], .alert[role="alert"], .alert-danger, .login-error, .error-message'))
+                    .find((element) => isVisible(element)) || null;
+                const submitButton = document.querySelector('form[action$="/login"] button[type="submit"], form.auth-form button[type="submit"]');
                 const passwordInput = document.getElementById('password');
+                const errorText = extractLoginFailureText(document);
 
                 return {
                     alertVisible: isVisible(alert),
-                    errorText: alert?.textContent?.trim() || '',
+                    errorText,
                     submitButtonDisabled: Boolean(submitButton?.disabled),
                     submitButtonReset: !submitButton?.disabled,
                     submitButtonLabel: submitButton?.textContent?.trim() || '',
@@ -813,10 +1069,10 @@ async function auditLoginFailureView(page, view) {
     });
 }
 
-function buildLoginRateLimitResult({ attempts, response, reached429, securityResponse = response }) {
+function buildLoginRateLimitResult({ attempts, response, reached429, reachedLockoutUi = false, securityResponse = response }) {
     const status = response?.status?.() ?? null;
     const redirectedWithout429 = status >= 300 && status < 400 && status !== 429;
-    const rateLimitHandled = reached429 || status === 429 || redirectedWithout429;
+    const rateLimitHandled = reached429 || status === 429 || reachedLockoutUi;
     const result = {
         name: 'login-rate-limit',
         url: `${BASE_URL}/login`,
@@ -826,6 +1082,7 @@ function buildLoginRateLimitResult({ attempts, response, reached429, securityRes
             loginRateLimit: {
                 attempts,
                 reached429,
+                reachedLockoutUi,
                 status,
                 redirectedWithout429,
             },
@@ -847,9 +1104,10 @@ function buildLoginRateLimitResult({ attempts, response, reached429, securityRes
 
     applySummary(result);
     if (!rateLimitHandled) {
-        result.hardFindings = [...result.hardFindings, 'loginRateLimitMissing429'];
+        result.hardFindings = [...result.hardFindings, 'loginRateLimitMissing'];
         result.findings = [...result.hardFindings, ...(result.warnings || [])];
-    } else if (redirectedWithout429) {
+    }
+    if (redirectedWithout429 && !rateLimitHandled) {
         result.warnings = [...result.warnings, 'loginRateLimitRedirectedUiFlow'];
         result.findings = [...result.hardFindings, ...result.warnings];
     }
@@ -865,7 +1123,7 @@ async function auditLoginRateLimit(browser) {
         let lastResponse = null;
         let lastSecurityResponse = null;
 
-        for (; attempts < 6; attempts += 1) {
+        for (; attempts < UI_LINT_RATE_LIMIT_ATTEMPTS; attempts += 1) {
             await page.goto(`${BASE_URL}/login`, { waitUntil: 'domcontentloaded', timeout: 10000 });
             await page.fill('#username', RATE_LIMIT_USERNAME);
             await page.fill('#password', randomBytes(24).toString('hex'));
@@ -901,12 +1159,48 @@ async function auditLoginRateLimit(browser) {
                     securityResponse: redirectResponse || response,
                 });
             }
+
+            await page.waitForURL((url) => {
+                try {
+                    return url.pathname === '/login';
+                } catch {
+                    return false;
+                }
+            }, { timeout: 30000 }).catch(() => { });
+
+            const reachedLockoutUi = await page.evaluate(() => {
+                const alert = Array.from(document.querySelectorAll('.alert[role="alert"]')).find((element) => {
+                    if (!(element instanceof HTMLElement)) {
+                        return false;
+                    }
+                    const style = window.getComputedStyle(element);
+                    const rect = element.getBoundingClientRect();
+                    return style.display !== 'none'
+                        && style.visibility !== 'hidden'
+                        && rect.width > 0
+                        && rect.height > 0;
+                });
+
+                const message = alert?.textContent?.trim() || '';
+                return /too many|rate limit|locked/i.test(message);
+            });
+
+            if (reachedLockoutUi) {
+                return buildLoginRateLimitResult({
+                    attempts: attempts + 1,
+                    response,
+                    reached429: false,
+                    reachedLockoutUi: true,
+                    securityResponse: redirectResponse || response,
+                });
+            }
         }
 
         return buildLoginRateLimitResult({
             attempts,
             response: lastResponse,
             reached429: false,
+            reachedLockoutUi: false,
             securityResponse: lastSecurityResponse || lastResponse,
         });
     } finally {
@@ -917,21 +1211,31 @@ async function auditLoginRateLimit(browser) {
 async function writeSummary(results) {
     await fs.mkdir(RESULTS_DIR, { recursive: true, mode: 0o700 });
     const summaryPath = path.join(RESULTS_DIR, 'ui-lint-summary.json');
-    await fs.writeFile(summaryPath, JSON.stringify(results, null, 2));
+    const serializedResults = results.map((result) =>
+        serializeResultForOutput(result, {
+            summaryPath,
+            visualRegressionEnabled: VISUAL_REGRESSION.enabled,
+        })
+    );
+    await fs.writeFile(summaryPath, JSON.stringify(serializedResults, null, 2), { mode: 0o600 });
     return summaryPath;
 }
 
 async function runAuthenticatedViews(pagePool, viewsOverride = null) {
     const viewsToRun = viewsOverride || VIEWS;
     const groupedViews = groupViewsByDevice(viewsToRun);
-    const settled = await Promise.all(
-        Array.from(groupedViews.entries()).map(async ([device, views]) => {
+    const settled = [];
+    await runWithConcurrency(
+        Array.from(groupedViews.entries()),
+        UI_LINT_DEVICE_CONCURRENCY,
+        async ([device, views]) => {
             let page;
             try {
                 page = await pagePool.getPage(device);
             } catch (error) {
                 logAuditError(`[${device}] Page setup failed`, error);
-                return views.map((view) => buildErrorResult(view, error, { device, phase: 'page-setup' }));
+                settled.push(views.map((view) => buildErrorResult(view, error, { device, phase: 'page-setup' })));
+                return;
             }
 
             const results = [];
@@ -954,8 +1258,8 @@ async function runAuthenticatedViews(pagePool, viewsOverride = null) {
                     results.push(buildErrorResult(view, error, { device, phase: 'audit-view' }));
                 }
             }
-            return results;
-        })
+            settled.push(results);
+        },
     );
 
     return settled.flat();
@@ -965,56 +1269,59 @@ async function runLoginFailureViews(pagePool, viewsOverride = null) {
     const viewsToRun = viewsOverride || LOGIN_FAILURE_VIEWS;
     const groupedViews = groupViewsByDevice(viewsToRun);
     const results = [];
-
-    for (const [device, views] of groupedViews.entries()) {
-        let page;
-        try {
-            page = await pagePool.getPage(device);
-        } catch (error) {
-            logAuditError(`[${device}] Login-failure page setup failed`, error);
-            results.push(...views.map((view) => buildErrorResult(view, error, { device, phase: 'login-page-setup' })));
-            continue;
-        }
-
-        for (const [index, view] of views.entries()) {
-            if (index > 0) {
-                await delay(LOGIN_TEST_STAGGER_MS);
-            }
-
+    await runWithConcurrency(
+        Array.from(groupedViews.entries()),
+        UI_LINT_DEVICE_CONCURRENCY,
+        async ([device, views]) => {
+            let page;
             try {
-                const result = await withRetry(
-                    async () => {
-                        const auditResult = await auditLoginFailureView(page, view);
-                        const errorText = auditResult?.metrics?.loginFailure?.errorText || '';
-                        if (isLoginRateLimitMessage(errorText)) {
-                            throw new Error(errorText);
-                        }
-                        return auditResult;
-                    },
-                    {
-                        attempts: UI_LINT_VIEW_RETRIES,
-                        label: view.name,
-                        onRetry: async ({ attempt, error, remaining }) => {
-                            if (isLoginRateLimitMessage(error)) {
-                                console.warn(
-                                    `[${view.name}] Rate limited, waiting ${LOGIN_LOCKOUT_RESET_MS}ms before retry ${attempt + 1}/${UI_LINT_VIEW_RETRIES}: ${error instanceof Error ? error.message : String(error)}`,
-                                );
-                                await delay(LOGIN_LOCKOUT_RESET_MS);
-                                return;
-                            }
-                            console.warn(
-                                `[${view.name}] Audit attempt ${attempt} failed; retrying (${remaining} remaining): ${error instanceof Error ? error.message : String(error)}`,
-                            );
-                        },
-                    },
-                );
-                results.push(applySummary(result));
+                page = await pagePool.getPage(device);
             } catch (error) {
-                logAuditError(`[${view.name}] Audit failed`, error);
-                results.push(buildErrorResult(view, error, { device, phase: 'audit-login-failure' }));
+                logAuditError(`[${device}] Login-failure page setup failed`, error);
+                results.push(...views.map((view) => buildErrorResult(view, error, { device, phase: 'login-page-setup' })));
+                return;
             }
-        }
-    }
+
+            for (const [index, view] of views.entries()) {
+                if (index > 0) {
+                    await delay(LOGIN_TEST_STAGGER_MS);
+                }
+
+                try {
+                    const result = await withRetry(
+                        async () => {
+                            const auditResult = await auditLoginFailureView(page, view);
+                            const errorText = auditResult?.metrics?.loginFailure?.errorText || '';
+                            if (isLoginRateLimitMessage(errorText)) {
+                                throw new Error(errorText);
+                            }
+                            return auditResult;
+                        },
+                        {
+                            attempts: UI_LINT_VIEW_RETRIES,
+                            label: view.name,
+                            onRetry: async ({ attempt, error, remaining }) => {
+                                if (isLoginRateLimitMessage(error)) {
+                                    console.warn(
+                                        `[${view.name}] Rate limited, waiting ${LOGIN_LOCKOUT_RESET_MS}ms before retry ${attempt + 1}/${UI_LINT_VIEW_RETRIES}: ${error instanceof Error ? error.message : String(error)}`,
+                                    );
+                                    await delay(LOGIN_LOCKOUT_RESET_MS);
+                                    return;
+                                }
+                                console.warn(
+                                    `[${view.name}] Audit attempt ${attempt} failed; retrying (${remaining} remaining): ${error instanceof Error ? error.message : String(error)}`,
+                                );
+                            },
+                        },
+                    );
+                    results.push(applySummary(result));
+                } catch (error) {
+                    logAuditError(`[${view.name}] Audit failed`, error);
+                    results.push(buildErrorResult(view, error, { device, phase: 'audit-login-failure' }));
+                }
+            }
+        },
+    );
 
     return results;
 }
@@ -1034,26 +1341,24 @@ function emitResults(results, summaryPath) {
 }
 
 async function main() {
-    const browserTypes = (process.env.UI_LINT_BROWSERS || 'chromium')
-        .split(',')
-        .map((b) => b.trim().toLowerCase())
-        .filter(Boolean);
+    const browserTypes = parseBrowserTypes();
 
     const playwrightBrowsers = { chromium, firefox, webkit };
+
+    console.log(
+        `Browser matrix: ${browserTypes.join(', ')} `
+        + `(browserConcurrency=${UI_LINT_BROWSER_CONCURRENCY}, deviceConcurrency=${UI_LINT_DEVICE_CONCURRENCY})`,
+    );
 
     await loadCredentials();
     await assertBaseUrlReachable();
     await prepareOutputDirs();
 
-    const results = [];
+    const browserResults = new Map();
+    const baselineSnapshotNames = new Set();
     let summaryPath = path.join(RESULTS_DIR, 'ui-lint-summary.json');
-
-    for (const browserName of browserTypes) {
+    await runWithConcurrency(browserTypes, UI_LINT_BROWSER_CONCURRENCY, async (browserName) => {
         const browserType = playwrightBrowsers[browserName];
-        if (!browserType) {
-            console.warn(`Skipping unknown browser type: ${browserName}`);
-            continue;
-        }
 
         console.log(`Starting audit for browser: ${browserName}`);
         let browser;
@@ -1068,19 +1373,23 @@ async function main() {
                 console.warn(`Chromium version drift: expected major ${UI_LINT_EXPECTED_CHROMIUM_MAJOR}, got ${browserVersion}`);
             }
 
+            let authState;
             const authContext = await browser.newContext(buildContextOptions(DEVICE_CONTEXT_OPTIONS.get('desktop')));
-            const authPage = await authContext.newPage();
-            await authPage.emulateMedia({ reducedMotion: 'reduce' });
-            await login(authPage, {
-                baseUrl: BASE_URL,
-                credentialProvider,
-                motionResetCss: FULL_MOTION_RESET_CSS,
-            });
-            const authState = await authContext.storageState();
-            await authContext.close();
+            try {
+                const authPage = await authContext.newPage();
+                await authPage.emulateMedia({ reducedMotion: 'reduce' });
+                await login(authPage, {
+                    baseUrl: BASE_URL,
+                    credentialProvider,
+                    motionResetCss: FULL_MOTION_RESET_CSS,
+                });
+                authState = await authContext.storageState();
+            } finally {
+                await authContext.close();
+            }
 
-            const browserViews = VIEWS.map(v => ({ ...v, name: `${browserName}-${v.name}` }));
-            const browserLoginFailureViews = LOGIN_FAILURE_VIEWS.map(v => ({ ...v, name: `${browserName}-${v.name}` }));
+            const browserViews = VIEWS.map((view) => ({ ...view, name: `${browserName}-${view.name}` }));
+            const browserLoginFailureViews = LOGIN_FAILURE_VIEWS.map((view) => ({ ...view, name: `${browserName}-${view.name}` }));
 
             authPagePool = createDevicePagePool({
                 browser,
@@ -1100,34 +1409,44 @@ async function main() {
                 installUiLintInitScript,
             });
 
-            // Run audits with browser-prefixed views
-            results.push(...await runAuthenticatedViews(authPagePool, browserViews));
-            results.push(...await runLoginFailureViews(loginFailurePagePool, browserLoginFailureViews));
-            summaryPath = await writeSummary(results);
-
-            try {
-                const rateLimitResult = await auditLoginRateLimit(browser);
-                rateLimitResult.name = `${browserName}-${rateLimitResult.name}`;
-                results.push(rateLimitResult);
-            } catch (error) {
-                logAuditError(`[${browserName}] Login rate-limit audit failed`, error);
-                results.push(buildErrorResult(
-                    { name: `${browserName}-login-rate-limit`, url: '/login', theme: null },
-                    error,
-                    { device: 'desktop', phase: 'audit-login-rate-limit' },
-                ));
+            const currentBrowserResults = [
+                ...await runAuthenticatedViews(authPagePool, browserViews),
+                ...await runLoginFailureViews(loginFailurePagePool, browserLoginFailureViews),
+            ];
+            browserResults.set(browserName, currentBrowserResults);
+            for (const view of [...browserViews, ...browserLoginFailureViews]) {
+                baselineSnapshotNames.add(view.name);
             }
-            summaryPath = await writeSummary(results);
-
-            await runBaselineGc(
-                VISUAL_REGRESSION,
-                [...browserViews, ...browserLoginFailureViews].map((view) => view.name)
-            );
         } finally {
             if (authPagePool) await authPagePool.closeAll();
             if (loginFailurePagePool) await loginFailurePagePool.closeAll();
             if (browser) await browser.close();
         }
+    });
+
+    const results = browserTypes.flatMap((browserName) => browserResults.get(browserName) || []);
+    summaryPath = await writeSummary(results);
+    await runBaselineGc(VISUAL_REGRESSION, Array.from(baselineSnapshotNames));
+
+    try {
+        const rateLimitBrowserName = browserTypes[0];
+        const rateLimitBrowserType = playwrightBrowsers[rateLimitBrowserName];
+        const browser = await rateLimitBrowserType.launch({ headless: true });
+        try {
+            const rateLimitResult = await auditLoginRateLimit(browser);
+            rateLimitResult.name = `${rateLimitBrowserName}-${rateLimitResult.name}`;
+            results.push(rateLimitResult);
+        } finally {
+            await browser.close();
+        }
+    } catch (error) {
+        const rateLimitBrowserName = browserTypes[0] || 'chromium';
+        logAuditError(`[${rateLimitBrowserName}] Login rate-limit audit failed`, error);
+        results.push(buildErrorResult(
+            { name: `${rateLimitBrowserName}-login-rate-limit`, url: '/login', theme: null },
+            error,
+            { device: 'desktop', phase: 'audit-login-rate-limit' },
+        ));
     }
 
     summaryPath = await writeSummary(results);

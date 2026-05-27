@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import asyncio
-import fcntl
+import logging
 import os
 import threading
 from collections.abc import AsyncIterator
@@ -16,13 +16,19 @@ from pathlib import Path
 from sqlalchemy import event, inspect
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+from sqlalchemy.pool import NullPool, StaticPool
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None
 
 from app.config.settings import Settings, get_settings
 from app.models import entities as _entities  # noqa: F401
 from app.models.base import Base
 
 
+logger = logging.getLogger(__name__)
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 _lazy_init_lock = threading.RLock()
@@ -43,9 +49,16 @@ def _create_engine() -> AsyncEngine:
     """Create the shared async engine from current settings."""
     settings = get_settings()
     database_url = _resolve_database_url(settings)
-    engine_kwargs: dict[str, object] = {"poolclass": NullPool}
+    engine_kwargs: dict[str, object] = {}
     if database_url.get_backend_name() == "sqlite":
-        engine_kwargs["connect_args"] = {"timeout": 30}
+        if _is_sqlite_memory_url(database_url):
+            engine_kwargs["poolclass"] = StaticPool
+            engine_kwargs["connect_args"] = {"check_same_thread": False}
+        else:
+            engine_kwargs["poolclass"] = NullPool
+            engine_kwargs["connect_args"] = {"timeout": 30}
+    else:
+        engine_kwargs["pool_pre_ping"] = True
 
     engine = create_async_engine(database_url, **engine_kwargs)
     if engine.url.get_backend_name() == "sqlite":
@@ -53,8 +66,12 @@ def _create_engine() -> AsyncEngine:
     return engine
 
 
+def _is_sqlite_memory_url(database_url: URL) -> bool:
+    return database_url.get_backend_name() == "sqlite" and database_url.database in {None, "", ":memory:"}
+
+
 def _resolve_database_url(settings: Settings) -> URL:
-    """Return the effective database URL with project-relative SQLite paths normalized."""
+    """Return the effective database URL with SQLite files constrained to data/."""
     url = make_url(settings.database_url)
     if url.get_backend_name() != "sqlite":
         return url
@@ -67,7 +84,12 @@ def _resolve_database_url(settings: Settings) -> URL:
     if not database_path.is_absolute():
         database_path = settings.base_dir / database_path
 
-    return url.set(database=str(database_path))
+    resolved_database_path = database_path.resolve()
+    allowed_root = settings.data_dir.resolve()
+    if resolved_database_path != allowed_root and allowed_root not in resolved_database_path.parents:
+        raise RuntimeError(f"SQLite database path must be inside data directory: {allowed_root}")
+
+    return url.set(database=str(resolved_database_path))
 
 
 def get_engine() -> AsyncEngine:
@@ -81,6 +103,7 @@ def get_engine() -> AsyncEngine:
         with _lazy_init_lock:
             if _engine is None:
                 _engine = _create_engine()
+    assert _engine is not None
     return _engine
 
 
@@ -99,6 +122,7 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
                     expire_on_commit=False,
                     class_=AsyncSession,
                 )
+    assert _session_factory is not None
     return _session_factory
 
 
@@ -139,8 +163,36 @@ def _read_existing_unique_constraints(sync_connection) -> dict[str, set[tuple[st
             column_names = constraint.get("column_names") or []
             if column_names:
                 constraints.add(tuple(column_names))
+        for index in schema_inspector.get_indexes(table_name):
+            if not index.get("unique"):
+                continue
+            column_names = index.get("column_names") or []
+            if column_names:
+                constraints.add(tuple(column_names))
         table_constraints[table_name] = constraints
     return table_constraints
+
+
+def _apply_known_table_migrations(sync_connection, existing_tables: set[str]) -> bool:
+    """Create newly required tables for existing databases."""
+    migrated = False
+    for table_name in (
+        "caddybuddy_state",
+        "caddyfile_snapshots",
+        "caddy_config_versions",
+        "caddy_sync_events",
+        "ssllabs_targets",
+        "ssllabs_scans",
+    ):
+        if table_name in existing_tables:
+            continue
+        table = Base.metadata.tables.get(table_name)
+        if table is None:
+            raise RuntimeError(f"Known migration table not present in metadata: {table_name}")
+        logger.info("Creating missing table during database init: %s", table_name)
+        table.create(sync_connection, checkfirst=True)
+        migrated = True
+    return migrated
 
 
 def _apply_known_schema_migrations(
@@ -148,41 +200,30 @@ def _apply_known_schema_migrations(
     existing_columns: dict[str, set[str]],
 ) -> bool:
     """Apply narrowly scoped schema migrations required by the app."""
+    dialect_name = getattr(getattr(sync_connection, "dialect", None), "name", None)
+    if dialect_name not in {None, "sqlite"}:
+        return False
+
     migrated = False
 
-    deployment_columns = existing_columns.get("deployments")
-    if deployment_columns is not None and "version" not in deployment_columns:
+    site_columns = existing_columns.get("caddy_sites")
+    if site_columns is not None and "upstream_url" not in site_columns:
+        logger.info("Applying known SQLite schema migration: caddy_sites.upstream_url")
         sync_connection.exec_driver_sql(
-            "ALTER TABLE deployments ADD COLUMN version INTEGER NOT NULL DEFAULT 1"
+            "ALTER TABLE caddy_sites ADD COLUMN upstream_url TEXT NOT NULL DEFAULT ''"
         )
         migrated = True
-    if deployment_columns is not None:
+    if site_columns is not None and "caddy_directives" not in site_columns:
+        logger.info("Applying known SQLite schema migration: caddy_sites.caddy_directives")
         sync_connection.exec_driver_sql(
-            "CREATE UNIQUE INDEX IF NOT EXISTS uq_active_deployment_per_site_server "
-            "ON deployments (site_id, server_id) WHERE status = 'DEPLOYED'"
-        )
-
-    server_columns = existing_columns.get("caddy_servers")
-    if server_columns is not None and "description" in server_columns:
-        sync_connection.exec_driver_sql("ALTER TABLE caddy_servers DROP COLUMN description")
-        migrated = True
-
-    template_columns = existing_columns.get("config_templates")
-    if template_columns is not None and "version_id" not in template_columns:
-        sync_connection.exec_driver_sql(
-            "ALTER TABLE config_templates ADD COLUMN version_id INTEGER NOT NULL DEFAULT 1"
+            "ALTER TABLE caddy_sites ADD COLUMN caddy_directives TEXT"
         )
         migrated = True
-    if template_columns is not None:
+    if site_columns is not None and "enabled" not in site_columns:
+        logger.info("Applying known SQLite schema migration: caddy_sites.enabled")
         sync_connection.exec_driver_sql(
-            "CREATE UNIQUE INDEX IF NOT EXISTS uq_config_templates_checksum "
-            "ON config_templates (checksum)"
+            "ALTER TABLE caddy_sites ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1"
         )
-    if template_columns is not None and "syntax_valid" in template_columns:
-        sync_connection.exec_driver_sql("ALTER TABLE config_templates DROP COLUMN syntax_valid")
-        migrated = True
-    if template_columns is not None and "validation_error" in template_columns:
-        sync_connection.exec_driver_sql("ALTER TABLE config_templates DROP COLUMN validation_error")
         migrated = True
 
     return migrated
@@ -221,6 +262,8 @@ def _ensure_sqlite_database_directory(database_path: Path) -> None:
             f"Database directory is not writable: {data_dir}. "
             f"Ensure the directory exists with correct permissions (uid={_current_process_uid()})."
         )
+    if database_path.exists() and not os.access(database_path, os.W_OK):
+        raise RuntimeError(f"SQLite database file is not writable: {database_path}")
 
 
 def _sqlite_init_lock_path(database_path: Path) -> Path:
@@ -229,10 +272,14 @@ def _sqlite_init_lock_path(database_path: Path) -> Path:
 
 
 def _acquire_sqlite_init_lock(lock_file) -> None:
+    if fcntl is None:
+        raise RuntimeError("SQLite initialization lock requires fcntl on this platform.")
     fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
 
 
 def _release_sqlite_init_lock(lock_file) -> None:
+    if fcntl is None:
+        raise RuntimeError("SQLite initialization lock requires fcntl on this platform.")
     fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
@@ -241,12 +288,18 @@ async def _execute_database_init() -> None:
     async with get_engine().begin() as connection:
         existing_tables = await connection.run_sync(_read_existing_table_names)
         if not existing_tables:
+            logger.info("Initializing new database schema")
             await connection.run_sync(Base.metadata.create_all)
             return
+
+        migrated_tables = await connection.run_sync(_apply_known_table_migrations, existing_tables)
+        if migrated_tables:
+            existing_tables = await connection.run_sync(_read_existing_table_names)
 
         expected_tables = set(Base.metadata.tables)
         missing_tables = sorted(expected_tables.difference(existing_tables))
         if missing_tables:
+            logger.error("Database schema missing tables: %s", ", ".join(missing_tables))
             raise RuntimeError(
                 "Existing database schema is missing tables: "
                 f"{', '.join(missing_tables)}. "
@@ -266,6 +319,7 @@ async def _execute_database_init() -> None:
             missing_columns.extend(f"{table_name}.{column_name}" for column_name in absent_columns)
 
         if missing_columns:
+            logger.error("Database schema missing columns: %s", ", ".join(missing_columns))
             raise RuntimeError(
                 "Existing database schema is missing columns: "
                 f"{', '.join(missing_columns)}. "
@@ -289,6 +343,10 @@ async def _execute_database_init() -> None:
                     )
 
         if missing_unique_constraints:
+            logger.error(
+                "Database schema missing unique constraints: %s",
+                ", ".join(missing_unique_constraints),
+            )
             raise RuntimeError(
                 "Existing database schema is missing unique constraints: "
                 f"{', '.join(missing_unique_constraints)}. "
@@ -312,12 +370,14 @@ async def init_database() -> None:
 
     _ensure_sqlite_database_directory(database_path)
     lock_path = _sqlite_init_lock_path(database_path)
+    logger.debug("Acquiring SQLite init lock: %s", lock_path)
     with lock_path.open("a+b") as lock_file:
         await asyncio.to_thread(_acquire_sqlite_init_lock, lock_file)
         try:
             await _execute_database_init()
         finally:
             await asyncio.to_thread(_release_sqlite_init_lock, lock_file)
+            logger.debug("Released SQLite init lock: %s", lock_path)
 
 
 async def dispose_engine() -> None:

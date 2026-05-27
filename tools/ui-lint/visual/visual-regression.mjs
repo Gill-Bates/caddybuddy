@@ -35,48 +35,11 @@ const GLOBAL_DYNAMIC_SELECTORS = [
 ];
 
 const VIEW_DYNAMIC_SELECTORS = {
-    dashboard: [
-        '.audit-feed',
-        '.audit-row__time',
-        '.audit-row__user',
-        '.table tbody td:last-child',
-    ],
-    servers: [
-        '.status-pill',
-        '.table tbody td code',
-    ],
-    configs: [
-        '.config-list .small',
-        '.history-stack',
-        '.history-item',
+    caddyfile: [
+        '#global-caddyfile',
     ],
     sites: [
-        '.table tbody td:nth-child(3)',
-        '.table tbody .badge',
-        '.cb-code-block',
-    ],
-    deployments: [
-        '.table tbody td:nth-child(5)',
-        '.table tbody .badge',
-        '.cb-code-block',
-    ],
-    queue: [
-        '.table tbody td:nth-child(4)',
-        '.table tbody .badge',
-        '#queueSelectedSiteHint',
-    ],
-    'api-keys': [
-        '.status-pill',
-        '.table tbody td code',
-        '.table tbody td:nth-child(5)',
-    ],
-    'audit-logs': [
-        '.audit-row__time',
-        '.audit-row__summary',
-        '.audit-row__details',
-    ],
-    users: [
-        '.table tbody td:last-child',
+        '#site-caddyfile',
     ],
 };
 
@@ -96,6 +59,14 @@ const asPositiveInt = (value, fallback) => {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
+const asFiniteNumber = (value, fallback, { min = -Infinity, max = Infinity } = {}) => {
+    const parsed = Number.parseFloat(String(value ?? ''));
+    if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
+        return fallback;
+    }
+    return parsed;
+};
+
 const sanitizeVisualName = (name) =>
     String(name || 'view')
         .trim()
@@ -107,16 +78,8 @@ const inferViewScope = (name) => {
     const safeName = sanitizeVisualName(name);
     if (!safeName) return null;
     const scopes = [
-        'dashboard',
-        'servers',
-        'configs',
+        'caddyfile',
         'sites',
-        'deployments',
-        'queue',
-        'api-keys',
-        'audit-logs',
-        'users',
-        'profile',
         'login-error',
     ];
     return scopes.find((scope) => safeName.includes(`-${scope}-`) || safeName.startsWith(`${scope}-`) || safeName.includes(scope)) || null;
@@ -159,8 +122,16 @@ export function getVisualRegressionConfig() {
         enabled: asBoolean(process.env.UI_LINT_VISUAL_REGRESSION),
         updateBaselines: asBoolean(process.env.UI_LINT_VISUAL_UPDATE_BASELINES),
         disableResizeObserver: asBoolean(process.env.UI_LINT_DISABLE_RESIZE_OBSERVER),
-        thresholdPercent: Number.parseFloat(process.env.UI_LINT_VISUAL_THRESHOLD_PERCENT || `${DEFAULT_THRESHOLD_PERCENT}`),
-        pixelThreshold: Number.parseFloat(process.env.UI_LINT_VISUAL_PIXEL_THRESHOLD || `${DEFAULT_PIXEL_THRESHOLD}`),
+        thresholdPercent: asFiniteNumber(
+            process.env.UI_LINT_VISUAL_THRESHOLD_PERCENT,
+            DEFAULT_THRESHOLD_PERCENT,
+            { min: 0, max: 100 },
+        ),
+        pixelThreshold: asFiniteNumber(
+            process.env.UI_LINT_VISUAL_PIXEL_THRESHOLD,
+            DEFAULT_PIXEL_THRESHOLD,
+            { min: 0, max: 1 },
+        ),
         screenshotHeight: asPositiveInt(process.env.UI_LINT_VISUAL_SCREENSHOT_HEIGHT, DEFAULT_SCREENSHOT_HEIGHT),
         fixedNowIso: String(process.env.UI_LINT_VISUAL_FIXED_NOW || DEFAULT_FIXED_NOW_ISO),
         maskSelectors: asMaskSelectorList(process.env.UI_LINT_VISUAL_MASK_SELECTORS),
@@ -179,7 +150,9 @@ export async function ensureVisualRegressionDirs(config = getVisualRegressionCon
 export async function stabilizeVisualSnapshot(page, config = getVisualRegressionConfig()) {
     await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
     await page.waitForLoadState('load', { timeout: 30000 });
-    await page.waitForLoadState('networkidle', { timeout: 10000 });
+    await page.waitForLoadState('networkidle', { timeout: 3000 }).catch(() => { });
+    await page.locator('main').waitFor({ state: 'visible', timeout: 10000 });
+    await page.waitForFunction(() => document.readyState === 'complete', { timeout: 10000 });
 
     await page.addStyleTag({
         content: `
@@ -213,6 +186,24 @@ export async function stabilizeVisualSnapshot(page, config = getVisualRegression
 
             ::selection {
                 background: transparent !important;
+            }
+
+            body {
+                min-width: 320px;
+            }
+
+            .app-content,
+            .app-sidebar {
+                transform: none !important;
+            }
+
+            .modal,
+            .sidebar-backdrop {
+                transition: none !important;
+            }
+
+            [data-ui-lint-dynamic] {
+                min-width: 3ch;
             }
         `,
     });
@@ -366,6 +357,8 @@ export async function captureVisualSnapshot(page, name, config = getVisualRegres
         throw new Error('Invalid screenshot name for visual regression');
     }
 
+    await ensureVisualRegressionDirs(config);
+
     const currentPath = path.join(config.currentDir, `${safeName}.png`);
 
     const pageViewport = page.viewportSize();
@@ -403,6 +396,9 @@ export async function captureVisualSnapshot(page, name, config = getVisualRegres
 
 export async function compareVisualSnapshot(name, config = getVisualRegressionConfig()) {
     const safeName = sanitizeVisualName(name);
+    if (!safeName) {
+        throw new Error('Invalid screenshot name for visual regression');
+    }
     const baselinePath = path.join(config.baselineDir, `${safeName}.png`);
     const currentPath = path.join(config.currentDir, `${safeName}.png`);
     const diffPath = path.join(config.diffDir, `${safeName}.diff.png`);

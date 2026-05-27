@@ -1,5 +1,7 @@
 {% extends 'base.html' %}
 
+{% set page_title = "Sign in" %}
+
 {% block content %}
 <section class="auth-shell">
     <div class="auth-card">
@@ -10,29 +12,29 @@
                         class="auth-brand__logo">
                 </div>
                 <h1 class="auth-card__title mb-2">Sign in</h1>
-                <p class="text-muted small">Manage Caddy with ease!</p>
+                <p class="text-muted small">Access the CaddyBuddy control plane.</p>
             </div>
 
             <form action="{{ request.app.url_path_for('login_action') }}" method="post" class="auth-form"
                 data-loading-submit-form>
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <input type="hidden" name="next" value="{{ next_url | default('/') }}">
+                <input type="hidden" name="next" value="{{ safe_next_url if safe_next_url is defined else '/' }}">
 
                 <div class="mb-3">
                     <label for="username" class="form-label auth-field-label">Username</label>
                     <input id="username" name="username" class="form-control form-control-lg"
                         placeholder="Enter username" autocomplete="username" autocapitalize="off" autocorrect="off"
-                        required autofocus>
+                        spellcheck="false" maxlength="50" required autofocus>
                 </div>
 
                 <div class="mb-4">
                     <label for="password" class="form-label auth-field-label">Password</label>
                     <input id="password" name="password" type="password" class="form-control form-control-lg"
-                        placeholder="••••••••" autocomplete="current-password" required>
+                        placeholder="••••••••" autocomplete="current-password" maxlength="4096" required>
                 </div>
 
                 <button type="submit" class="btn btn-primary btn-lg w-100 auth-form__submit" data-loading-submit-button
-                    aria-busy="false">
+                    data-loading-label="Signing in...">
                     <span class="spinner-border spinner-border-sm me-2 d-none" role="status"
                         data-loading-submit-spinner></span>
                     <span data-loading-submit-label>Sign in</span>

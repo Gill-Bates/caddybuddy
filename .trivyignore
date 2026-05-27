@@ -1,21 +1,22 @@
-# Trivy vulnerability ignore file
-# Add CVE IDs here to ignore specific vulnerabilities
-# Format: CVE-YYYY-NNNNN
+# Trivy vulnerability ignore file.
+# Only temporary suppressions are allowed.
+# Affected component: upstream /usr/bin/caddy binary in the container image.
+# Review before: 2026-06-30
+# Tracking reference: container security review for upstream Caddy binary findings.
 
-# Ignored upstream vulnerabilities in the official Caddy binary (usr/bin/caddy)
-CVE-2026-34986
-CVE-2026-30836
-CVE-2026-29181
-CVE-2026-39883
-CVE-2026-33186
-CVE-2026-25679
-CVE-2026-27137
-CVE-2026-32280
-CVE-2026-32281
-CVE-2026-32283
-CVE-2026-33810
-CVE-2026-33811
-CVE-2026-33814
-CVE-2026-39820
-CVE-2026-39836
-CVE-2026-42499
+CVE-2026-34986 exp:2026-06-30
+CVE-2026-30836 exp:2026-06-30
+CVE-2026-29181 exp:2026-06-30
+CVE-2026-39883 exp:2026-06-30
+CVE-2026-33186 exp:2026-06-30
+CVE-2026-25679 exp:2026-06-30
+CVE-2026-27137 exp:2026-06-30
+CVE-2026-32280 exp:2026-06-30
+CVE-2026-32281 exp:2026-06-30
+CVE-2026-32283 exp:2026-06-30
+CVE-2026-33810 exp:2026-06-30
+CVE-2026-33811 exp:2026-06-30
+CVE-2026-33814 exp:2026-06-30
+CVE-2026-39820 exp:2026-06-30
+CVE-2026-39836 exp:2026-06-30
+CVE-2026-42499 exp:2026-06-30

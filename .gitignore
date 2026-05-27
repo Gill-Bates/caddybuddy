@@ -218,6 +218,12 @@ cython_debug/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
 
+# Local editor / OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
 # Ruff stuff:
 .ruff_cache/
 
@@ -231,3 +237,22 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local virtualenv variants
+.venv*/
+.venv-*/
+
+# UI lint / Playwright outputs
+tools/ui-lint/playwright-report/
+tools/ui-lint/test-results/
+tools/ui-lint/ui-lint-summary.json
+
+# Generated local code bundles
+full_codebase_*.txt
+full_codebase*.txt
+
+# Local runtime database files
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*

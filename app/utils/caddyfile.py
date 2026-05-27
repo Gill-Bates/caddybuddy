@@ -6,9 +6,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 import re
 from io import StringIO
 from dataclasses import dataclass
+
+from app.utils.domains import split_domain_names
 
 
 _CADDY_DIRECTIVE_KEYWORDS = frozenset(
@@ -45,7 +48,11 @@ _CADDY_DIRECTIVE_KEYWORDS = frozenset(
         "vars",
     }
 )
-_REVERSE_PROXY_TARGET_RE = re.compile(r"^\s*reverse_proxy\s+([^\s{#]+)", re.MULTILINE)
+_CADDY_TOKEN_FORBIDDEN_RE = re.compile(r"[\s{}#]", re.ASCII)
+_SITE_LABEL_FORBIDDEN_RE = re.compile(r"[\r\n{}]", re.ASCII)
+_DIRECTIVE_WRAPPER_TEMPLATE = r"^{directive}(?:\s+|\s*\{{)"
+_DENIED_CUSTOM_DIRECTIVES = frozenset({"import"})
+_NESTED_IMPORT_RE = re.compile(r"(?m)^\s*import(?:\s+|$)")
 
 CADDY_DIRECTIVES_EXAMPLE = """reverse_proxy 10.30.0.140:8000 {
     transport http {
@@ -107,7 +114,10 @@ def normalize_caddy_directives(raw_value: str) -> str | None:
     if "{" not in normalized:
         return normalized
 
-    chunks = _split_top_level_directives(normalized)
+    try:
+        chunks = _split_top_level_directives(normalized)
+    except ValueError:
+        return normalized
     if len(chunks) != 1:
         return normalized
 
@@ -124,9 +134,30 @@ def normalize_caddy_directives(raw_value: str) -> str | None:
     return normalized or None
 
 
-def _iter_text_lines(raw_value: str):
+def _iter_text_lines(raw_value: str) -> Iterator[str]:
     for raw_line in StringIO(raw_value):
         yield raw_line.rstrip("\r\n")
+
+
+def _normalize_caddy_token(value: str | None, label: str) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a string")
+
+    normalized = value.strip()
+    if not normalized:
+        return ""
+    if _CADDY_TOKEN_FORBIDDEN_RE.search(normalized):
+        raise ValueError(f"{label} must be a single Caddy token")
+    return normalized
+
+
+def _normalize_site_label(value: str) -> str:
+    normalized = value.strip() or "example.com"
+    if _SITE_LABEL_FORBIDDEN_RE.search(normalized):
+        raise ValueError("site label must not contain newlines or braces")
+    return ", ".join(split_domain_names(normalized))
 
 
 def _normalize_block_body(raw_value: str) -> str:
@@ -150,7 +181,7 @@ def _is_closing_brace_line(line: str) -> bool:
     return stripped.startswith("}") and _is_comment_or_empty(stripped[1:])
 
 
-def _has_balanced_braces(raw_value: str) -> bool:
+def _has_roughly_balanced_braces(raw_value: str) -> bool:
     depth = 0
     for character in raw_value:
         if character == "{":
@@ -164,7 +195,13 @@ def _has_balanced_braces(raw_value: str) -> bool:
 
 def _contains_full_directive_wrapper(raw_value: str, directive_name: str) -> bool:
     normalized = raw_value.strip()
-    return normalized.startswith(f"{directive_name} ") or normalized.startswith(f"{directive_name}{{")
+    return (
+        re.match(
+            _DIRECTIVE_WRAPPER_TEMPLATE.format(directive=re.escape(directive_name)),
+            normalized,
+        )
+        is not None
+    )
 
 
 def _validate_block_body(label: str, directive_name: str, raw_value: str) -> str | None:
@@ -173,7 +210,7 @@ def _validate_block_body(label: str, directive_name: str, raw_value: str) -> str
         return None
     if _contains_full_directive_wrapper(normalized, directive_name):
         return f"{label} expects only the inner directives, not the outer {directive_name} wrapper."
-    if not _has_balanced_braces(normalized):
+    if not _has_roughly_balanced_braces(normalized):
         return f"{label} contains unbalanced braces."
     return None
 
@@ -197,7 +234,8 @@ def _split_top_level_directives(directives: str) -> list[str]:
 
         current_lines.append(line)
         depth += stripped.count("{") - stripped.count("}")
-        depth = max(depth, 0)
+        if depth < 0:
+            raise ValueError("Caddy directives contain an unmatched closing brace.")
 
         if depth == 0 and not stripped.endswith("{"):
             chunks.append("\n".join(current_lines).strip())
@@ -207,6 +245,28 @@ def _split_top_level_directives(directives: str) -> list[str]:
         chunks.append("\n".join(current_lines).strip())
 
     return [chunk for chunk in chunks if chunk]
+
+
+def _validate_custom_directives(raw_value: str | None) -> list[str]:
+    normalized = normalize_caddy_directives(raw_value or "")
+    if not normalized:
+        return []
+
+    errors: list[str] = []
+
+    # Check for import directive anywhere (including nested blocks)
+    if _NESTED_IMPORT_RE.search(normalized):
+        errors.append("Custom directive 'import' is not allowed.")
+        return errors
+
+    # Additional top-level directive validation
+    for chunk in _split_top_level_directives(normalized):
+        header, _body = _split_block_header_and_body(chunk)
+        directive = header.split(maxsplit=1)[0].lower() if header else ""
+        if directive in _DENIED_CUSTOM_DIRECTIVES:
+            errors.append(f"Custom directive '{directive}' is not allowed.")
+
+    return errors
 
 
 def _split_block_header_and_body(chunk: str) -> tuple[str, str | None]:
@@ -242,12 +302,20 @@ def parse_domain_directive_form_state(
     state = DomainDirectiveFormState(upstream=upstream_fallback)
     custom_chunks: list[str] = []
 
-    for chunk in _split_top_level_directives(normalized_directives):
+    try:
+        chunks = _split_top_level_directives(normalized_directives)
+    except ValueError:
+        return DomainDirectiveFormState(
+            upstream=upstream_fallback,
+            custom_directives=normalized_directives,
+        )
+
+    for chunk in chunks:
         header, body = _split_block_header_and_body(chunk)
         if header.startswith("reverse_proxy "):
-            target = header.removeprefix("reverse_proxy ").strip() or None
-            if state.upstream is None and target is not None:
-                state.upstream = target
+            args = header.removeprefix("reverse_proxy ").split()
+            if len(args) == 1 and state.upstream is None:
+                state.upstream = args[0]
                 state.reverse_proxy_options = body or ""
                 continue
             custom_chunks.append(chunk)
@@ -314,7 +382,7 @@ def build_domain_directives(
     custom_directives: str | None,
 ) -> str | None:
     """Build domain directives from structured managed blocks plus free-form custom directives."""
-    normalized_upstream = upstream.strip() if isinstance(upstream, str) else ""
+    normalized_upstream = _normalize_caddy_token(upstream, "Upstream")
     normalized_reverse_proxy_options = _normalize_block_body(reverse_proxy_options or "")
     normalized_encode_directives = _normalize_inline_directive_args(encode_directives or "", "encode")
     normalized_header_directives = _normalize_block_body(header_directives or "")
@@ -369,7 +437,12 @@ def prepare_domain_directives(
     custom_directives: str | None,
 ) -> DomainDirectiveBuildResult:
     """Normalize, validate, and build domain directives for previews and persistence."""
-    normalized_upstream = upstream.strip() if isinstance(upstream, str) else ""
+    errors: list[str] = []
+    try:
+        normalized_upstream = _normalize_caddy_token(upstream, "Upstream")
+    except ValueError as exc:
+        normalized_upstream = ""
+        errors.append(str(exc))
     normalized_reverse_proxy_options = _normalize_block_body(reverse_proxy_options or "")
     normalized_encode_directives = _normalize_inline_directive_args(encode_directives or "", "encode")
     normalized_header_directives = _normalize_block_body(header_directives or "")
@@ -379,7 +452,6 @@ def prepare_domain_directives(
     normalized_basic_auth_directives = _normalize_block_body(basic_auth_directives or "")
     normalized_custom_directives = normalize_caddy_directives(custom_directives or "")
 
-    errors: list[str] = []
     if not normalized_upstream and normalized_reverse_proxy_options:
         errors.append("Reverse proxy options require an upstream target.")
 
@@ -398,8 +470,13 @@ def prepare_domain_directives(
     if normalized_encode_directives and any(brace in normalized_encode_directives for brace in "{}"):
         errors.append("Encode settings accept only inline arguments, for example 'zstd gzip'.")
 
-    if normalized_custom_directives and not _has_balanced_braces(normalized_custom_directives):
-        errors.append("Additional custom directives contain unbalanced braces.")
+    if normalized_custom_directives and not _has_roughly_balanced_braces(normalized_custom_directives):
+        errors.append("Additional custom directives appear to contain unbalanced braces.")
+
+    try:
+        errors.extend(_validate_custom_directives(custom_directives))
+    except ValueError as exc:
+        errors.append(str(exc))
 
     caddy_directives = build_domain_directives(
         upstream=normalized_upstream or None,
@@ -426,8 +503,19 @@ def extract_upstream_from_directives(directives: str | None) -> str | None:
     if not directives:
         return None
 
-    match = _REVERSE_PROXY_TARGET_RE.search(directives)
-    return match.group(1) if match else None
+    try:
+        chunks = _split_top_level_directives(directives)
+    except ValueError:
+        return None
+
+    for chunk in chunks:
+        header, _body = _split_block_header_and_body(chunk)
+        if not header.startswith("reverse_proxy "):
+            continue
+        args = header.removeprefix("reverse_proxy ").split()
+        return args[0] if len(args) == 1 else None
+
+    return None
 
 
 def build_domain_site_preview(
@@ -438,13 +526,24 @@ def build_domain_site_preview(
     ssl_enabled: bool,
 ) -> str:
     """Build a human-readable Caddyfile site block preview for a domain."""
-    normalized_name = name.strip() or "example.com"
-    site_label = normalized_name if ssl_enabled else f"http://{normalized_name}"
+    normalized_name = _normalize_site_label(name)
+    if ssl_enabled:
+        site_label = normalized_name
+    else:
+        site_label = ", ".join(
+            f"http://{domain_name}"
+            for domain_name in split_domain_names(normalized_name)
+        )
 
     normalized_directives = normalize_caddy_directives(caddy_directives or "")
     if normalized_directives is None:
-        if upstream:
-            normalized_directives = f"reverse_proxy {upstream}"
+        try:
+            normalized_upstream = _normalize_caddy_token(upstream, "Upstream")
+        except ValueError:
+            normalized_upstream = ""
+
+        if normalized_upstream:
+            normalized_directives = f"reverse_proxy {normalized_upstream}"
         else:
             normalized_directives = "# Add Caddy directives here"
 
@@ -453,3 +552,184 @@ def build_domain_site_preview(
         for line in _iter_text_lines(normalized_directives)
     )
     return f"{site_label} {{\n{indented}\n}}"
+
+
+@dataclass(slots=True)
+class ParsedCaddyfile:
+    """Result of parsing a Caddyfile into its components."""
+    global_block: str
+    snippets: list[str]
+    sites: list[tuple[str, str]]  # List of (domain, directives) tuples
+
+
+_SNIPPET_HEADER_RE = re.compile(r"^\(([a-zA-Z0-9_-]+)\)\s*\{?\s*$")
+_SITE_LABEL_PATTERN = re.compile(
+    r"^(?:https?://)?(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}(?::\d+)?(?:\s*,\s*(?:https?://)?(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}(?::\d+)?)*\s*$",
+    re.ASCII | re.IGNORECASE,
+)
+
+
+def _is_global_block_header(header: str) -> bool:
+    """Check if header is empty (global block) or just whitespace."""
+    return not header.strip()
+
+
+def _is_snippet_header(header: str) -> bool:
+    """Check if header is a named snippet like (name)."""
+    return _SNIPPET_HEADER_RE.match(header.strip()) is not None
+
+
+def _is_site_label(header: str) -> bool:
+    """Check if header looks like a domain or list of domains."""
+    cleaned = header.strip().rstrip(",")
+    if not cleaned:
+        return False
+    # Remove any matcher patterns like @name or /path
+    if cleaned.startswith("@") or cleaned.startswith("/"):
+        return False
+    # Check if it's a Caddy directive keyword
+    first_token = cleaned.split()[0].lower().rstrip(",")
+    if first_token in _CADDY_DIRECTIVE_KEYWORDS:
+        return False
+    # Check for domain-like patterns
+    return _SITE_LABEL_PATTERN.match(cleaned) is not None
+
+
+def _extract_domain_from_label(label: str) -> str:
+    """Extract clean domain names from a site label."""
+    # Remove http:// or https:// prefixes and ports
+    domains = []
+    for part in label.split(","):
+        part = part.strip()
+        if part.startswith("http://"):
+            part = part[7:]
+        elif part.startswith("https://"):
+            part = part[8:]
+        # Remove port if present
+        if ":" in part:
+            part = part.split(":")[0]
+        if part:
+            domains.append(part.lower())
+    return ", ".join(domains)
+
+
+def parse_caddyfile(content: str) -> ParsedCaddyfile:
+    """Parse a Caddyfile into global block, snippets, and site blocks.
+
+    Returns a ParsedCaddyfile with:
+    - global_block: The global options block and any top-level directives
+    - snippets: List of named snippet blocks like (name) { ... }
+    - sites: List of (domain, directives) tuples for site blocks
+    """
+    lines = content.splitlines()
+    global_parts: list[str] = []
+    snippets: list[str] = []
+    sites: list[tuple[str, str]] = []
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        # Skip empty lines and comments at top level
+        if not stripped or stripped.startswith("#"):
+            global_parts.append(line)
+            i += 1
+            continue
+
+        # Check for block start
+        if "{" in stripped:
+            # Find the header (everything before the opening brace)
+            header_end = stripped.find("{")
+            header = stripped[:header_end].strip()
+            inline_remainder = stripped[header_end + 1:].strip()
+
+            # Collect the full block
+            block_lines = [line]
+            depth = stripped.count("{") - stripped.count("}")
+
+            # If the block is on a single line (inline)
+            if depth == 0 and "}" in stripped:
+                body = inline_remainder.rstrip("}").strip()
+            else:
+                # Multi-line block
+                i += 1
+                while i < len(lines) and depth > 0:
+                    block_line = lines[i]
+                    block_lines.append(block_line)
+                    depth += block_line.count("{") - block_line.count("}")
+                    i += 1
+                i -= 1  # We'll increment at the end of the loop
+
+                # Extract body (lines between opening and closing braces)
+                body_lines = block_lines[1:-1] if len(block_lines) > 2 else []
+                body = "\n".join(body_lines).strip()
+
+            # Categorize the block
+            if _is_global_block_header(header):
+                # Global block - keep in global_parts
+                global_parts.append("\n".join(block_lines))
+            elif _is_snippet_header(header):
+                # Named snippet - keep in global_parts (part of baseline)
+                global_parts.append("\n".join(block_lines))
+                snippets.append("\n".join(block_lines))
+            elif _is_site_label(header):
+                # Site block - extract as a site
+                domain = _extract_domain_from_label(header)
+                sites.append((domain, body))
+            else:
+                # Unknown block type - keep in global_parts
+                global_parts.append("\n".join(block_lines))
+
+            i += 1
+        else:
+            # Single-line directive at top level (rare but possible)
+            global_parts.append(line)
+            i += 1
+
+    # Build the global block string, excluding site blocks
+    # We need to rebuild it without the sites
+    result_global_lines: list[str] = []
+    i = 0
+    parsed_lines = content.splitlines()
+    while i < len(parsed_lines):
+        line = parsed_lines[i]
+        stripped = line.strip()
+
+        if not stripped or stripped.startswith("#"):
+            result_global_lines.append(line)
+            i += 1
+            continue
+
+        if "{" in stripped:
+            header_end = stripped.find("{")
+            header = stripped[:header_end].strip()
+
+            # Collect the full block to check what type it is
+            block_start = i
+            block_lines = [line]
+            depth = stripped.count("{") - stripped.count("}")
+
+            if depth > 0:
+                i += 1
+                while i < len(parsed_lines) and depth > 0:
+                    block_lines.append(parsed_lines[i])
+                    depth += parsed_lines[i].count("{") - parsed_lines[i].count("}")
+                    i += 1
+            else:
+                i += 1
+
+            # Only include non-site blocks in global
+            if not _is_site_label(header):
+                result_global_lines.extend(block_lines)
+        else:
+            result_global_lines.append(line)
+            i += 1
+
+    global_block = "\n".join(result_global_lines).strip()
+
+    return ParsedCaddyfile(
+        global_block=global_block,
+        snippets=snippets,
+        sites=sites,
+    )

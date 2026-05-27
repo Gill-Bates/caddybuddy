@@ -16,3 +16,11 @@ class HealthResponse(BaseModel):
 class BuildInfoResponse(BaseModel):
     version: str
     commit: str
+
+
+class CaddyStatusResponse(BaseModel):
+    """Caddy service status for dashboard badge auto-refresh."""
+    running: bool
+    status: str
+    uptime: str
+    version: str

@@ -5,41 +5,65 @@
 
 "use strict";
 
-/**
- * Live update system using Server-Sent Events.
- * Automatically reloads the page when relevant resources change.
- */
+const allowedConfirmButtonClasses = new Set([
+    "btn-primary",
+    "btn-secondary",
+    "btn-danger",
+    "btn-warning",
+]);
+
+const allowedFlashCategories = new Set([
+    "success",
+    "danger",
+    "warning",
+    "info",
+    "primary",
+    "secondary",
+]);
+
+const readCsrfToken = (form = null) => {
+    if (form instanceof HTMLFormElement) {
+        const tokenInput = form.elements.namedItem("csrf_token");
+        if (tokenInput instanceof HTMLInputElement && typeof tokenInput.value === "string") {
+            return tokenInput.value;
+        }
+    }
+
+    const metaToken = document.querySelector("meta[name='csrf-token']");
+    if (metaToken instanceof HTMLMetaElement && metaToken.content) {
+        return metaToken.content;
+    }
+
+    return document.body?.dataset.csrfToken || "";
+};
+
+const resolveSameOriginUrl = (rawUrl) => {
+    const url = new URL(rawUrl, window.location.origin);
+    if (url.origin !== window.location.origin) {
+        throw new Error("External validate URLs are not allowed.");
+    }
+    return url.toString();
+};
+
 const initializeLiveUpdates = () => {
-    const currentPath = window.location.pathname;
-
     const relevantResources = {
-        "/servers": ["server"],
-        "/templates": ["config_template", "site"],
-        "/users": ["user"],
-        "/api-keys": ["api_key"],
-        "/audit-logs": ["audit_log", "server", "config", "domain", "user", "api_key"],
-        "/": ["server", "config", "audit_log"],
+        "/caddyfile": ["caddyfile"],
+        "/sites": ["site"],
+        "/ssl-labs": ["ssllabs_scan"],
     };
 
-    const getRelevantTypes = () => {
-        const segments = currentPath.split("/").filter(Boolean);
-        const activeBaseSegment = segments.length > 0 ? `/${segments[0]}` : "/";
-        return new Set(relevantResources[activeBaseSegment] || []);
-    };
-
-    const relevantTypes = getRelevantTypes();
+    const currentPath = window.location.pathname;
+    const segments = currentPath.split("/").filter(Boolean);
+    const activeBaseSegment = segments.length > 0 ? `/${segments[0]}` : "/";
+    const relevantTypes = new Set(relevantResources[activeBaseSegment] || []);
     if (relevantTypes.size === 0) {
         return;
     }
 
     let eventSource = null;
-    let reconnectAttempts = 0;
-    const maxReconnectAttempts = 5;
-    const baseReconnectDelay = 1000;
-    const maxReconnectDelay = 30000;
-    const reloadDebounceDelay = 250;
     let reconnectTimeoutId = null;
     let reloadTimeoutId = null;
+    let reconnectAttempts = 0;
     let reloadPendingWhileHidden = false;
 
     const clearReconnectTimeout = () => {
@@ -56,7 +80,7 @@ const initializeLiveUpdates = () => {
         }
     };
 
-    const triggerCoalescedReload = () => {
+    const triggerReload = () => {
         if (document.hidden) {
             reloadPendingWhileHidden = true;
             clearReloadTimeout();
@@ -70,54 +94,7 @@ const initializeLiveUpdates = () => {
             reloadTimeoutId = null;
             reloadPendingWhileHidden = false;
             window.location.reload();
-        }, reloadDebounceDelay);
-    };
-
-    const scheduleReconnect = () => {
-        if (document.hidden || reconnectAttempts >= maxReconnectAttempts) {
-            return;
-        }
-
-        reconnectAttempts += 1;
-        const delay = Math.min(baseReconnectDelay * Math.pow(2, reconnectAttempts - 1), maxReconnectDelay);
-        clearReconnectTimeout();
-        reconnectTimeoutId = window.setTimeout(() => {
-            reconnectTimeoutId = null;
-            connect();
-        }, delay);
-    };
-
-    const connect = () => {
-        if (document.hidden || eventSource !== null) {
-            return;
-        }
-
-        eventSource = new EventSource("/api/v1/events");
-
-        eventSource.onopen = () => {
-            reconnectAttempts = 0;
-            clearReconnectTimeout();
-        };
-
-        eventSource.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                if (relevantTypes.has(data.type)) {
-                    triggerCoalescedReload();
-                }
-            } catch {
-                // Ignore malformed events
-            }
-        };
-
-        eventSource.onerror = () => {
-            if (eventSource !== null) {
-                eventSource.close();
-                eventSource = null;
-            }
-
-            scheduleReconnect();
-        };
+        }, 250);
     };
 
     const disconnect = () => {
@@ -128,6 +105,45 @@ const initializeLiveUpdates = () => {
         clearReconnectTimeout();
     };
 
+    const connect = () => {
+        if (document.hidden || eventSource !== null) {
+            return;
+        }
+
+        eventSource = new EventSource("/api/v1/events");
+        eventSource.onopen = () => {
+            reconnectAttempts = 0;
+            clearReconnectTimeout();
+        };
+
+        const handleResourceEvent = (event) => {
+            try {
+                const payload = JSON.parse(event.data);
+                if (relevantTypes.has(payload.type)) {
+                    triggerReload();
+                }
+            } catch {
+                // Ignore malformed event payloads.
+            }
+        };
+
+        eventSource.onmessage = handleResourceEvent;
+        eventSource.addEventListener("resource", handleResourceEvent);
+
+        eventSource.onerror = () => {
+            disconnect();
+            if (document.hidden) {
+                return;
+            }
+            reconnectAttempts += 1;
+            const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 30000);
+            reconnectTimeoutId = window.setTimeout(() => {
+                reconnectTimeoutId = null;
+                connect();
+            }, delay);
+        };
+    };
+
     document.addEventListener("visibilitychange", () => {
         if (document.hidden) {
             if (reloadTimeoutId !== null) {
@@ -135,13 +151,13 @@ const initializeLiveUpdates = () => {
                 clearReloadTimeout();
             }
             disconnect();
-        } else {
-            if (reloadPendingWhileHidden) {
-                triggerCoalescedReload();
-                return;
-            }
-            connect();
+            return;
         }
+        if (reloadPendingWhileHidden) {
+            triggerReload();
+            return;
+        }
+        connect();
     });
 
     window.addEventListener("beforeunload", () => {
@@ -152,17 +168,10 @@ const initializeLiveUpdates = () => {
     connect();
 };
 
-initializeLiveUpdates();
-
-/**
- * Mobile sidebar slide-in menu.
- * Opens/closes the sidebar on mobile via hamburger button, backdrop click, or nav link selection.
- */
 const initializeMobileMenu = () => {
     const toggle = document.getElementById("mobileMenuToggle");
     const sidebar = document.getElementById("appSidebar");
     const backdrop = document.getElementById("sidebarBackdrop");
-
     if (
         !(toggle instanceof HTMLButtonElement) ||
         !(sidebar instanceof HTMLElement) ||
@@ -170,15 +179,6 @@ const initializeMobileMenu = () => {
     ) {
         return;
     }
-
-    const openMenu = () => {
-        sidebar.classList.add("is-open");
-        backdrop.classList.add("is-visible");
-        toggle.classList.add("is-active");
-        toggle.setAttribute("aria-expanded", "true");
-        toggle.setAttribute("aria-label", "Close menu");
-        document.body.classList.add("app-body--menu-open");
-    };
 
     const closeMenu = () => {
         sidebar.classList.remove("is-open");
@@ -189,29 +189,31 @@ const initializeMobileMenu = () => {
         document.body.classList.remove("app-body--menu-open");
     };
 
-    const toggleMenu = () => {
+    const openMenu = () => {
+        sidebar.classList.add("is-open");
+        backdrop.classList.add("is-visible");
+        toggle.classList.add("is-active");
+        toggle.setAttribute("aria-expanded", "true");
+        toggle.setAttribute("aria-label", "Close menu");
+        document.body.classList.add("app-body--menu-open");
+    };
+
+    toggle.addEventListener("click", () => {
         if (sidebar.classList.contains("is-open")) {
             closeMenu();
         } else {
             openMenu();
         }
-    };
-
-    toggle.addEventListener("click", toggleMenu);
+    });
     backdrop.addEventListener("click", closeMenu);
-
-    // Close menu when a nav link is clicked
     sidebar.addEventListener("click", (event) => {
         if (!(event.target instanceof HTMLElement)) {
             return;
         }
-        const link = event.target.closest("a.app-nav__link, button[type='submit']");
-        if (link !== null) {
+        if (event.target.closest("a.app-nav__link, button[type='submit']") !== null) {
             closeMenu();
         }
     });
-
-    // Close menu on Escape key
     document.addEventListener("keydown", (event) => {
         if (event.key === "Escape" && sidebar.classList.contains("is-open")) {
             closeMenu();
@@ -219,154 +221,22 @@ const initializeMobileMenu = () => {
         }
     });
 
-    // Close menu when resizing to desktop viewport
-    const mediaQuery = window.matchMedia("(min-width: 992px)");
-    mediaQuery.addEventListener("change", (event) => {
-        if (event.matches && sidebar.classList.contains("is-open")) {
+    const desktopMediaQuery = window.matchMedia("(min-width: 992px)");
+    const handleDesktopChange = (event) => {
+        if (event.matches) {
             closeMenu();
         }
-    });
-};
+    };
 
-initializeMobileMenu();
-
-/**
- * Queue badge counter.
- * Fetches the pending deployment count and updates the sidebar badge.
- */
-const initializeQueueBadge = () => {
-    const badge = document.getElementById("queueBadge");
-    if (!(badge instanceof HTMLElement)) {
-        return;
+    if (typeof desktopMediaQuery.addEventListener === "function") {
+        desktopMediaQuery.addEventListener("change", handleDesktopChange);
+    } else if (typeof desktopMediaQuery.addListener === "function") {
+        desktopMediaQuery.addListener(handleDesktopChange);
     }
-
-    const refreshInterval = 60000;
-    const requestTimeout = 10000;
-    let intervalId = null;
-    let updateInFlight = false;
-    let activeRequestController = null;
-
-    const startRefreshLoop = () => {
-        if (intervalId !== null) {
-            return;
-        }
-        intervalId = window.setInterval(() => {
-            void updateBadge();
-        }, refreshInterval);
-    };
-
-    const stopRefreshLoop = () => {
-        if (intervalId !== null) {
-            window.clearInterval(intervalId);
-            intervalId = null;
-        }
-    };
-
-    const updateBadge = async () => {
-        if (updateInFlight) {
-            return;
-        }
-
-        const controller = new AbortController();
-        const timeoutId = window.setTimeout(() => controller.abort(), requestTimeout);
-        updateInFlight = true;
-        activeRequestController = controller;
-
-        try {
-            const response = await fetch("/api/v1/queue/count", {
-                credentials: "same-origin",
-                signal: controller.signal,
-            });
-            if (!response.ok) {
-                badge.hidden = true;
-                return;
-            }
-            const data = await response.json();
-            const count = Number(data.count) || 0;
-            if (count > 0) {
-                badge.textContent = count > 99 ? "99+" : String(count);
-                badge.hidden = false;
-            } else {
-                badge.hidden = true;
-            }
-        } catch {
-            badge.hidden = true;
-        } finally {
-            window.clearTimeout(timeoutId);
-            if (activeRequestController === controller) {
-                activeRequestController = null;
-            }
-            updateInFlight = false;
-        }
-    };
-
-    void updateBadge();
-    startRefreshLoop();
-
-    document.addEventListener("visibilitychange", () => {
-        if (document.hidden) {
-            activeRequestController?.abort();
-            stopRefreshLoop();
-        } else {
-            void updateBadge();
-            startRefreshLoop();
-        }
-    });
 };
-
-initializeQueueBadge();
-
-const initializeQueueDeploySelection = () => {
-    const siteSelect = document.getElementById("queue-site-id");
-    const serverSelect = document.getElementById("queue-server-id");
-    const selectedSiteName = document.getElementById("queueSelectedSiteName");
-    const rowButtons = document.querySelectorAll(".js-queue-select-site");
-
-    if (
-        !(siteSelect instanceof HTMLSelectElement) ||
-        !(serverSelect instanceof HTMLSelectElement) ||
-        !(selectedSiteName instanceof HTMLElement)
-    ) {
-        return;
-    }
-
-    const syncSelectedSiteLabel = () => {
-        const selectedOption = siteSelect.selectedOptions.item(0);
-        if (!(selectedOption instanceof HTMLOptionElement)) {
-            return;
-        }
-        selectedSiteName.textContent = selectedOption.dataset.siteDomain || selectedOption.textContent?.trim() || "selected site";
-    };
-
-    siteSelect.addEventListener("change", syncSelectedSiteLabel);
-
-    for (const button of rowButtons) {
-        if (!(button instanceof HTMLButtonElement)) {
-            continue;
-        }
-
-        button.addEventListener("click", () => {
-            const siteId = button.dataset.siteId;
-            if (typeof siteId !== "string" || !siteId) {
-                return;
-            }
-
-            siteSelect.value = siteId;
-            syncSelectedSiteLabel();
-            siteSelect.scrollIntoView({ behavior: "smooth", block: "center" });
-            serverSelect.focus();
-        });
-    }
-
-    syncSelectedSiteLabel();
-};
-
-initializeQueueDeploySelection();
 
 const initializeLoadingSubmitForms = () => {
-    const forms = document.querySelectorAll("form[data-loading-submit-form]");
-
-    for (const form of forms) {
+    for (const form of document.querySelectorAll("form[data-loading-submit-form]")) {
         if (!(form instanceof HTMLFormElement)) {
             continue;
         }
@@ -377,10 +247,7 @@ const initializeLoadingSubmitForms = () => {
             }
 
             const submitter = event.submitter;
-            if (
-                !(submitter instanceof HTMLElement) ||
-                !submitter.matches("button, input[type='submit'], input[type='image']")
-            ) {
+            if (!(submitter instanceof HTMLElement)) {
                 return;
             }
 
@@ -404,7 +271,6 @@ const initializeLoadingSubmitForms = () => {
             if (spinner instanceof HTMLElement) {
                 spinner.classList.remove("d-none");
             }
-
             if (label instanceof HTMLElement) {
                 label.textContent = loadingText;
             } else if (button instanceof HTMLInputElement && button.type === "submit") {
@@ -414,18 +280,17 @@ const initializeLoadingSubmitForms = () => {
     }
 };
 
-initializeLoadingSubmitForms();
-
 const initializeAutoDismissAlerts = () => {
-    const alerts = document.querySelectorAll("[data-auto-dismiss-alert]");
-
-    for (const alertElement of alerts) {
-        if (!(alertElement instanceof HTMLElement)) {
+    for (const alertElement of document.querySelectorAll("[data-auto-dismiss-alert]")) {
+        if (!(alertElement instanceof HTMLElement) || alertElement.dataset.autoDismissInitialized === "true") {
             continue;
         }
+        alertElement.dataset.autoDismissInitialized = "true";
 
         const delayValue = Number.parseInt(alertElement.dataset.autoDismissDelay || "5000", 10);
-        const delay = Number.isFinite(delayValue) && delayValue > 0 ? delayValue : 5000;
+        const delay = Number.isFinite(delayValue) && delayValue > 0
+            ? Math.min(delayValue, 60000)
+            : 5000;
         let timeoutId = null;
 
         const clearDismissTimeout = () => {
@@ -437,16 +302,12 @@ const initializeAutoDismissAlerts = () => {
 
         const dismissAlert = () => {
             clearDismissTimeout();
-
             if (window.bootstrap?.Alert) {
                 window.bootstrap.Alert.getOrCreateInstance(alertElement).close();
                 return;
             }
-
             alertElement.classList.remove("show");
-            window.setTimeout(() => {
-                alertElement.remove();
-            }, 150);
+            window.setTimeout(() => alertElement.remove(), 150);
         };
 
         const scheduleDismiss = () => {
@@ -459,43 +320,499 @@ const initializeAutoDismissAlerts = () => {
         alertElement.addEventListener("focusin", clearDismissTimeout);
         alertElement.addEventListener("focusout", scheduleDismiss);
         alertElement.addEventListener("closed.bs.alert", clearDismissTimeout);
-
         scheduleDismiss();
     }
 };
 
-initializeAutoDismissAlerts();
-
-const clearJsonEditorErrorState = (editor) => {
-    editor.classList.remove("is-invalid");
-    editor.removeAttribute("aria-invalid");
+const ensureFlashStack = () => {
+    const existing = document.querySelector(".app-flash-stack");
+    if (existing instanceof HTMLElement) {
+        return existing;
+    }
+    const appContainer = document.querySelector(".app-container");
+    if (!(appContainer instanceof HTMLElement)) {
+        return null;
+    }
+    const flashStack = document.createElement("div");
+    flashStack.className = "app-flash-stack";
+    appContainer.prepend(flashStack);
+    return flashStack;
 };
 
-const markJsonEditorInvalid = (editor) => {
-    editor.classList.add("is-invalid");
-    editor.setAttribute("aria-invalid", "true");
-};
-
-const reformatJsonEditor = (editor) => {
-    const value = editor.value.trim();
-    if (!value) {
-        clearJsonEditorErrorState(editor);
+const pushInlineFlash = (category, message) => {
+    const flashStack = ensureFlashStack();
+    if (!(flashStack instanceof HTMLElement)) {
         return;
     }
 
-    try {
-        editor.value = JSON.stringify(JSON.parse(value), null, 2);
-        clearJsonEditorErrorState(editor);
-    } catch {
-        markJsonEditorInvalid(editor);
+    const safeCategory = allowedFlashCategories.has(category) ? category : "info";
+
+    const alertElement = document.createElement("div");
+    alertElement.className = `alert alert-${safeCategory} alert-dismissible fade show shadow-sm border-0`;
+    alertElement.setAttribute("role", "alert");
+    alertElement.setAttribute("data-auto-dismiss-alert", "");
+    alertElement.setAttribute("data-auto-dismiss-delay", "5000");
+    alertElement.textContent = message;
+
+    const closeButton = document.createElement("button");
+    closeButton.type = "button";
+    closeButton.className = "btn-close";
+    closeButton.setAttribute("data-bs-dismiss", "alert");
+    closeButton.setAttribute("aria-label", "Close");
+    alertElement.append(closeButton);
+
+    flashStack.prepend(alertElement);
+    initializeAutoDismissAlerts();
+};
+
+const domainTokenPattern = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+
+const normalizeDomainToken = (value) => {
+    const normalized = String(value || "").trim().toLowerCase().replace(/\.+$/u, "");
+    if (!normalized) {
+        return null;
+    }
+    if (normalized.length > 253 || !domainTokenPattern.test(normalized)) {
+        return null;
+    }
+    return normalized;
+};
+
+const splitDomainTokenInput = (value) => String(value || "")
+    .split(/[\s,]+/u)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0);
+
+const initializeSiteDomainInputs = () => {
+    for (const container of document.querySelectorAll("[data-domain-tag-input]")) {
+        if (!(container instanceof HTMLElement) || container.dataset.domainTagInitialized === "true") {
+            continue;
+        }
+        container.dataset.domainTagInitialized = "true";
+
+        const hiddenInput = container.querySelector("input[name='domain']");
+        const entryInput = container.querySelector("[data-domain-tag-entry]");
+        const tagList = container.querySelector("[data-domain-tag-list]");
+        const errorElement = container.querySelector("[data-domain-tag-error]");
+        if (
+            !(hiddenInput instanceof HTMLInputElement) ||
+            !(entryInput instanceof HTMLInputElement) ||
+            !(tagList instanceof HTMLElement) ||
+            !(errorElement instanceof HTMLElement)
+        ) {
+            continue;
+        }
+
+        const selectedSiteId = Number.parseInt(container.dataset.selectedSiteId || "", 10);
+        const rawCatalog = container.dataset.existingDomains || "[]";
+        let existingDomains = [];
+        try {
+            existingDomains = JSON.parse(rawCatalog);
+        } catch {
+            existingDomains = [];
+        }
+
+        const blockedDomains = new Set();
+        for (const item of existingDomains) {
+            if (!item || typeof item !== "object") {
+                continue;
+            }
+            const itemSiteId = Number.parseInt(String(item.site_id || ""), 10);
+            if (Number.isFinite(selectedSiteId) && itemSiteId === selectedSiteId) {
+                continue;
+            }
+
+            for (const token of splitDomainTokenInput(item.domain)) {
+                const normalized = normalizeDomainToken(token);
+                if (normalized) {
+                    blockedDomains.add(normalized);
+                }
+            }
+        }
+
+        let domains = [...new Set(splitDomainTokenInput(hiddenInput.value)
+            .map((token) => normalizeDomainToken(token))
+            .filter((token) => token !== null))];
+
+        const updateHiddenValue = () => {
+            hiddenInput.value = domains.join(", ");
+            hiddenInput.dispatchEvent(new Event("input", { bubbles: true }));
+            hiddenInput.dispatchEvent(new Event("change", { bubbles: true }));
+        };
+
+        const setError = (message) => {
+            entryInput.setCustomValidity(message);
+            if (message) {
+                errorElement.textContent = message;
+                errorElement.classList.remove("d-none");
+            } else {
+                errorElement.textContent = "";
+                errorElement.classList.add("d-none");
+            }
+        };
+
+        const renderTags = () => {
+            tagList.replaceChildren();
+            for (const domainName of domains) {
+                const token = document.createElement("span");
+                token.className = "tag-input__token";
+                token.textContent = domainName;
+
+                const removeButton = document.createElement("button");
+                removeButton.type = "button";
+                removeButton.className = "tag-input__remove";
+                removeButton.setAttribute("aria-label", `Remove ${domainName}`);
+                removeButton.textContent = "×";
+                removeButton.addEventListener("click", () => {
+                    domains = domains.filter((value) => value !== domainName);
+                    setError("");
+                    renderTags();
+                    updateHiddenValue();
+                    entryInput.focus();
+                });
+
+                token.append(removeButton);
+                tagList.append(token);
+            }
+        };
+
+        const addDomains = (rawValue) => {
+            const tokens = splitDomainTokenInput(rawValue);
+            if (tokens.length === 0) {
+                return false;
+            }
+
+            let changed = false;
+            for (const token of tokens) {
+                const normalized = normalizeDomainToken(token);
+                if (!normalized) {
+                    setError(`'${token}' is not a valid domain.`);
+                    return changed;
+                }
+                if (blockedDomains.has(normalized)) {
+                    setError(`'${normalized}' is already assigned to another site configuration.`);
+                    return changed;
+                }
+                if (domains.includes(normalized)) {
+                    continue;
+                }
+                domains.push(normalized);
+                changed = true;
+            }
+
+            if (changed) {
+                setError("");
+                renderTags();
+                updateHiddenValue();
+            }
+            return changed;
+        };
+
+        entryInput.addEventListener("keydown", (event) => {
+            if (["Enter", "Tab", ",", " "].includes(event.key)) {
+                if (entryInput.value.trim() === "") {
+                    return;
+                }
+                event.preventDefault();
+                const changed = addDomains(entryInput.value);
+                if (changed) {
+                    entryInput.value = "";
+                }
+                return;
+            }
+
+            if (event.key === "Backspace" && entryInput.value === "" && domains.length > 0) {
+                domains = domains.slice(0, -1);
+                setError("");
+                renderTags();
+                updateHiddenValue();
+            }
+        });
+
+        entryInput.addEventListener("blur", () => {
+            if (entryInput.value.trim() === "") {
+                return;
+            }
+            const changed = addDomains(entryInput.value);
+            if (changed) {
+                entryInput.value = "";
+            }
+        });
+
+        entryInput.addEventListener("paste", (event) => {
+            const pastedText = event.clipboardData?.getData("text") || "";
+            if (!/[\s,]/u.test(pastedText)) {
+                return;
+            }
+            event.preventDefault();
+            const changed = addDomains(pastedText);
+            if (changed) {
+                entryInput.value = "";
+            }
+        });
+
+        entryInput.addEventListener("input", () => {
+            if (entryInput.validity.customError) {
+                setError("");
+            }
+        });
+
+        renderTags();
+        updateHiddenValue();
+    }
+};
+
+const serializeSiteConfigFormState = (form) => {
+    const formData = new FormData(form);
+    const entries = [];
+
+    for (const [key, value] of formData.entries()) {
+        if (key === "csrf_token") {
+            continue;
+        }
+        if (value instanceof File) {
+            continue;
+        }
+        entries.push([key, String(value)]);
+    }
+
+    entries.sort(([leftKey, leftValue], [rightKey, rightValue]) => {
+        if (leftKey === rightKey) {
+            return leftValue.localeCompare(rightValue);
+        }
+        return leftKey.localeCompare(rightKey);
+    });
+    return JSON.stringify(entries);
+};
+
+const siteConfigFormHasRequiredValues = (form) => {
+    const domainInput = form.elements.namedItem("domain");
+    const directivesInput = form.elements.namedItem("caddy_directives");
+
+    if (!(domainInput instanceof HTMLInputElement) || domainInput.value.trim() === "") {
+        return false;
+    }
+    if (!(directivesInput instanceof HTMLTextAreaElement) || directivesInput.value.trim() === "") {
+        return false;
+    }
+    return form.checkValidity();
+};
+
+const caddyfileFormHasRequiredValues = (form) => {
+    const caddyfileInput = form.elements.namedItem("caddyfile");
+    if (!(caddyfileInput instanceof HTMLTextAreaElement)) {
+        return false;
+    }
+    return caddyfileInput.value.trim() !== "";
+};
+
+const setButtonInteractionState = (button, enabled) => {
+    if (!(button instanceof HTMLButtonElement)) {
+        return;
+    }
+    button.disabled = !enabled;
+    button.setAttribute("aria-disabled", enabled ? "false" : "true");
+};
+
+const updateSiteConfigFormActions = (form) => {
+    if (!(form instanceof HTMLFormElement) || !form.hasAttribute("data-site-config-form")) {
+        return;
+    }
+
+    const validateButton = form.querySelector("[data-validate-form-button]");
+    const saveButton = form.querySelector("[data-site-save-button]");
+    const currentState = serializeSiteConfigFormState(form);
+    const initialState = form.dataset.initialSerializedState || "";
+    const lastValidatedState = form.dataset.lastValidatedState || "";
+
+    if (form.dataset.validationState === "valid" && currentState !== lastValidatedState) {
+        form.dataset.validationState = "unvalidated";
+    }
+
+    const hasChanges = currentState !== initialState;
+    const hasRequiredValues = siteConfigFormHasRequiredValues(form);
+    const validationMatchesCurrentState = form.dataset.validationState === "valid" && currentState === lastValidatedState;
+
+    setButtonInteractionState(validateButton, hasChanges && hasRequiredValues);
+    setButtonInteractionState(saveButton, hasChanges && hasRequiredValues && validationMatchesCurrentState);
+};
+
+const updateCaddyfileFormActions = (form) => {
+    if (!(form instanceof HTMLFormElement) || !form.hasAttribute("data-caddyfile-config-form")) {
+        return;
+    }
+
+    const validateButton = form.querySelector("[data-validate-form-button]");
+    const saveButton = form.querySelector("#caddyfile-save-btn");
+    const locked = form.dataset.caddyfileLocked === "true";
+
+    if (locked) {
+        setButtonInteractionState(validateButton, false);
+        setButtonInteractionState(saveButton, false);
+        return;
+    }
+
+    setButtonInteractionState(validateButton, caddyfileFormHasRequiredValues(form));
+};
+
+const initializeSiteConfigForms = () => {
+    for (const form of document.querySelectorAll("form[data-site-config-form]")) {
+        if (!(form instanceof HTMLFormElement) || form.dataset.siteConfigInitialized === "true") {
+            continue;
+        }
+        form.dataset.siteConfigInitialized = "true";
+        form.dataset.initialSerializedState = serializeSiteConfigFormState(form);
+        form.dataset.lastValidatedState = "";
+        form.dataset.validationState = "unvalidated";
+
+        const syncFormState = () => {
+            updateSiteConfigFormActions(form);
+        };
+
+        form.addEventListener("input", syncFormState);
+        form.addEventListener("change", syncFormState);
+        form.addEventListener("submit", (event) => {
+            const submitter = event.submitter;
+            if (!(submitter instanceof HTMLElement)) {
+                return;
+            }
+
+            const saveButton = submitter.matches("[data-site-save-button]")
+                ? submitter
+                : submitter.closest("[data-site-save-button]");
+            if (!(saveButton instanceof HTMLButtonElement)) {
+                return;
+            }
+
+            updateSiteConfigFormActions(form);
+            if (!saveButton.disabled) {
+                return;
+            }
+
+            event.preventDefault();
+            pushInlineFlash("warning", "Validate the current site configuration before saving.");
+        });
+
+        syncFormState();
+    }
+};
+
+const initializeCaddyfileForms = () => {
+    for (const form of document.querySelectorAll("form[data-caddyfile-config-form]")) {
+        if (!(form instanceof HTMLFormElement) || form.dataset.caddyfileConfigInitialized === "true") {
+            continue;
+        }
+        form.dataset.caddyfileConfigInitialized = "true";
+
+        const syncFormState = () => {
+            updateCaddyfileFormActions(form);
+        };
+
+        form.addEventListener("input", syncFormState);
+        form.addEventListener("change", syncFormState);
+        syncFormState();
+    }
+};
+
+const initializeValidateButtons = () => {
+    for (const button of document.querySelectorAll("[data-validate-form-button]")) {
+        if (!(button instanceof HTMLButtonElement) || button.dataset.validateInitialized === "true") {
+            continue;
+        }
+        button.dataset.validateInitialized = "true";
+
+        button.addEventListener("click", async (event) => {
+            event.preventDefault();
+
+            const form = button.closest("form");
+            const validateUrl = button.dataset.validateUrl;
+            if (!(form instanceof HTMLFormElement) || !validateUrl) {
+                return;
+            }
+
+            let requestUrl;
+            try {
+                requestUrl = resolveSameOriginUrl(validateUrl);
+            } catch {
+                pushInlineFlash("danger", "Invalid validation URL.");
+                return;
+            }
+
+            const spinner = button.querySelector("[data-validate-button-spinner]");
+            const label = button.querySelector("[data-validate-button-label]");
+            const originalLabel = label instanceof HTMLElement ? label.textContent : button.textContent;
+            const submittedState = serializeSiteConfigFormState(form);
+            const headers = new Headers({ "X-Requested-With": "fetch" });
+            const csrfToken = readCsrfToken(form);
+            if (csrfToken) {
+                headers.set("X-CSRF-Token", csrfToken);
+            }
+
+            button.disabled = true;
+            button.setAttribute("aria-disabled", "true");
+            button.setAttribute("aria-busy", "true");
+            if (spinner instanceof HTMLElement) {
+                spinner.classList.remove("d-none");
+            }
+            if (label instanceof HTMLElement) {
+                label.textContent = "Validating...";
+            }
+
+            try {
+                const response = await fetch(requestUrl, {
+                    method: "POST",
+                    body: new FormData(form),
+                    credentials: "same-origin",
+                    headers,
+                });
+                const contentType = response.headers.get("content-type") || "";
+                let payload = {};
+
+                if (contentType.includes("application/json")) {
+                    payload = await response.json();
+                } else {
+                    payload = { message: (await response.text()).trim() };
+                }
+
+                const successPrefix = button.dataset.validateSuccessPrefix || "Validation successful";
+                const errorPrefix = button.dataset.validateErrorPrefix || "Validation failed";
+
+                if (response.ok && payload.valid) {
+                    form.dataset.lastValidatedState = submittedState;
+                    form.dataset.validationState = "valid";
+                    pushInlineFlash("success", `${successPrefix}: ${payload.message}`);
+                } else {
+                    form.dataset.validationState = "invalid";
+                    const message = typeof payload.message === "string" && payload.message
+                        ? payload.message
+                        : "Unknown validation error.";
+                    pushInlineFlash("danger", `${errorPrefix}: ${message}`);
+                }
+            } catch {
+                form.dataset.validationState = "invalid";
+                pushInlineFlash("danger", "Validation request failed. Please try again.");
+            } finally {
+                button.disabled = false;
+                button.setAttribute("aria-disabled", "false");
+                button.removeAttribute("aria-busy");
+                if (spinner instanceof HTMLElement) {
+                    spinner.classList.add("d-none");
+                }
+                if (label instanceof HTMLElement) {
+                    label.textContent = originalLabel || "Validate";
+                }
+                updateSiteConfigFormActions(form);
+                updateCaddyfileFormActions(form);
+            }
+        });
     }
 };
 
 const confirmModalElement = document.getElementById("confirmActionModal");
-const confirmModalMessageElement = document.getElementById("confirmActionModalMessage");
 const confirmModalTitleElement = document.getElementById("confirmActionModalLabel");
+const confirmModalMessageElement = document.getElementById("confirmActionModalMessage");
 const confirmModalAcceptButton = document.getElementById("confirmActionModalAccept");
-const DEFAULT_CONFIRM_ACCEPT_CLASS = "btn btn-primary";
+const defaultConfirmAcceptClass = "btn btn-primary";
 
 let confirmActionModal = null;
 let pendingConfirmElement = null;
@@ -522,7 +839,7 @@ const resetPendingConfirm = () => {
     }
     if (confirmModalAcceptButton instanceof HTMLButtonElement) {
         confirmModalAcceptButton.textContent = "Continue";
-        confirmModalAcceptButton.className = DEFAULT_CONFIRM_ACCEPT_CLASS;
+        confirmModalAcceptButton.className = defaultConfirmAcceptClass;
     }
 };
 
@@ -530,7 +847,6 @@ const submitConfirmedElement = () => {
     if (!(pendingConfirmElement instanceof HTMLElement)) {
         return;
     }
-
     const target = pendingConfirmElement;
     resetPendingConfirm();
 
@@ -543,12 +859,10 @@ const submitConfirmedElement = () => {
     if (!(form instanceof HTMLFormElement)) {
         return;
     }
-
     if (target instanceof HTMLButtonElement || target instanceof HTMLInputElement) {
         form.requestSubmit(target);
         return;
     }
-
     form.requestSubmit();
 };
 
@@ -574,7 +888,6 @@ document.addEventListener("click", (event) => {
     if (!(event.target instanceof Element)) {
         return;
     }
-
     const button = event.target.closest(".js-confirm");
     if (button === null) {
         return;
@@ -583,10 +896,17 @@ document.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
 
-    const message = button.getAttribute("data-confirm") || "Continue?";
     const modal = getConfirmActionModal();
-
     if (modal === null) {
+        const message = button.getAttribute("data-confirm") || "Continue?";
+        if (!window.confirm(message)) {
+            return;
+        }
+
+        if (button instanceof HTMLAnchorElement && button.href) {
+            window.location.assign(button.href);
+            return;
+        }
         const form = button.closest("form");
         if (form instanceof HTMLFormElement) {
             form.requestSubmit(button instanceof HTMLButtonElement || button instanceof HTMLInputElement ? button : undefined);
@@ -598,616 +918,30 @@ document.addEventListener("click", (event) => {
     previousActiveConfirmElement = button instanceof HTMLElement
         ? button
         : (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+
     if (confirmModalTitleElement instanceof HTMLElement) {
         confirmModalTitleElement.textContent = button.getAttribute("data-confirm-title") || button.textContent?.trim() || "Confirm action";
     }
     if (confirmModalMessageElement instanceof HTMLElement) {
-        confirmModalMessageElement.textContent = message;
+        confirmModalMessageElement.textContent = button.getAttribute("data-confirm") || "Continue?";
     }
     if (confirmModalAcceptButton instanceof HTMLButtonElement) {
-        confirmModalAcceptButton.className = `btn ${button.getAttribute("data-confirm-btn-class") || "btn-primary"}`;
+        const requestedButtonClass = button.getAttribute("data-confirm-btn-class") || "btn-primary";
+        const confirmButtonClass = allowedConfirmButtonClasses.has(requestedButtonClass)
+            ? requestedButtonClass
+            : "btn-primary";
+        confirmModalAcceptButton.className = `btn ${confirmButtonClass}`;
         confirmModalAcceptButton.textContent = button.getAttribute("data-confirm-accept") || button.textContent?.trim() || "Continue";
     }
 
     modal.show();
 });
 
-document.addEventListener(
-    "blur",
-    (event) => {
-        if (!(event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLInputElement)) {
-            return;
-        }
-        if (!event.target.matches("[data-json-editor]")) {
-            return;
-        }
-        reformatJsonEditor(event.target);
-    },
-    true,
-);
-
-document.addEventListener("input", (event) => {
-    if (!(event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLInputElement)) {
-        return;
-    }
-    if (!event.target.matches("[data-json-editor]")) {
-        return;
-    }
-    clearJsonEditorErrorState(event.target);
-});
-
-const initializeAuditLogFilters = () => {
-    const searchInput = document.getElementById("filterSearch");
-    const usernameSelect = document.getElementById("filterUsername");
-    const dateFromInput = document.getElementById("filterDateFrom");
-    const dateToInput = document.getElementById("filterDateTo");
-    const resetButton = document.getElementById("filterReset");
-    const tableBody = document.getElementById("auditTableBody");
-    const visibleCountElement = document.getElementById("visibleCount");
-    const totalCountElement = document.getElementById("totalCount");
-    const loadMoreSentinel = document.getElementById("loadMoreSentinel");
-
-    if (
-        !(searchInput instanceof HTMLInputElement) ||
-        !(usernameSelect instanceof HTMLSelectElement) ||
-        !(dateFromInput instanceof HTMLInputElement) ||
-        !(dateToInput instanceof HTMLInputElement) ||
-        !(resetButton instanceof HTMLButtonElement) ||
-        !(tableBody instanceof HTMLTableSectionElement) ||
-        !(visibleCountElement instanceof HTMLElement) ||
-        !(totalCountElement instanceof HTMLElement)
-    ) {
-        return;
-    }
-
-    // The audit logs page now owns its own paginated filtering logic.
-    if (loadMoreSentinel instanceof HTMLElement) {
-        return;
-    }
-
-    const parseTimestampEpoch = (value) => {
-        if (typeof value !== "string" || !value.trim()) {
-            return Number.NaN;
-        }
-
-        const numericValue = Number(value);
-        if (Number.isFinite(numericValue)) {
-            return numericValue;
-        }
-
-        const parsedValue = Date.parse(value);
-        return Number.isFinite(parsedValue) ? parsedValue : Number.NaN;
-    };
-
-    const parseDateInputBoundary = (value, endOfDay = false) => {
-        const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-        if (match === null) {
-            return null;
-        }
-
-        const year = Number.parseInt(match[1], 10);
-        const month = Number.parseInt(match[2], 10) - 1;
-        const day = Number.parseInt(match[3], 10);
-        return Date.UTC(
-            year,
-            month,
-            day,
-            endOfDay ? 23 : 0,
-            endOfDay ? 59 : 0,
-            endOfDay ? 59 : 0,
-            endOfDay ? 999 : 0,
-        );
-    };
-
-    const normalizeText = (value) => String(value || "").toLowerCase().trim();
-
-    const rows = Array.from(tableBody.querySelectorAll("tr[data-timestamp]")).map((row) => {
-        const cellText = Array.from(row.cells, (cell) => normalizeText(cell.textContent)).join(" ");
-        const searchBlob = [
-            row.dataset.action,
-            row.dataset.username,
-            row.dataset.resource,
-            row.dataset.details,
-            cellText,
-        ].map(normalizeText).join(" ");
-
-        return {
-            element: row,
-            searchBlob,
-            timestampEpoch: parseTimestampEpoch(row.dataset.timestamp || ""),
-            username: row.dataset.username || "",
-        };
-    });
-
-    if (rows.length > 2000) {
-        console.warn("Client-side audit log filtering disabled: row count exceeds safe threshold");
-        return;
-    }
-
-    const usernames = [...new Set(rows.map((row) => row.username).filter(Boolean))].sort();
-    const existingOptions = new Set(Array.from(usernameSelect.options, (option) => option.value));
-
-    for (const username of usernames) {
-        if (existingOptions.has(username)) {
-            continue;
-        }
-        const option = document.createElement("option");
-        option.value = username;
-        option.textContent = username;
-        usernameSelect.appendChild(option);
-    }
-
-    totalCountElement.textContent = String(rows.length);
-    let filterTimeoutId = null;
-
-    const updateNoResultsState = (visibleCount) => {
-        const emptyRow = document.getElementById("emptyRow");
-        if (emptyRow instanceof HTMLTableRowElement) {
-            emptyRow.hidden = rows.length > 0;
-        }
-
-        let noResultsRow = document.getElementById("noResultsRow");
-        if (visibleCount === 0 && rows.length > 0) {
-            if (!(noResultsRow instanceof HTMLTableRowElement)) {
-                noResultsRow = document.createElement("tr");
-                noResultsRow.id = "noResultsRow";
-
-                const cell = document.createElement("td");
-                cell.className = "text-body-secondary";
-                cell.colSpan = 5;
-                cell.textContent = "No entries match the current filters.";
-
-                noResultsRow.appendChild(cell);
-                tableBody.appendChild(noResultsRow);
-            }
-            noResultsRow.hidden = false;
-        } else if (noResultsRow instanceof HTMLTableRowElement) {
-            noResultsRow.hidden = true;
-        }
-    };
-
-    const filterRows = () => {
-        filterTimeoutId = null;
-        const searchTerm = normalizeText(searchInput.value);
-        const selectedUsername = usernameSelect.value;
-        const dateFrom = dateFromInput.value ? parseDateInputBoundary(dateFromInput.value) : null;
-        const dateTo = dateToInput.value ? parseDateInputBoundary(dateToInput.value, true) : null;
-
-        let visibleCount = 0;
-
-        for (const row of rows) {
-            const matchesSearch = !searchTerm || row.searchBlob.includes(searchTerm);
-            const matchesUsername = !selectedUsername || row.username === selectedUsername;
-
-            let matchesDate = true;
-            if (!Number.isNaN(row.timestampEpoch)) {
-                if (dateFrom !== null && row.timestampEpoch < dateFrom) {
-                    matchesDate = false;
-                }
-                if (dateTo !== null && row.timestampEpoch > dateTo) {
-                    matchesDate = false;
-                }
-            }
-
-            const isVisible = matchesSearch && matchesUsername && matchesDate;
-            row.element.hidden = !isVisible;
-            if (isVisible) {
-                visibleCount += 1;
-            }
-        }
-
-        visibleCountElement.textContent = String(visibleCount);
-        updateNoResultsState(visibleCount);
-    };
-
-    const scheduleFilter = () => {
-        if (filterTimeoutId !== null) {
-            window.clearTimeout(filterTimeoutId);
-        }
-        filterTimeoutId = window.setTimeout(filterRows, 120);
-    };
-
-    const resetFilters = () => {
-        if (filterTimeoutId !== null) {
-            window.clearTimeout(filterTimeoutId);
-            filterTimeoutId = null;
-        }
-        searchInput.value = "";
-        usernameSelect.value = "";
-        dateFromInput.value = "";
-        dateToInput.value = "";
-        filterRows();
-    };
-
-    searchInput.addEventListener("input", scheduleFilter);
-    usernameSelect.addEventListener("change", filterRows);
-    dateFromInput.addEventListener("change", filterRows);
-    dateToInput.addEventListener("change", filterRows);
-    resetButton.addEventListener("click", resetFilters);
-
-    filterRows();
-};
-
-initializeAuditLogFilters();
-
-const initializeDomainPreview = () => {
-    const form = document.querySelector("form[data-domain-preview-form]");
-    const previewOutput = document.querySelector("[data-domain-preview-output]");
-    const errorContainer = document.querySelector("[data-domain-preview-errors-container]");
-    const errorList = document.querySelector("[data-domain-preview-errors]");
-    const statusBadge = document.querySelector("[data-domain-preview-status]");
-    const presetsContainer = document.getElementById("domain-security-presets");
-    const headerCombined = document.getElementById("domain-header-combined");
-    const headerExtra = document.getElementById("domain-header-extra");
-
-    if (
-        !(form instanceof HTMLFormElement) ||
-        !(previewOutput instanceof HTMLElement) ||
-        !(errorContainer instanceof HTMLElement) ||
-        !(errorList instanceof HTMLUListElement)
-    ) {
-        return;
-    }
-
-    const previewUrl = form.dataset.domainPreviewUrl;
-    if (!previewUrl) {
-        return;
-    }
-
-    const fieldErrorPrefixes = new Map([
-        ["Reverse proxy options require an upstream target.", ["upstream", "reverse_proxy_options"]],
-        ["Reverse proxy options", ["reverse_proxy_options"]],
-        ["Encode settings", ["encode_directives"]],
-        ["Header block", ["header_directives"]],
-        ["Request body block", ["request_body_directives"]],
-        ["Log block", ["log_directives"]],
-        ["TLS block", ["tls_directives"]],
-        ["Basic auth block", ["basic_auth_directives"]],
-        ["Additional custom directives", ["caddy_directives"]],
-    ]);
-
-    const fieldsByName = new Map();
-    for (const field of form.elements) {
-        if (
-            (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement) &&
-            field.name
-        ) {
-            fieldsByName.set(field.name, field);
-        }
-    }
-
-    let previewTimeoutId = null;
-    let activeRequestController = null;
-    let latestRequestId = 0;
-
-    // Security preset checkboxes → combined header_directives hidden field.
-    const presetCheckboxes = presetsContainer
-        ? Array.from(presetsContainer.querySelectorAll("input[data-header-line]"))
-        : [];
-
-    const syncHeaderDirectives = () => {
-        if (!headerCombined) return;
-        const presetLines = presetCheckboxes
-            .filter((cb) => cb.checked)
-            .map((cb) => cb.dataset.headerLine ?? "");
-        const extraLines = headerExtra
-            ? headerExtra.value.split("\n").filter((l) => l.trim())
-            : [];
-        headerCombined.value = [...presetLines, ...extraLines].join("\n");
-    };
-
-    // Parse existing header_directives to pre-check matching presets.
-    if (presetCheckboxes.length > 0 && headerCombined) {
-        const existingLines = headerCombined.value.split("\n").map((l) => l.trim()).filter(Boolean);
-        const remainingLines = [];
-        for (const line of existingLines) {
-            const matchedCb = presetCheckboxes.find((cb) => cb.dataset.headerLine === line);
-            if (matchedCb) {
-                matchedCb.checked = true;
-            } else {
-                remainingLines.push(line);
-            }
-        }
-        if (headerExtra) {
-            headerExtra.value = remainingLines.join("\n");
-        }
-    }
-
-    const updateStatus = (errors) => {
-        if (!(statusBadge instanceof HTMLElement)) return;
-        if (!Array.isArray(errors) || errors.length === 0) {
-            statusBadge.textContent = "Valid";
-            statusBadge.className = "badge text-bg-success";
-        } else {
-            statusBadge.textContent = `${errors.length} warning${errors.length !== 1 ? "s" : ""}`;
-            statusBadge.className = "badge text-bg-warning";
-        }
-    };
-
-    const clearInvalidStates = () => {
-        for (const field of fieldsByName.values()) {
-            field.classList.remove("is-invalid");
-            field.removeAttribute("aria-invalid");
-        }
-    };
-
-    const markInvalidFields = (errors) => {
-        clearInvalidStates();
-
-        for (const error of errors) {
-            for (const [prefix, fieldNames] of fieldErrorPrefixes.entries()) {
-                if (!error.startsWith(prefix)) {
-                    continue;
-                }
-                for (const fieldName of fieldNames) {
-                    const field = fieldsByName.get(fieldName);
-                    if (!field) {
-                        continue;
-                    }
-                    field.classList.add("is-invalid");
-                    field.setAttribute("aria-invalid", "true");
-                }
-            }
-        }
-    };
-
-    const renderErrors = (errors) => {
-        errorList.replaceChildren();
-        updateStatus(errors);
-        if (!Array.isArray(errors) || errors.length === 0) {
-            errorContainer.hidden = true;
-            clearInvalidStates();
-            return;
-        }
-
-        for (const error of errors) {
-            const item = document.createElement("li");
-            item.textContent = error;
-            errorList.appendChild(item);
-        }
-
-        markInvalidFields(errors);
-        errorContainer.hidden = false;
-    };
-
-    const fetchPreview = async () => {
-        latestRequestId += 1;
-        const requestId = latestRequestId;
-
-        activeRequestController?.abort();
-        activeRequestController = new AbortController();
-        let previewTimedOut = false;
-        const timeoutId = window.setTimeout(() => {
-            previewTimedOut = true;
-            activeRequestController?.abort();
-        }, 10000);
-
-        try {
-            const response = await fetch(previewUrl, {
-                method: "POST",
-                body: new FormData(form),
-                headers: { Accept: "application/json" },
-                signal: activeRequestController.signal,
-            });
-
-            if (!response.ok) {
-                throw new Error(`Preview request failed with status ${response.status}`);
-            }
-
-            const payload = await response.json();
-            if (requestId !== latestRequestId) {
-                return;
-            }
-
-            previewOutput.textContent = typeof payload.preview === "string"
-                ? payload.preview
-                : previewOutput.textContent;
-            renderErrors(Array.isArray(payload.errors) ? payload.errors : []);
-        } catch (error) {
-            if (error instanceof DOMException && error.name === "AbortError" && !previewTimedOut) {
-                return;
-            }
-
-            renderErrors(["Live preview is temporarily unavailable. You can still save once the form validates."]);
-        } finally {
-            window.clearTimeout(timeoutId);
-        }
-    };
-
-    const schedulePreview = () => {
-        if (previewTimeoutId !== null) {
-            window.clearTimeout(previewTimeoutId);
-        }
-        previewTimeoutId = window.setTimeout(() => {
-            previewTimeoutId = null;
-            void fetchPreview();
-        }, 150);
-    };
-
-    form.addEventListener("input", schedulePreview);
-    form.addEventListener("change", schedulePreview);
-
-    // Preset checkboxes and extra textarea trigger header sync + preview refresh.
-    for (const cb of presetCheckboxes) {
-        cb.addEventListener("change", () => {
-            syncHeaderDirectives();
-            schedulePreview();
-        });
-    }
-    if (headerExtra instanceof HTMLTextAreaElement) {
-        headerExtra.addEventListener("input", () => {
-            syncHeaderDirectives();
-            schedulePreview();
-        });
-    }
-
-    // Bootstrap HTML5 inline validation on submit.
-    form.addEventListener("submit", (event) => {
-        syncHeaderDirectives();
-        if (!form.checkValidity()) {
-            event.preventDefault();
-            event.stopPropagation();
-        }
-        form.classList.add("was-validated");
-    });
-
-    syncHeaderDirectives();
-    void fetchPreview();
-};
-
-initializeDomainPreview();
-
-const initializeTagInputs = () => {
-    const tagInputs = document.querySelectorAll("input[data-tag-input]");
-
-    for (const field of tagInputs) {
-        if (!(field instanceof HTMLInputElement) || field.dataset.tagInputEnhanced === "true") {
-            continue;
-        }
-
-        const formGroup = field.parentElement;
-        if (!(formGroup instanceof HTMLElement)) {
-            continue;
-        }
-
-        field.dataset.tagInputEnhanced = "true";
-
-        const normalizeTag = (value) => value.trim().replaceAll(/\s+/g, " ");
-        const parseTags = (rawValue) => [...new Set(
-            rawValue
-                .split(/[\s,]+/)
-                .map(normalizeTag)
-                .filter(Boolean),
-        )];
-
-        let tags = parseTags(field.value);
-
-        const wrapper = document.createElement("div");
-        wrapper.className = "tag-input";
-
-        const list = document.createElement("div");
-        list.className = "tag-input__list";
-        list.setAttribute("aria-live", "polite");
-        list.setAttribute("role", "list");
-        list.setAttribute("aria-label", "Selected tags");
-
-        const editor = document.createElement("input");
-        editor.type = "text";
-        editor.className = field.className;
-        editor.id = field.id;
-        editor.placeholder = field.placeholder;
-        editor.autocomplete = "off";
-        editor.setAttribute("aria-describedby", field.getAttribute("aria-describedby") || "");
-
-        field.removeAttribute("id");
-        field.type = "hidden";
-
-        const syncField = () => {
-            field.value = tags.join(", ");
-        };
-
-        const renderTags = () => {
-            list.replaceChildren();
-
-            for (const tag of tags) {
-                const item = document.createElement("span");
-                item.className = "tag-input__token";
-                item.setAttribute("role", "listitem");
-
-                const label = document.createElement("span");
-                label.textContent = tag;
-
-                const removeButton = document.createElement("button");
-                removeButton.type = "button";
-                removeButton.className = "tag-input__remove";
-                removeButton.setAttribute("aria-label", `Remove tag ${tag}`);
-                removeButton.textContent = "x";
-                removeButton.addEventListener("click", () => {
-                    tags = tags.filter((entry) => entry !== tag);
-                    syncField();
-                    renderTags();
-                    editor.focus();
-                });
-
-                item.append(label, removeButton);
-                list.appendChild(item);
-            }
-
-            list.hidden = tags.length === 0;
-        };
-
-        const addTagsFromValue = (rawValue) => {
-            const parsed = parseTags(rawValue);
-            if (parsed.length === 0) {
-                return false;
-            }
-
-            let didChange = false;
-            for (const tag of parsed) {
-                if (tags.includes(tag)) {
-                    continue;
-                }
-                tags.push(tag);
-                didChange = true;
-            }
-
-            if (didChange) {
-                syncField();
-                renderTags();
-            }
-            return didChange;
-        };
-
-        const commitEditorValue = () => {
-            const rawValue = editor.value;
-            if (!rawValue.trim()) {
-                editor.value = "";
-                return;
-            }
-            addTagsFromValue(rawValue);
-            editor.value = "";
-        };
-
-        const form = field.form;
-        if (form instanceof HTMLFormElement) {
-            form.addEventListener("submit", commitEditorValue);
-        }
-
-        editor.addEventListener("keydown", (event) => {
-            const shouldCommit = event.key === "Tab" || event.key === "," || event.key === " ";
-
-            if (shouldCommit && editor.value.trim()) {
-                event.preventDefault();
-                commitEditorValue();
-                return;
-            }
-
-            if (event.key === "Backspace" && !editor.value && tags.length > 0) {
-                tags = tags.slice(0, -1);
-                syncField();
-                renderTags();
-            }
-        });
-
-        editor.addEventListener("blur", commitEditorValue);
-
-        editor.addEventListener("paste", (event) => {
-            const clipboardText = event.clipboardData?.getData("text") || "";
-            if (!/[\s,]/.test(clipboardText)) {
-                return;
-            }
-
-            event.preventDefault();
-            addTagsFromValue(clipboardText);
-            editor.value = "";
-        });
-
-        wrapper.append(editor, list);
-        formGroup.insertBefore(wrapper, field.nextSibling);
-
-        syncField();
-        renderTags();
-    }
-};
-
-initializeTagInputs();
+initializeLiveUpdates();
+initializeMobileMenu();
+initializeLoadingSubmitForms();
+initializeAutoDismissAlerts();
+initializeSiteDomainInputs();
+initializeSiteConfigForms();
+initializeCaddyfileForms();
+initializeValidateButtons();

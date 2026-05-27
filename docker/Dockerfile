@@ -17,17 +17,21 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install --upgrade pip setuptools wheel
+
 COPY requirements.txt ./requirements.txt
 
 # Leverage BuildKit pip caching to avoid re-downloading unchanged packages
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -r requirements.txt
+    python -m pip install -r requirements.txt
 
 FROM python:3.13-slim AS runtime
 
-ARG APP_VERSION
-ARG GIT_SHA
-ARG BUILD_DATE
+ARG APP_VERSION=dev
+ARG GIT_SHA=unknown
+ARG BUILD_DATE=unknown
+ARG CADDY_VERSION
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -44,13 +48,23 @@ LABEL org.opencontainers.image.version=$APP_VERSION \
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update \
-    && apt-get install --no-install-recommends -y ca-certificates curl gnupg \
-    && curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
-        | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg \
-    && curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+    && apt-get install --no-install-recommends -y ca-certificates curl gnupg gosu \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+        -o /tmp/caddy-stable.gpg \
+    && gpg --batch --dearmor \
+        -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg \
+        /tmp/caddy-stable.gpg \
+    && rm -f /tmp/caddy-stable.gpg \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
         -o /etc/apt/sources.list.d/caddy-stable.list \
     && apt-get update \
-    && apt-get install --no-install-recommends -y caddy \
+    && if [ -n "$CADDY_VERSION" ]; then \
+        apt-get install --no-install-recommends -y "caddy=${CADDY_VERSION}*"; \
+    else \
+        apt-get install --no-install-recommends -y caddy; \
+    fi \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --system --gid 1000 app \
@@ -67,8 +81,9 @@ COPY --chown=app:app VERSION ./VERSION
 COPY --chown=app:app BUILD_INFO ./BUILD_INFO
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
-RUN chmod +x /usr/local/bin/entrypoint.sh \
-    && install -d -o app -g app /app/data
+RUN python -m compileall -q app run.py \
+    && chmod 0755 /usr/local/bin/entrypoint.sh \
+    && install -d -o app -g app -m 0700 /app/data
 
 # NOTE: No USER directive here - entrypoint runs as root to fix
 # volume permissions, then drops to app user before exec.

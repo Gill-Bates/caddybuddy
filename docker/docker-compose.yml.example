@@ -1,17 +1,23 @@
 services:
   caddybuddy:
-    image: giiibates/caddybuddy:latest
+    image: docker.cirrio.de/caddybuddy:${CADDYBUDDY_VERSION:-1.0.0}
     container_name: caddybuddy
-    restart: always
+    restart: unless-stopped
     stop_grace_period: 20s
     environment:
-      CADDYBUDDY_SECRET_KEY: ${CADDYBUDDY_SECRET_KEY:?Set CADDYBUDDY_SECRET_KEY to a strong random value before starting caddybuddy.} # Generate with: head -c 32 /dev/urandom | base64
-      CADDYBUDDY_ADMIN_PASSWORD: ${CADDYBUDDY_ADMIN_PASSWORD:?Set CADDYBUDDY_ADMIN_PASSWORD to a non-default admin password before starting caddybuddy.}
+      CB_SECRET_KEY: ${CB_SECRET_KEY:?Set CB_SECRET_KEY to a strong random value before starting caddybuddy.} # Generate with: head -c 32 /dev/urandom | base64
+      CB_ADMIN_PASSWORD: ${CB_ADMIN_PASSWORD:?Set CB_ADMIN_PASSWORD to a non-default admin password before starting caddybuddy.}
+      CB_CADDYFILE_PATH: /app/Caddyfile
+      CB_CADDY_API_URL: ${CB_CADDY_API_URL:-http://host.docker.internal:2019}
+      CB_SSLLABS_EMAIL: ${CB_SSLLABS_EMAIL:-}  # Required for SSL Labs scheduled scans
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       TZ: ${TZ:-Etc/UTC}
-      HOST: ${HOST:-0.0.0.0}
+      HOST: 0.0.0.0
       PORT: ${PORT:-8000}
       TIMEOUT: ${TIMEOUT:-60}
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
     logging:
       driver: json-file
@@ -21,9 +27,18 @@ services:
     security_opt:
       - no-new-privileges:true
     ports:
-      - "8000:8000"
+      - "127.0.0.1:${PORT:-8000}:8000"
     volumes:
-      - ./data:/app/data
+      # Create the host Caddyfile before first start. CaddyBuddy imports it
+      # into SQLite and then replaces the mounted file with a managed marker.
+      - type: bind
+        source: ${HOST_CADDYFILE_PATH:-/etc/caddy/Caddyfile}
+        target: /app/Caddyfile
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./data
+        target: /app/data
 
     healthcheck:
       test: ["CMD", "python", "-c", "import os, sys, urllib.request; port = os.environ.get('PORT', '8000'); response = urllib.request.urlopen(f'http://127.0.0.1:{port}/api/v1/health', timeout=3); sys.exit(0 if response.status < 500 else 1)"]

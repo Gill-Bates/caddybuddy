@@ -15,6 +15,7 @@ from hashlib import sha256, sha384
 from fastapi import HTTPException, Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
+from starlette.routing import NoMatchFound
 from starlette.templating import _TemplateResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -224,6 +225,14 @@ def redirect_to(path: str) -> RedirectResponse:
     return RedirectResponse(url=path, status_code=303)
 
 
+def optional_url_path_for(request: Request, route_name: str, **path_params: object) -> str | None:
+    """Return a route path when present, else None for partial test apps."""
+    try:
+        return request.app.url_path_for(route_name, **path_params)
+    except NoMatchFound:
+        return None
+
+
 def initialize_user_session(request: Request, user_id: int, password_hash: str) -> None:
     """Initialize a fresh authenticated user session.
 
@@ -262,6 +271,7 @@ def render_template(
         "current_user": current_user,
         "csrf_token": ensure_csrf_token(request),
         "asset_integrity": asset_integrity,
+        "optional_url_path_for": optional_url_path_for,
         "flashes": pop_flashes(request),
         "build_info": get_build_info(),
         "app_name": settings.app_name,

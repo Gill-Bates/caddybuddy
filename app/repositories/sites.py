@@ -6,37 +6,63 @@
 
 from __future__ import annotations
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
-from app.models.entities import Deployment, DeploymentStatus, Site
+from app.models.entities import Site, _normalize_domain_name, _normalize_upstream_url
+from app.utils.caddyfile import extract_upstream_from_directives, normalize_caddy_directives
+from app.utils.domains import split_domain_names
+
+
+_MAX_LIST_LIMIT = 500
+_LEGACY_UPSTREAM_PLACEHOLDER = "http://placeholder.invalid"
+
+
+class DuplicateSiteError(ValueError):
+    """Raised when a site domain collides with an existing row."""
 
 
 class SiteRepository:
-    """Repository for Site CRUD operations.
+    """Repository for the simplified site model."""
 
-    The Site entity has a UNIQUE constraint on the domain field,
-    enforced at database level. This is critical for preventing
-    duplicate domain assignments.
-    """
+    @staticmethod
+    def _domains_overlap(left: str, right: str) -> bool:
+        return not set(split_domain_names(left)).isdisjoint(split_domain_names(right))
 
-    _PROTECTED_UPDATE_FIELDS = frozenset({"id", "created_at", "updated_at"})
+    @staticmethod
+    def _supports_execute(session: AsyncSession) -> bool:
+        return hasattr(session, "execute")
+
+    @staticmethod
+    def _derive_legacy_upstream_url(caddy_directives: str) -> str:
+        extracted_upstream = extract_upstream_from_directives(caddy_directives)
+        if extracted_upstream is None:
+            return _LEGACY_UPSTREAM_PLACEHOLDER
+        if "://" in extracted_upstream:
+            return _normalize_upstream_url(extracted_upstream)
+        return _normalize_upstream_url(f"http://{extracted_upstream}")
 
     async def count(self, session: AsyncSession) -> int:
-        result = await session.execute(select(func.count(Site.id)))
+        result = await session.execute(select(func.count()).select_from(Site))
         return int(result.scalar_one())
 
-    async def list_all(self, session: AsyncSession, *, limit: int | None = None) -> list[Site]:
-        statement = (
-            select(Site)
-            .options(selectinload(Site.config_template), selectinload(Site.deployments))
-            .order_by(Site.domain.asc())
-        )
+    async def list_all(
+        self,
+        session: AsyncSession,
+        *,
+        limit: int | None = None,
+        enabled_only: bool = False,
+    ) -> list[Site]:
+        statement = select(Site).order_by(Site.domain.asc())
+        if enabled_only:
+            statement = statement.where(Site.enabled.is_(True))
         if limit is not None:
+            if limit < 1 or limit > _MAX_LIST_LIMIT:
+                raise ValueError(f"Limit must be between 1 and {_MAX_LIST_LIMIT}.")
             statement = statement.limit(limit)
         result = await session.execute(statement)
-        return list(result.scalars().unique().all())
+        return list(result.scalars().all())
 
     async def get_by_id(
         self,
@@ -45,59 +71,78 @@ class SiteRepository:
         *,
         for_update: bool = False,
     ) -> Site | None:
-        statement = (
-            select(Site)
-            .options(
-                selectinload(Site.config_template),
-                selectinload(Site.deployments).selectinload(Deployment.server),
-            )
-            .where(Site.id == site_id)
-        )
+        statement = select(Site).where(Site.id == site_id)
         if for_update:
             statement = statement.with_for_update()
         result = await session.execute(statement)
         return result.scalar_one_or_none()
 
     async def get_by_domain(self, session: AsyncSession, domain: str) -> Site | None:
-        """Get site by domain name. Domain matching is case-insensitive."""
-        result = await session.execute(
-            select(Site)
-            .options(selectinload(Site.config_template), selectinload(Site.deployments))
-            .where(func.lower(Site.domain) == domain.lower())
-        )
-        return result.scalar_one_or_none()
+        """Get site by a contained domain name. Domain matching is case-insensitive."""
+        normalized_domain = _normalize_domain_name(domain)
+        result = await session.execute(select(Site).where(Site.domain == normalized_domain))
+        site = result.scalar_one_or_none()
+        if site is not None:
+            return site
 
-    async def domain_exists(self, session: AsyncSession, domain: str, *, exclude_id: int | None = None) -> bool:
-        """Check if a domain already exists (case-insensitive)."""
-        statement = select(func.count(Site.id)).where(func.lower(Site.domain) == domain.lower())
+        result = await session.execute(select(Site).order_by(Site.domain.asc()))
+        for site in result.scalars().all():
+            if self._domains_overlap(site.domain, normalized_domain):
+                return site
+        return None
+
+    async def domain_exists(
+        self,
+        session: AsyncSession,
+        domain: str,
+        *,
+        exclude_id: int | None = None,
+    ) -> bool:
+        """Check whether any requested domain is already assigned."""
+        normalized_domain = _normalize_domain_name(domain)
+        statement = select(Site.id).where(Site.domain == normalized_domain)
+        if exclude_id is not None:
+            statement = statement.where(Site.id != exclude_id)
+        result = await session.execute(statement.limit(1))
+        if result.scalar_one_or_none() is not None:
+            return True
+
+        statement = select(Site.id, Site.domain).order_by(Site.domain.asc())
         if exclude_id is not None:
             statement = statement.where(Site.id != exclude_id)
         result = await session.execute(statement)
-        return (result.scalar_one() or 0) > 0
+        for row in result.all():
+            if self._domains_overlap(row.domain, normalized_domain):
+                return True
+        return False
 
     async def create(
         self,
         session: AsyncSession,
         *,
         domain: str,
-        config_template_id: int,
+        caddy_directives: str,
         enabled: bool = True,
-        description: str | None = None,
-        variables: dict | None = None,
-        ssl_enabled: bool = True,
-        ssl_provider: str = "letsencrypt",
     ) -> Site:
+        normalized_domain = _normalize_domain_name(domain)
+        if self._supports_execute(session) and await self.domain_exists(session, normalized_domain):
+            raise DuplicateSiteError("Site domain already exists.")
+
+        normalized_directives = normalize_caddy_directives(caddy_directives)
+        if not normalized_directives:
+            raise ValueError("caddy_directives cannot be empty")
+
         site = Site(
-            domain=domain.lower().strip(),
-            config_template_id=config_template_id,
+            domain=normalized_domain,
+            upstream_url=self._derive_legacy_upstream_url(normalized_directives),
+            caddy_directives=normalized_directives,
             enabled=enabled,
-            description=description,
-            variables=variables or {},
-            ssl_enabled=ssl_enabled,
-            ssl_provider=ssl_provider,
         )
         session.add(site)
-        await session.flush()
+        try:
+            await session.flush()
+        except IntegrityError as exc:
+            raise DuplicateSiteError("Site domain already exists.") from exc
         return site
 
     async def update(
@@ -106,137 +151,35 @@ class SiteRepository:
         site: Site,
         *,
         domain: str | None = None,
-        config_template_id: int | None = None,
+        caddy_directives: str | None = None,
         enabled: bool | None = None,
-        description: str | None = None,
-        variables: dict | None = None,
-        ssl_enabled: bool | None = None,
-        ssl_provider: str | None = None,
     ) -> Site:
         if domain is not None:
-            site.domain = domain.lower().strip()
-        if config_template_id is not None:
-            site.config_template_id = config_template_id
+            normalized_domain = _normalize_domain_name(domain)
+            if self._supports_execute(session) and await self.domain_exists(
+                session,
+                normalized_domain,
+                exclude_id=getattr(site, "id", None),
+            ):
+                raise DuplicateSiteError("Site domain already exists.")
+            site.domain = normalized_domain
+        if caddy_directives is not None:
+            normalized_directives = normalize_caddy_directives(caddy_directives)
+            if not normalized_directives:
+                raise ValueError("caddy_directives cannot be empty")
+            site.caddy_directives = normalized_directives
+            site.upstream_url = self._derive_legacy_upstream_url(normalized_directives)
         if enabled is not None:
             site.enabled = enabled
-        if description is not None:
-            site.description = description
-        if variables is not None:
-            site.variables = variables
-        if ssl_enabled is not None:
-            site.ssl_enabled = ssl_enabled
-        if ssl_provider is not None:
-            site.ssl_provider = ssl_provider
-        await session.flush()
+        try:
+            await session.flush()
+        except IntegrityError as exc:
+            raise DuplicateSiteError("Site domain already exists.") from exc
         return site
 
     async def delete(self, session: AsyncSession, site: Site) -> None:
         await session.delete(site)
         await session.flush()
-
-    async def get_sites_by_template(
-        self, session: AsyncSession, template_id: int
-    ) -> list[Site]:
-        """Get all sites using a specific config template."""
-        result = await session.execute(
-            select(Site)
-            .options(selectinload(Site.deployments))
-            .where(Site.config_template_id == template_id)
-            .order_by(Site.domain.asc())
-        )
-        return list(result.scalars().all())
-
-    async def get_deployed_sites(
-        self, session: AsyncSession, server_id: int
-    ) -> list[Site]:
-        """Get all sites with active deployments on a specific server."""
-        result = await session.execute(
-            select(Site)
-            .options(selectinload(Site.config_template))
-            .join(Site.deployments)
-            .where(
-                Deployment.server_id == server_id,
-                Deployment.status == DeploymentStatus.DEPLOYED,
-            )
-            .order_by(Site.domain.asc())
-        )
-        return list(result.scalars().unique().all())
-
-    async def get_enabled_sites(self, session: AsyncSession) -> list[Site]:
-        """Get all enabled sites."""
-        result = await session.execute(
-            select(Site)
-            .options(selectinload(Site.config_template), selectinload(Site.deployments))
-            .where(Site.enabled.is_(True))
-            .order_by(Site.domain.asc())
-        )
-        return list(result.scalars().unique().all())
-
-    async def list_pending_deployment(
-        self, session: AsyncSession, *, limit: int | None = None
-    ) -> list[Site]:
-        """Get sites that need deployment (changed since last deploy or never deployed).
-
-        A site is pending deployment if:
-        - It has no deployments with status DEPLOYED, OR
-        - Its updated_at is newer than the most recent deployed_at
-        """
-        latest_deployed = (
-            select(
-                Deployment.site_id,
-                func.max(Deployment.deployed_at).label("latest_deployed_at"),
-            )
-            .where(Deployment.status == DeploymentStatus.DEPLOYED)
-            .group_by(Deployment.site_id)
-            .subquery()
-        )
-
-        statement = (
-            select(Site)
-            .options(
-                selectinload(Site.config_template),
-                selectinload(Site.deployments).selectinload(Deployment.server),
-            )
-            .outerjoin(latest_deployed, Site.id == latest_deployed.c.site_id)
-            .where(Site.enabled.is_(True))
-            .where(
-                or_(
-                    latest_deployed.c.latest_deployed_at.is_(None),
-                    Site.updated_at > latest_deployed.c.latest_deployed_at,
-                )
-            )
-            .order_by(Site.updated_at.desc())
-        )
-        if limit is not None:
-            statement = statement.limit(limit)
-        result = await session.execute(statement)
-        return list(result.scalars().unique().all())
-
-    async def count_pending_deployment(self, session: AsyncSession) -> int:
-        """Count sites that need deployment."""
-        latest_deployed = (
-            select(
-                Deployment.site_id,
-                func.max(Deployment.deployed_at).label("latest_deployed_at"),
-            )
-            .where(Deployment.status == DeploymentStatus.DEPLOYED)
-            .group_by(Deployment.site_id)
-            .subquery()
-        )
-
-        statement = (
-            select(func.count(Site.id))
-            .outerjoin(latest_deployed, Site.id == latest_deployed.c.site_id)
-            .where(Site.enabled.is_(True))
-            .where(
-                or_(
-                    latest_deployed.c.latest_deployed_at.is_(None),
-                    Site.updated_at > latest_deployed.c.latest_deployed_at,
-                )
-            )
-        )
-        result = await session.execute(statement)
-        return int(result.scalar_one())
 
 
 site_repository = SiteRepository()

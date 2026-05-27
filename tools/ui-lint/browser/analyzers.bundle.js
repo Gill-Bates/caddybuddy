@@ -847,6 +847,36 @@
         };
     }
 
+    // ---------------- Page Structure Consistency ----------------
+    function pageStructureAnalyzer() {
+        const appPage = document.querySelector('.app-page');
+        if (!appPage) {
+            return { pageStructureConsistent: { present: false, hasRowWrapper: null, issues: [] } };
+        }
+
+        // Check if app-page has direct children that are panel-cards without row wrapper
+        const directChildren = Array.from(appPage.children).filter((el) => !el.classList.contains('app-page__header'));
+        const hasRowAppGrid = directChildren.some((el) => el.classList.contains('row') && el.classList.contains('app-grid'));
+        const hasMetricGrid = directChildren.some((el) => el.classList.contains('row') && el.classList.contains('metric-grid'));
+        const hasRowWrapper = hasRowAppGrid || hasMetricGrid;
+
+        // Find panel-cards that are direct children of app-page (missing row wrapper)
+        const unwrappedPanelCards = directChildren
+            .filter((el) => el.classList.contains('panel-card') && !el.closest('.row'))
+            .map((el) => ({
+                tag: el.tagName,
+                className: el.className || '',
+            }));
+
+        return {
+            pageStructureConsistent: {
+                present: true,
+                hasRowWrapper,
+                issues: unwrappedPanelCards,
+            },
+        };
+    }
+
     function runAll({ scope, constants = {}, selectors = {} } = {}) {
         resetRunCache();
 
@@ -859,6 +889,7 @@
         const sidebarFooterGap = mobileSidebarFooterAnalyzer(constants);
         const pageShell = pageShellAnalyzer(constants);
         const primaryPanelPadding = primaryPanelPaddingAnalyzer(constants);
+        const pageStructure = pageStructureAnalyzer();
         const state = stateAnalyzer();
         const components = componentAnalyzer();
         const modalTheme = modalThemeAnalyzer(constants);
@@ -882,6 +913,7 @@
             ...sidebarFooterGap,
             ...pageShell,
             ...primaryPanelPadding,
+            ...pageStructure,
             ...modalTheme,
 
             state,

@@ -1,22 +1,61 @@
-.git
-.github
-.venv
+# VCS / GitHub metadata
+.git/
+.github/
+
+# Python caches
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 *.pyd
-tests/
-data/*.db
-data/*.db-*
-node_modules/
-_caddymanager-main/
-tools/ui-lint/node_modules/
-tools/ui-lint/visual/artifacts/
-tools/ui-lint/ui-lint-summary.json
-tools/ui-lint/playwright-report/
-tools/ui-lint/test-results/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 
-# Dev
+# Virtual environments
+.venv/
+.venv-*/
+venv/
+env/
+ENV/
+__pypackages__/
+
+# Local secrets / environment
+.env
+.env.*
+.envrc
+*.pem
+*.key
+*.crt
+
+# Runtime data
+data/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+
+# Node / UI lint artifacts
+node_modules/
+tools/ui-lint/node_modules/
+tools/ui-lint/test-results/
+tools/ui-lint/playwright-report/
+tools/ui-lint/ui-lint-summary.json
+tools/ui-lint/visual/artifacts/
+
+# Tests and local generated bundles / scratch
+tests/
+full_codebase*
+_caddymanager-main/
+.omx/
+.cache/
+*.log
+*.tmp
+.DS_Store
+
+# Local dev files
 Caddyfile
 setup.conf
-tests/

@@ -1,0 +1,132 @@
+{% extends 'base.html' %}
+
+{% set page_title = "Caddyfile" %}
+
+{% block content %}
+<section class="app-page app-page--caddyfile">
+    <div class="app-page__header">
+        <div class="app-page__lede">
+            <p class="eyebrow mb-2">Configuration</p>
+            <h1 class="page-title mb-0">Caddyfile</h1>
+        </div>
+    </div>
+
+    <div class="row app-grid">
+        <div class="col-12">
+            {% if onboarding_required %}
+            <div class="panel-card panel-card--highlight mb-4">
+                <div class="panel-card__header">
+                    <h2 class="h5 mb-0">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor"
+                            class="bi bi-rocket-takeoff me-2" viewBox="0 0 16 16" aria-hidden="true">
+                            <path
+                                d="M9.752 6.193c.599.6 1.73.437 2.528-.362s.96-1.932.362-2.531c-.599-.6-1.73-.438-2.528.361-.798.8-.96 1.933-.362 2.532" />
+                            <path
+                                d="M15.811 3.312c-.363 1.534-1.334 3.626-3.64 6.218l-.24 2.408a2.56 2.56 0 0 1-.732 1.526L8.817 15.85a.51.51 0 0 1-.867-.434l.27-1.899c.04-.28-.013-.593-.131-.956a9 9 0 0 0-.249-.657l-.082-.202c-.815-.197-1.578-.662-2.191-1.277-.614-.615-1.079-1.379-1.275-2.195l-.203-.082a10 10 0 0 0-.655-.248c-.363-.119-.675-.172-.955-.132l-1.896.27A.51.51 0 0 1 .15 7.17l2.382-2.386c.41-.41.947-.67 1.524-.734h.006l2.4-.238C9.005 1.55 11.087.582 12.623.208c.89-.217 1.59-.232 2.08-.188.244.023.435.06.57.093q.1.026.16.045c.184.06.279.13.351.295l.029.073a3.5 3.5 0 0 1 .157.721c.055.485.051 1.178-.159 2.065m-4.828 7.475.04-.04-.107 1.081a1.54 1.54 0 0 1-.44.913l-1.298 1.3.054-.38c.072-.506-.034-.993-.172-1.418a9 9 0 0 0-.164-.45c.738-.065 1.462-.38 2.087-1.006M5.205 5c-.625.626-.94 1.351-1.004 2.09a9 9 0 0 0-.45-.164c-.424-.138-.91-.244-1.416-.172l-.38.054 1.3-1.3c.245-.246.566-.401.91-.44l1.08-.107zm9.406-3.961c-.38-.034-.967-.027-1.746.163-1.558.38-3.917 1.496-6.937 4.521-.62.62-.799 1.34-.687 2.051.107.676.483 1.362 1.048 1.928.564.565 1.25.941 1.924 1.049.71.112 1.429-.067 2.048-.688 3.079-3.083 4.192-5.444 4.556-6.987.183-.771.18-1.345.138-1.713a3 3 0 0 0-.045-.283 3 3 0 0 0-.3-.041Z" />
+                            <path
+                                d="M7.009 12.139a7.6 7.6 0 0 1-1.804-1.352A7.6 7.6 0 0 1 3.794 8.86c-1.102.992-1.965 5.054-1.839 5.18.125.126 4.189-.738 5.054-1.901" />
+                        </svg>
+                        Setup Required
+                    </h2>
+                </div>
+                <div class="panel-card__body">
+                    <p class="mb-3">
+                        CaddyBuddy needs to initialize your Caddyfile at
+                        <code>{{ caddyfile_path or 'not configured' }}</code> before it can
+                        manage
+                        sites.
+                    </p>
+                    <div class="alert alert-light border mb-3">
+                        <h6 class="alert-heading mb-2">What happens during onboarding?</h6>
+                        <ol class="mb-0 ps-3">
+                            <li>Your existing Caddyfile is imported and stored as a snapshot</li>
+                            <li>Detected site blocks are imported into CaddyBuddy</li>
+                            <li>The host-mounted Caddyfile is replaced with a managed marker</li>
+                            <li>The generated configuration is validated and deployed to Caddy</li>
+                        </ol>
+                    </div>
+                    {% if not admin_api_reachable %}
+                    <div id="admin-api-warning" class="alert alert-warning mb-3">
+                        <strong>Caddy Admin API unreachable.</strong> Ensure Caddy is running and the admin API is
+                        accessible
+                        before continuing.
+                    </div>
+                    {% endif %}
+                    <form action="{{ request.app.url_path_for('run_onboarding') }}" method="post"
+                        data-loading-submit-form>
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" class="btn btn-primary" data-loading-submit-button
+                            data-loading-label="Initializing..." {% if not admin_api_reachable %}disabled
+                            aria-disabled="true" aria-describedby="admin-api-warning" {% endif %}>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor"
+                                class="bi bi-check2-circle me-1" viewBox="0 0 16 16" aria-hidden="true">
+                                <path
+                                    d="M2.5 8a5.5 5.5 0 0 1 8.25-4.764.5.5 0 0 0 .5-.866A6.5 6.5 0 1 0 14.5 8a.5.5 0 0 0-1 0 5.5 5.5 0 1 1-11 0" />
+                                <path
+                                    d="M15.354 3.354a.5.5 0 0 0-.708-.708L8 9.293 5.354 6.646a.5.5 0 1 0-.708.708l3 3a.5.5 0 0 0 .708 0z" />
+                            </svg>
+                            Initialize CaddyBuddy
+                        </button>
+                    </form>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="panel-card">
+                <div class="panel-card__header">
+                    <h2 class="h5 mb-0">Global Caddyfile</h2>
+                </div>
+                <form action="{{ request.app.url_path_for('save_caddyfile') }}" method="post" class="d-grid gap-3"
+                    id="caddyfile-form" data-loading-submit-form data-caddyfile-config-form {% if onboarding_required %}
+                    data-caddyfile-locked="true" {% endif %}>
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+                    <div>
+                        <label class="form-label" for="global-caddyfile">Caddyfile Configuration</label>
+                        <textarea id="global-caddyfile" name="caddyfile" rows="18" class="form-control font-monospace"
+                            spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off" maxlength="524288"
+                            placeholder="{
+    email admin@example.com
+}
+
+:80 {
+    respond &quot;ok&quot; 200
+}" {% if onboarding_required %}disabled aria-disabled="true" {% endif %}>{{ caddyfile }}</textarea>
+                        <div class="form-text">Global directives and shared blocks. Saving validates the full
+                            configuration and
+                            pushes it directly to Caddy.</div>
+                        {% if onboarding_required %}
+                        <div class="form-text text-body-secondary">This editor is locked until the onboarding wizard
+                            initializes
+                            the managed Caddyfile block.</div>
+                        {% endif %}
+                    </div>
+
+                    <div class="d-grid d-sm-flex gap-2">
+                        <button type="button" class="btn btn-outline-secondary" id="caddyfile-validate-btn"
+                            data-validate-form-button
+                            data-validate-url="{{ request.app.url_path_for('validate_caddyfile_only') }}"
+                            data-validate-success-prefix="Caddyfile valid"
+                            data-validate-error-prefix="Caddyfile invalid" {% if onboarding_required or not
+                            caddyfile|trim %}disabled aria-disabled="true" {% else %}aria-disabled="false" {% endif %}>
+                            <span data-validate-button-label>Validate</span>
+                            <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"
+                                data-validate-button-spinner></span>
+                        </button>
+                        <button type="submit" class="btn btn-primary js-confirm" id="caddyfile-save-btn"
+                            data-loading-submit-button data-loading-label="Saving &amp; Deploying..."
+                            data-confirm-title="Deploy Caddyfile"
+                            data-confirm="Save this Caddyfile and deploy it to Caddy? The configuration will be validated before deployment."
+                            data-confirm-accept="Deploy" data-confirm-btn-class="btn-primary" {% if onboarding_required
+                            or not caddyfile|trim %}disabled aria-disabled="true" {% endif %}>
+                            <span class="save-text" data-loading-submit-label>Save &amp; Deploy</span>
+                            <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"
+                                data-loading-submit-spinner></span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

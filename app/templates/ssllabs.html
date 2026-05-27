@@ -1,0 +1,151 @@
+{% extends 'base.html' %}
+
+{% set page_title = "SSL Labs" %}
+
+{% block content %}
+<section class="app-page">
+    <div class="app-page__header">
+        <div class="app-page__lede">
+            <p class="eyebrow mb-2">Security Assessment</p>
+            <h1 class="page-title mb-0">SSL Labs</h1>
+        </div>
+    </div>
+
+    <div class="row app-grid">
+        <div class="col-12">
+            <div class="panel-card ssllabs-callout mb-4">
+                <div class="ssllabs-callout__body">
+                    <div class="ssllabs-callout__content">
+                        <div class="panel-card__header mb-2">
+                            <h2 class="h5 mb-0">External assessment</h2>
+                        </div>
+                        <p class="mb-2 text-body-secondary">
+                            SSL Labs assessments are executed by external Qualys servers, not locally from this
+                            CaddyBuddy
+                            instance.
+                        </p>
+                    </div>
+                    <div class="ssllabs-callout__brand" aria-hidden="true">
+                        <img src="{{ request.app.url_path_for('static', path='img/qualys-ssl-labs-logo.png') }}" alt=""
+                            class="ssllabs-callout__logo">
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel-card panel-card--table">
+                <div class="panel-card__header">
+                    <h2 class="h5 mb-0">Configured domains</h2>
+                </div>
+                <div class="table-responsive">
+                    <table class="table align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th>Host</th>
+                                <th>Last result</th>
+                                <th>Schedule</th>
+                                <th class="text-end">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in rows %}
+                            <tr>
+                                <td>
+                                    <div class="fw-semibold">{{ row.target.host }}</div>
+                                    <div class="small text-body-secondary">
+                                        Site: {{ row.site.domain }}
+                                    </div>
+                                    {% if row.host_error %}
+                                    <div class="small text-danger mt-1">{{ row.host_error }}</div>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if row.scan %}
+                                    <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                                        <span class="status-pill {{ row.badge_class }}">
+                                            {% if row.scan.grade %}{{ row.scan.grade }}{% else %}{{
+                                            row.scan.status.replace('_',
+                                            ' ')|title }}{% endif %}
+                                        </span>
+                                        {% set scan_time = row.scan.completed_at or row.scan.started_at %}
+                                        {% if scan_time %}
+                                        <span class="small text-body-secondary">
+                                            {{ scan_time|datetimeformat }}
+                                        </span>
+                                        {% endif %}
+                                    </div>
+                                    <div class="small text-body-secondary">
+                                        {{ row.scan.status.replace('_', ' ')|title }}
+                                        {% if row.scan.endpoint_count is not none %} · {{ row.scan.endpoint_count }}
+                                        endpoints{%
+                                        endif %}
+                                    </div>
+                                    {% if row.scan.error_message %}
+                                    <div class="small text-body-secondary ssllabs-error-copy">{{ row.scan.error_message
+                                        }}</div>
+                                    {% endif %}
+                                    {% else %}
+                                    <div class="small text-body-secondary">Not scanned yet.</div>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <form
+                                        action="{{ request.app.url_path_for('update_ssllabs_schedule', target_id=row.target.id) }}"
+                                        method="post" class="d-flex gap-2 align-items-center ssllabs-schedule-form"
+                                        data-loading-submit-form>
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                        <select class="form-select form-select-sm" name="schedule_frequency" {% if
+                                            row.host_error %}disabled{% endif %}>
+                                            <option value="" {% if not row.target.schedule_frequency %}selected{% endif
+                                                %}>Off
+                                            </option>
+                                            <option value="weekly" {% if row.target.schedule_frequency=='weekly'
+                                                %}selected{% endif %}>Weekly</option>
+                                            <option value="monthly" {% if row.target.schedule_frequency=='monthly'
+                                                %}selected{% endif %}>Every 30 days</option>
+                                        </select>
+                                        <button type="submit" class="btn btn-sm btn-outline-secondary"
+                                            data-loading-submit-button data-loading-label="Saving..." {% if
+                                            row.host_error %}disabled{% endif %}>Save</button>
+                                    </form>
+                                    {% if row.target.next_scheduled_at %}
+                                    <div class="small text-body-secondary mt-2">Next run {{
+                                        row.target.next_scheduled_at|datetimeformat }}</div>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="cell-actions ssllabs-actions justify-content-end">
+                                        <form
+                                            action="{{ request.app.url_path_for('start_ssllabs_scan', target_id=row.target.id) }}"
+                                            method="post" class="d-flex flex-wrap justify-content-end gap-2"
+                                            data-loading-submit-form>
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                            <button type="submit" name="mode" value="cache"
+                                                class="btn btn-sm btn-outline-secondary" {% if row.host_error or
+                                                row.scan_active %}disabled{% endif %}>Check SSL Labs</button>
+                                            <button type="submit" name="mode" value="fresh"
+                                                class="btn btn-sm btn-outline-primary js-confirm"
+                                                data-loading-submit-button data-loading-label="Starting..."
+                                                data-confirm-title="Start fresh SSL Labs scan"
+                                                data-confirm="Start a new external SSL Labs assessment for {{ row.target.host }} now?"
+                                                data-confirm-accept="Start scan" data-confirm-btn-class="btn-primary" {%
+                                                if row.host_error or row.scan_active %}disabled{% endif %}>Start new
+                                                scan</button>
+                                        </form>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="4" class="text-center text-body-secondary py-4">
+                                    No site domains available yet. Create a site first.
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

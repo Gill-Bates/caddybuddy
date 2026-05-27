@@ -10,7 +10,16 @@ import uvicorn
 
 from app.config.logging import build_log_config
 from app.config.settings import get_settings
+from app.services.events import event_bus
 from app.utils.banner import print_banner_once
+
+
+class CaddyBuddyServer(uvicorn.Server):
+    """Uvicorn server that closes SSE subscribers on exit signals."""
+
+    def handle_exit(self, sig: int, frame) -> None:
+        event_bus.request_shutdown()
+        super().handle_exit(sig, frame)
 
 
 def main() -> None:
@@ -26,7 +35,7 @@ def main() -> None:
     # Exclude the data/ directory so SQLite WAL/SHM churn never triggers reloads.
     reload_excludes = ["data"] if settings.reload else []
 
-    uvicorn.run(
+    config = uvicorn.Config(
         "app.main:app",
         host=settings.host,
         port=settings.port,
@@ -37,6 +46,11 @@ def main() -> None:
         reload=settings.reload,
         reload_excludes=reload_excludes,
     )
+    server = CaddyBuddyServer(config)
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        return
 
 
 if __name__ == "__main__":

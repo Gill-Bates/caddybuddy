@@ -13,8 +13,8 @@ export default defineConfig({
     expect: {
         timeout: 10_000,
     },
-    fullyParallel: true,
-    workers: undefined,
+    fullyParallel: false,
+    workers: process.env.CI ? 1 : undefined,
     forbidOnly: Boolean(process.env.CI),
     retries: process.env.CI ? 1 : 0,
     reporter: [
@@ -48,7 +48,7 @@ export default defineConfig({
             },
         },
         {
-            name: 'desktop-safari',
+            name: 'desktop-webkit',
             use: {
                 ...devices['Desktop Safari'],
                 browserName: 'webkit',

@@ -6,425 +6,129 @@
 
 from __future__ import annotations
 
-import asyncio
-import ssl
+import os
 import unittest
-from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from sqlalchemy.exc import IntegrityError
-from starlette.requests import Request
-
-from app.routers.ui import sites
+from app.config.settings import get_settings
 
 
-def _build_request(path: str = "/sites") -> Request:
-    return Request(
-        {
-            "type": "http",
-            "method": "GET",
-            "path": path,
-            "headers": [],
-            "query_string": b"",
-            "session": {},
-            "client": ("127.0.0.1", 12345),
-        }
-    )
+_ENV_OVERRIDES = {
+    "CB_SECRET_KEY": "unit-test-secret-key",
+    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key",
+    "CB_ADMIN_PASSWORD": "UnitTestPassword-123A",
+    "CADDYBUDDY_ADMIN_PASSWORD": "UnitTestPassword-123A",
+}
+_ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}
+
+for key, value in _ENV_OVERRIDES.items():
+    os.environ[key] = value
+
+get_settings.cache_clear()
+
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.testclient import TestClient
+from starlette.middleware.sessions import SessionMiddleware
+
+from app.database.session import get_db_session
+from app.middleware.csrf import CSRFMiddleware, SecurityHeadersMiddleware
+from app.routers.ui.sites import router as sites_router
 
 
-class UiSitesTests(unittest.IsolatedAsyncioTestCase):
-    async def test_extract_not_after_from_der_certificate_uses_decoded_certificate(self) -> None:
-        with (
-            patch("app.routers.ui.sites.ssl.DER_cert_to_PEM_cert", return_value="PEM"),
-            patch(
-                "app.routers.ui.sites.ssl._ssl._test_decode_cert",
-                return_value={"notAfter": "Aug  6 13:24:34 2026 GMT"},
-            ),
-        ):
-            result = await sites._extract_not_after_from_der_certificate(b"der-cert")
+def tearDownModule() -> None:
+    for key, original_value in _ORIGINAL_ENV.items():
+        if original_value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = original_value
+    get_settings.cache_clear()
 
-        self.assertEqual(result, "Aug  6 13:24:34 2026 GMT")
 
-    async def test_fetch_site_certificate_expiry_skips_ip_literal_domains(self) -> None:
-        with patch("app.routers.ui.sites.asyncio.open_connection", new=AsyncMock()) as open_connection:
-            result = await sites._fetch_site_certificate_expiry("127.0.0.1")
+class UISitesTests(unittest.TestCase):
+    def setUp(self) -> None:
+        for key, value in _ENV_OVERRIDES.items():
+            os.environ[key] = value
+        get_settings.cache_clear()
 
-        open_connection.assert_not_awaited()
-        self.assertIsNone(result)
+    def tearDown(self) -> None:
+        get_settings.cache_clear()
 
-    async def test_fetch_site_certificate_expiry_falls_back_to_binary_certificate_on_verification_error(self) -> None:
-        writer = SimpleNamespace(
-            get_extra_info=lambda key: SimpleNamespace(
-                getpeercert=lambda binary_form=False: b"der-cert" if binary_form else {}
-            ),
-            close=lambda: None,
-            wait_closed=AsyncMock(),
+    @staticmethod
+    async def _session_override():
+        yield AsyncMock()
+
+    def _build_app(self) -> FastAPI:
+        app = FastAPI()
+        app.add_middleware(CSRFMiddleware)
+        app.add_middleware(SessionMiddleware, secret_key="unit-test-secret-key")
+        app.add_middleware(SecurityHeadersMiddleware)
+        app.mount("/static", StaticFiles(directory="/opt/caddybuddy/app/static"), name="static")
+
+        @app.get("/", name="home_page")
+        async def _home_page() -> dict[str, str]:
+            return {"status": "ok"}
+
+        @app.get("/caddyfile", name="caddyfile_page")
+        async def _caddyfile_page() -> dict[str, str]:
+            return {"status": "ok"}
+
+        @app.post("/logout", name="logout_action")
+        async def _logout_action() -> dict[str, str]:
+            return {"status": "ok"}
+
+        app.include_router(sites_router)
+        app.dependency_overrides[get_db_session] = self._session_override
+        return app
+
+    def test_sites_page_renders_config_textarea_and_status_toggle(self) -> None:
+        app = self._build_app()
+        current_user = SimpleNamespace(username="admin", role="admin")
+        site = SimpleNamespace(
+            id=1,
+            domain="example.com",
+            enabled=False,
+            caddy_directives="reverse_proxy backend:8080",
         )
-
-        with (
-            patch(
-                "app.routers.ui.sites.asyncio.open_connection",
-                new=AsyncMock(
-                    side_effect=[
-                        ssl.SSLCertVerificationError("verify failed"),
-                        (object(), writer),
-                    ]
-                ),
-            ) as open_connection,
-            patch(
-                "app.routers.ui.sites._extract_not_after_from_der_certificate",
-                new=AsyncMock(return_value="Aug  6 13:24:34 2026 GMT"),
-            ) as extract_not_after,
-        ):
-            result = await sites._fetch_site_certificate_expiry("secure.example.com")
-
-        self.assertEqual(result, datetime(2026, 8, 6, 13, 24, 34, tzinfo=UTC))
-        self.assertEqual(open_connection.await_count, 2)
-        extract_not_after.assert_called_once_with(b"der-cert")
-
-    async def test_load_site_certificate_expiries_only_probes_ssl_enabled_sites(self) -> None:
-        ssl_site = SimpleNamespace(id=1, domain="secure.example.com", ssl_enabled=True)
-        plain_site = SimpleNamespace(id=2, domain="plain.example.com", ssl_enabled=False)
-        expires_at = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
-
-        with patch(
-            "app.routers.ui.sites._fetch_site_certificate_expiry",
-            new=AsyncMock(return_value=expires_at),
-        ) as fetch_expiry:
-            result = await sites._load_site_certificate_expiries([ssl_site, plain_site])
-
-        fetch_expiry.assert_awaited_once_with("secure.example.com")
-        self.assertEqual(result, {1: expires_at})
-
-    async def test_load_site_certificate_expiries_limits_probe_concurrency(self) -> None:
-        sites_to_probe = [
-            SimpleNamespace(id=1, domain="one.example.com", ssl_enabled=True),
-            SimpleNamespace(id=2, domain="two.example.com", ssl_enabled=True),
-            SimpleNamespace(id=3, domain="three.example.com", ssl_enabled=True),
-            SimpleNamespace(id=4, domain="four.example.com", ssl_enabled=True),
-            SimpleNamespace(id=5, domain="five.example.com", ssl_enabled=True),
-            SimpleNamespace(id=6, domain="six.example.com", ssl_enabled=True),
-        ]
-        active = 0
-        max_active = 0
-
-        async def _fake_fetch(_domain: str) -> datetime | None:
-            nonlocal active, max_active
-            active += 1
-            max_active = max(max_active, active)
-            await asyncio.sleep(0)
-            active -= 1
-            return None
-
-        with patch("app.routers.ui.sites._fetch_site_certificate_expiry", new=AsyncMock(side_effect=_fake_fetch)):
-            result = await sites._load_site_certificate_expiries(sites_to_probe)
-
-        self.assertEqual(set(result.keys()), {1, 2, 3, 4, 5, 6})
-        self.assertLessEqual(max_active, sites._TLS_PROBE_CONCURRENCY)
-
-    async def test_sites_page_includes_certificate_expiries_in_template_context(self) -> None:
-        request = _build_request()
-        session = object()
-        current_user = SimpleNamespace(id=1, role="admin")
-        listed_sites = [SimpleNamespace(id=1, domain="secure.example.com", ssl_enabled=True, config_template=None)]
-        expires_at = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
 
         with (
             patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.sites.site_repository.list_all", new=AsyncMock(return_value=listed_sites)),
-            patch("app.routers.ui.sites.config_template_repository.list_all", new=AsyncMock(return_value=[])),
-            patch("app.routers.ui.sites.server_repository.list_all", new=AsyncMock(return_value=[])),
-            patch(
-                "app.routers.ui.sites._load_site_certificate_expiries",
-                new=AsyncMock(return_value={1: expires_at}),
-            ) as load_expiries,
-            patch("app.routers.ui.sites.render_template", return_value=SimpleNamespace(status_code=200)) as render_template,
-        ):
-            response = await sites.sites_page(request, session=session)
-
-        load_expiries.assert_awaited_once_with(listed_sites)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(render_template.call_args.kwargs["context"]["site_certificate_expiries"], {1: expires_at})
-
-    async def test_save_site_rejects_invalid_domain_format_before_db_writes(self) -> None:
-        request = _build_request()
-        session = object()
-        current_user = SimpleNamespace(id=1, role="admin", username="alice")
-
-        with (
-            patch("app.routers.ui.sites.require_admin", new=AsyncMock(return_value=current_user)),
-            patch(
-                "app.routers.ui.sites.validated_form",
-                new=AsyncMock(
-                    return_value={
-                        "domain": "not a domain!!!",
-                        "config_template_id": "1",
-                        "ssl_provider": "letsencrypt",
-                    }
-                ),
-            ),
-            patch("app.routers.ui.sites.config_template_repository.get_by_id", new=AsyncMock()) as get_template,
-            patch("app.routers.ui.sites.site_repository.create", new=AsyncMock()) as create_site,
-        ):
-            response = await sites.save_site(request, session=session)
-
-        get_template.assert_not_awaited()
-        create_site.assert_not_awaited()
-        self.assertEqual(response.status_code, 303)
-        self.assertEqual(response.headers["location"], "/sites")
-        self.assertEqual(
-            request.session["flashes"],
-            [{"category": "danger", "message": "Enter a valid domain name."}],
-        )
-
-    async def test_save_site_rejects_ip_literal_domain_before_db_writes(self) -> None:
-        request = _build_request()
-        session = object()
-        current_user = SimpleNamespace(id=1, role="admin", username="alice")
-
-        with (
-            patch("app.routers.ui.sites.require_admin", new=AsyncMock(return_value=current_user)),
-            patch(
-                "app.routers.ui.sites.validated_form",
-                new=AsyncMock(
-                    return_value={
-                        "domain": "169.254.169.254",
-                        "config_template_id": "1",
-                        "ssl_provider": "letsencrypt",
-                    }
-                ),
-            ),
-            patch("app.routers.ui.sites.config_template_repository.get_by_id", new=AsyncMock()) as get_template,
-        ):
-            response = await sites.save_site(request, session=session)
-
-        get_template.assert_not_awaited()
-        self.assertEqual(response.status_code, 303)
-        self.assertEqual(response.headers["location"], "/sites")
-        self.assertEqual(
-            request.session["flashes"],
-            [{"category": "danger", "message": "Enter a valid domain name."}],
-        )
-
-    async def test_save_site_rejects_invalid_ssl_provider(self) -> None:
-        request = _build_request()
-        session = object()
-        current_user = SimpleNamespace(id=1, role="admin", username="alice")
-
-        with (
-            patch("app.routers.ui.sites.require_admin", new=AsyncMock(return_value=current_user)),
-            patch(
-                "app.routers.ui.sites.validated_form",
-                new=AsyncMock(
-                    return_value={
-                        "domain": "secure.example.com",
-                        "config_template_id": "1",
-                        "ssl_provider": "bogus",
-                    }
-                ),
-            ),
-            patch("app.routers.ui.sites.config_template_repository.get_by_id", new=AsyncMock()) as get_template,
-        ):
-            response = await sites.save_site(request, session=session)
-
-        get_template.assert_not_awaited()
-        self.assertEqual(response.status_code, 303)
-        self.assertEqual(response.headers["location"], "/sites")
-        self.assertEqual(
-            request.session["flashes"],
-            [{"category": "danger", "message": "Invalid SSL provider selected."}],
-        )
-
-    async def test_save_site_publishes_created_event(self) -> None:
-        request = _build_request()
-        session = object()
-        current_user = SimpleNamespace(id=1, role="admin", username="alice")
-        template = SimpleNamespace(id=3, caddyfile="respond ok", variables={})
-        site = SimpleNamespace(id=9, domain="secure.example.com")
-
-        with (
-            patch("app.routers.ui.sites.require_admin", new=AsyncMock(return_value=current_user)),
-            patch(
-                "app.routers.ui.sites.validated_form",
-                new=AsyncMock(
-                    return_value={
-                        "domain": "secure.example.com",
-                        "config_template_id": "3",
-                        "ssl_provider": "letsencrypt",
-                        "enabled": "on",
-                        "ssl_enabled": "on",
-                    }
-                ),
-            ),
-            patch("app.routers.ui.sites.config_template_repository.get_by_id", new=AsyncMock(return_value=template)),
-            patch("app.routers.ui.sites.site_repository.domain_exists", new=AsyncMock(return_value=False)),
-            patch("app.routers.ui.sites.site_repository.create", new=AsyncMock(return_value=site)),
-            patch("app.routers.ui.sites.audit_commit_and_flash", new=AsyncMock()) as audit_commit,
-            patch("app.routers.ui.sites.publish_resource_event", new=AsyncMock()) as publish_resource_event,
-        ):
-            response = await sites.save_site(request, session=session)
-
-        audit_commit.assert_awaited_once()
-        publish_resource_event.assert_awaited_once_with("site", "created", "9")
-        self.assertEqual(response.status_code, 303)
-        self.assertEqual(response.headers["location"], "/sites/9")
-
-    async def test_save_site_rejects_missing_upstream_for_required_template(self) -> None:
-        request = _build_request()
-        session = object()
-        current_user = SimpleNamespace(id=1, role="admin", username="alice")
-        template = SimpleNamespace(id=3, caddyfile="reverse_proxy {{upstream}}", variables={})
-
-        with (
-            patch("app.routers.ui.sites.require_admin", new=AsyncMock(return_value=current_user)),
-            patch(
-                "app.routers.ui.sites.validated_form",
-                new=AsyncMock(
-                    return_value={
-                        "domain": "secure.example.com",
-                        "config_template_id": "3",
-                        "ssl_provider": "letsencrypt",
-                        "enabled": "on",
-                        "ssl_enabled": "on",
-                    }
-                ),
-            ),
-            patch("app.routers.ui.sites.config_template_repository.get_by_id", new=AsyncMock(return_value=template)),
-            patch("app.routers.ui.sites.site_repository.create", new=AsyncMock()) as create_site,
-        ):
-            response = await sites.save_site(request, session=session)
-
-        create_site.assert_not_awaited()
-        self.assertEqual(response.status_code, 303)
-        self.assertEqual(response.headers["location"], "/sites")
-        self.assertEqual(
-            request.session["flashes"],
-            [{"category": "danger", "message": "This Caddyfile requires an upstream target."}],
-        )
-
-    async def test_deploy_site_redirects_to_queue_with_preselected_server(self) -> None:
-        request = Request(
-            {
-                "type": "http",
-                "method": "POST",
-                "path": "/sites/9/deploy",
-                "headers": [],
-                "query_string": b"",
-                "session": {},
-                "client": ("127.0.0.1", 12345),
-            }
-        )
-        session = SimpleNamespace()
-        current_user = SimpleNamespace(id=1, role="admin", username="alice")
-        site = SimpleNamespace(id=9, domain="secure.example.com")
-        server = SimpleNamespace(id=7, name="edge-1")
-
-        with (
-            patch("app.routers.ui.sites.require_admin", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.sites.validated_form", new=AsyncMock(return_value={"server_id": "7"})),
+            patch("app.routers.ui.sites.site_repository.list_all", new=AsyncMock(return_value=[site])),
             patch("app.routers.ui.sites.site_repository.get_by_id", new=AsyncMock(return_value=site)),
-            patch("app.routers.ui.sites.server_repository.get_by_id", new=AsyncMock(return_value=server)),
         ):
-            response = await sites.deploy_site(request, site_id=9, session=session)
-
-        self.assertEqual(response.status_code, 303)
-        self.assertEqual(response.headers["location"], "/queue?site_id=9&server_id=7")
-        self.assertEqual(
-            request.session["flashes"],
-            [{
-                "category": "info",
-                "message": "Review the queued deployment for 'secure.example.com' on 'edge-1' and confirm it from the queue.",
-            }],
-        )
-
-    async def test_deploy_site_rejects_missing_target_server_before_queue_redirect(self) -> None:
-        request = Request(
-            {
-                "type": "http",
-                "method": "POST",
-                "path": "/sites/9/deploy",
-                "headers": [],
-                "query_string": b"",
-                "session": {},
-                "client": ("127.0.0.1", 12345),
-            }
-        )
-        session = SimpleNamespace()
-        current_user = SimpleNamespace(id=1, role="admin", username="alice")
-
-        with (
-            patch("app.routers.ui.sites.require_admin", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.sites.validated_form", new=AsyncMock(return_value={"server_id": ""})),
-        ):
-            response = await sites.deploy_site(request, site_id=9, session=session)
-
-        self.assertEqual(response.status_code, 303)
-        self.assertEqual(response.headers["location"], "/sites/9")
-        self.assertEqual(
-            request.session["flashes"],
-            [{"category": "danger", "message": "Target server is required."}],
-        )
-
-    def test_deployment_navigation_response_normalizes_non_local_target(self) -> None:
-        response = sites._deployment_navigation_response("javascript:alert(1)")
+            with TestClient(app) as client:
+                response = client.get("/sites/1")
 
         self.assertEqual(response.status_code, 200)
-        body = response.body.decode("utf-8")
-        self.assertIn('http-equiv="refresh" content="0;url=/"', body)
-        self.assertIn('window.location.replace("/")', body)
-        self.assertNotIn("javascript:alert(1)", body)
+        self.assertIn('name="caddy_directives"', response.text)
+        self.assertIn("Site-specific Caddy directives.", response.text)
+        self.assertNotIn("Upstream URL", response.text)
+        self.assertIn('role="switch"', response.text)
+        self.assertNotIn(">Disabled</span>", response.text)
+        self.assertIn("site-enabled-label", response.text)
+        self.assertIn(">Enabled</label>", response.text)
+        self.assertIn("data-site-config-form", response.text)
+        self.assertIn("data-domain-tag-input", response.text)
+        self.assertIn("data-domain-tag-entry", response.text)
+        self.assertIn("data-existing-domains=", response.text)
+        self.assertIn("data-site-save-button disabled", response.text)
+        self.assertIn("data-validate-error-prefix=\"Site configuration invalid\" disabled", response.text)
 
-    async def test_delete_site_rolls_back_on_integrity_error(self) -> None:
-        request = _build_request("/sites/9/delete")
-        session = SimpleNamespace(rollback=AsyncMock())
-        current_user = SimpleNamespace(id=1, role="admin", username="alice")
-        site = SimpleNamespace(id=9, domain="secure.example.com")
-
-        with (
-            patch("app.routers.ui.sites.require_admin", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.sites.validated_form", new=AsyncMock(return_value={})),
-            patch("app.routers.ui.sites.site_repository.get_by_id", new=AsyncMock(return_value=site)),
-            patch(
-                "app.routers.ui.sites.site_repository.delete",
-                new=AsyncMock(side_effect=IntegrityError("stmt", "params", Exception("fk"))),
-            ),
-        ):
-            response = await sites.delete_site(request, site_id=9, session=session)
-
-        session.rollback.assert_awaited_once()
-        self.assertEqual(response.status_code, 303)
-        self.assertEqual(response.headers["location"], "/sites")
-        self.assertEqual(
-            request.session["flashes"],
-            [{
-                "category": "danger",
-                "message": "Cannot delete site: existing deployments or related records must be removed first.",
-            }],
-        )
-
-    async def test_preview_site_rejects_invalid_ssl_provider(self) -> None:
-        request = _build_request("/sites/preview")
-        session = object()
-        current_user = SimpleNamespace(id=1, role="user")
+    def test_create_sites_page_renders_validate_and_save_disabled_initially(self) -> None:
+        app = self._build_app()
+        current_user = SimpleNamespace(username="admin", role="admin")
 
         with (
             patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)),
-            patch(
-                "app.routers.ui.sites.validated_form",
-                new=AsyncMock(
-                    return_value={
-                        "config_template_id": "3",
-                        "domain": "secure.example.com",
-                        "ssl_provider": "bogus",
-                    }
-                ),
-            ),
+            patch("app.routers.ui.sites.site_repository.list_all", new=AsyncMock(return_value=[])),
         ):
-            response = await sites.preview_site(request, session=session)
+            with TestClient(app) as client:
+                response = client.get("/sites")
 
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.body, b'{"preview":"# Invalid SSL provider","errors":["Invalid SSL provider selected"]}')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("data-site-save-button disabled", response.text)
+        self.assertIn("data-validate-error-prefix=\"Site configuration invalid\" disabled", response.text)
 
 
 if __name__ == "__main__":
