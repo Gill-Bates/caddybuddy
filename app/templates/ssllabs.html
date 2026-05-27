@@ -108,11 +108,11 @@
                                 <td>
                                     {% if row.scan %}
                                     <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-                                        <span class="status-pill {{ row.badge_class }}">
-                                            {% if row.scan.grade %}{{ row.scan.grade }}{% else %}{{
-                                            row.scan.status.replace('_',
-                                            ' ')|title }}{% endif %}
-                                        </span>
+                                        {% if row.scan.grade %}
+                                        <span class="badge {{ row.grade_badge_class }}">{{ row.scan.grade }}</span>
+                                        {% else %}
+                                        <span class="status-pill {{ row.badge_class }}">{{ row.scan.status.replace('_', ' ')|title }}</span>
+                                        {% endif %}
                                         {% set scan_time = row.scan.completed_at or row.scan.started_at %}
                                         {% if scan_time %}
                                         <span class="small text-body-secondary">
@@ -120,15 +120,22 @@
                                         </span>
                                         {% endif %}
                                     </div>
+                                    {% if row.endpoints %}
+                                    <div class="small mb-1">
+                                        {% for ep in row.endpoints %}
+                                        <span class="me-2" title="{{ ep.ip }}">
+                                            <span class="text-body-secondary">{{ ep.ip_version }}:</span>
+                                            <span class="badge {{ ep.badge_class }} badge-sm">{{ ep.grade or 'N/A' }}</span>
+                                        </span>
+                                        {% endfor %}
+                                    </div>
+                                    {% endif %}
                                     <div class="small text-body-secondary">
                                         {{ row.scan.status.replace('_', ' ')|title }}
-                                        {% if row.scan.endpoint_count is not none %} · {{ row.scan.endpoint_count }}
-                                        endpoints{%
-                                        endif %}
+                                        {% if row.scan.endpoint_count is not none %} · {{ row.scan.endpoint_count }} endpoint{% if row.scan.endpoint_count != 1 %}s{% endif %}{% endif %}
                                     </div>
                                     {% if row.scan.error_message %}
-                                    <div class="small text-body-secondary ssllabs-error-copy">{{ row.scan.error_message
-                                        }}</div>
+                                    <div class="small text-body-secondary ssllabs-error-copy">{{ row.scan.error_message }}</div>
                                     {% endif %}
                                     {% else %}
                                     <div class="small text-body-secondary">Not scanned yet.</div>

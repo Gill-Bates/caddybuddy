@@ -81,7 +81,23 @@ def next_schedule_time(frequency: SslLabsScheduleFrequency, reference: datetime)
     return ensure_aware_utc(reference) + schedule_interval(frequency)
 
 
+def grade_badge_class(grade: str | None) -> str:
+    """Return Bootstrap badge class based on SSL Labs grade."""
+    normalized = (grade or "").upper().strip()
+    if not normalized:
+        return "bg-secondary"
+    # A+, A, A- = green (success)
+    if normalized.startswith("A"):
+        return "bg-success"
+    # B = yellow (warning)
+    if normalized.startswith("B"):
+        return "bg-warning text-dark"
+    # C, D, E, F, T (trust issues) = red (danger)
+    return "bg-danger"
+
+
 def status_badge_class(status: SslLabsScanStatus | str | None, grade: str | None = None) -> str:
+    """Return status pill class for scan status (used for overall status display)."""
     normalized_status = (status or "").lower()
     normalized_grade = (grade or "").upper()
     if normalized_status in {"error", "failed"}:
@@ -90,6 +106,39 @@ def status_badge_class(status: SslLabsScanStatus | str | None, grade: str | None
         return "status-pill--unknown"
     if normalized_status == "ready" and normalized_grade.startswith("A"):
         return "status-pill--online"
+    if normalized_status == "ready" and normalized_grade.startswith("B"):
+        return "status-pill--warning"
     if normalized_status == "ready":
-        return "status-pill--unknown"
+        return "status-pill--offline"  # C, D, E, F grades
     return "status-pill--unknown"
+
+
+def extract_endpoint_details(result_json: dict | None) -> list[dict]:
+    """Extract endpoint details (IP, grade, protocol) from SSL Labs result JSON."""
+    if not result_json or not isinstance(result_json, dict):
+        return []
+    
+    endpoints = result_json.get("endpoints")
+    if not isinstance(endpoints, list):
+        return []
+    
+    details = []
+    for ep in endpoints:
+        if not isinstance(ep, dict):
+            continue
+        ip = ep.get("ipAddress", "")
+        grade = ep.get("grade") or ep.get("gradeTrustIgnored") or ""
+        status_msg = ep.get("statusMessage", "")
+        
+        # Determine if IPv4 or IPv6
+        ip_version = "IPv6" if ":" in ip else "IPv4"
+        
+        details.append({
+            "ip": ip,
+            "ip_version": ip_version,
+            "grade": grade,
+            "status": status_msg,
+            "badge_class": grade_badge_class(grade),
+        })
+    
+    return details

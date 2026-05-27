@@ -19,7 +19,7 @@ from app.services.ssllabs import (
     SslLabsServiceError,
     ssllabs_service,
 )
-from app.utils.ssllabs import status_badge_class, validate_ssllabs_host
+from app.utils.ssllabs import extract_endpoint_details, grade_badge_class, status_badge_class, validate_ssllabs_host
 
 from ._common import require_admin, require_user, validated_form
 
@@ -62,6 +62,11 @@ async def ssllabs_page(
             reference_at = latest_scan.next_poll_at or latest_scan.started_at
             scan_active = reference_at >= stale_cutoff
 
+        # Extract endpoint details for IPv4/IPv6 breakdown
+        endpoints = []
+        if latest_scan is not None:
+            endpoints = extract_endpoint_details(getattr(latest_scan, "result_json", None))
+
         rows.append(
             {
                 "target": target,
@@ -72,6 +77,8 @@ async def ssllabs_page(
                     getattr(latest_scan, "status", None),
                     getattr(latest_scan, "grade", None),
                 ),
+                "grade_badge_class": grade_badge_class(getattr(latest_scan, "grade", None)),
+                "endpoints": endpoints,
                 "scan_active": scan_active,
             }
         )
