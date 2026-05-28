@@ -1,6 +1,6 @@
 services:
   caddybuddy:
-    image: docker.cirrio.de/caddybuddy:${CADDYBUDDY_VERSION:-1.0.0}
+    image: giiibates/caddybuddy:${CADDYBUDDY_VERSION:-1.0.0}
     container_name: caddybuddy
     restart: unless-stopped
     stop_grace_period: 20s

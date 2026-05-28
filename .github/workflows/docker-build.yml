@@ -41,8 +41,8 @@ on:
           - 'false'
 
 env:
-  REGISTRY: docker.cirrio.de
-  IMAGE_NAME: docker.cirrio.de/caddybuddy
+  REGISTRY: docker.io
+  IMAGE_NAME: giiibates/caddybuddy
   REGISTRY_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
   REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
 
@@ -618,7 +618,7 @@ jobs:
             const version = process.env.VERSION;
             const trivyAmd64 = process.env.TRIVY_AMD64 || 'Scan not available';
             const trivyArm64 = process.env.TRIVY_ARM64 || 'Scan not available';
-            const imageName = 'docker.cirrio.de/caddybuddy';
+            const imageName = 'giiibates/caddybuddy';
             const isPrerelease = version.includes('-');
 
             function extractVersionSection(markdown, targetVersion) {

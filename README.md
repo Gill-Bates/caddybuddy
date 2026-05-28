@@ -49,7 +49,7 @@ CaddyBuddy combines a server-rendered FastAPI UI, SQLite, and secure defaults in
 
 The repository ships an example Compose file at `docker/docker-compose.yml.example`.
 
-Release images are built for `docker.cirrio.de/caddybuddy`. The badges above remain unchanged.
+Release images are built for `giiibates/caddybuddy` on Docker Hub.
 
 1. Create a persistent data directory:
 
