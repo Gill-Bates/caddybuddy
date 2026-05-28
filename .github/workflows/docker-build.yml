@@ -43,6 +43,8 @@ on:
 env:
   REGISTRY: docker.cirrio.de
   IMAGE_NAME: docker.cirrio.de/caddybuddy
+  REGISTRY_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+  REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
 
 concurrency:
   group: docker-build-${{ github.ref }}
@@ -68,12 +70,12 @@ jobs:
       - name: Validate registry secrets
         run: |
           set -euo pipefail
-          test -n "${{ secrets.REGISTRY_USERNAME }}" || {
-            echo "ERROR: Missing REGISTRY_USERNAME secret"
+          test -n "${{ env.REGISTRY_USERNAME }}" || {
+            echo "ERROR: Missing DOCKERHUB_USERNAME secret"
             exit 1
           }
-          test -n "${{ secrets.REGISTRY_PASSWORD }}" || {
-            echo "ERROR: Missing REGISTRY_PASSWORD secret"
+          test -n "${{ env.REGISTRY_PASSWORD }}" || {
+            echo "ERROR: Missing DOCKERHUB_TOKEN secret"
             exit 1
           }
 
@@ -146,8 +148,8 @@ jobs:
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.REGISTRY_USERNAME }}
-          password: ${{ secrets.REGISTRY_PASSWORD }}
+          username: ${{ env.REGISTRY_USERNAME }}
+          password: ${{ env.REGISTRY_PASSWORD }}
 
       - name: Build amd64 image
         run: |
@@ -354,8 +356,8 @@ jobs:
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.REGISTRY_USERNAME }}
-          password: ${{ secrets.REGISTRY_PASSWORD }}
+          username: ${{ env.REGISTRY_USERNAME }}
+          password: ${{ env.REGISTRY_PASSWORD }}
 
       - name: Build arm64 image
         run: |
@@ -536,8 +538,8 @@ jobs:
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.REGISTRY_USERNAME }}
-          password: ${{ secrets.REGISTRY_PASSWORD }}
+          username: ${{ env.REGISTRY_USERNAME }}
+          password: ${{ env.REGISTRY_PASSWORD }}
 
       - name: Check manifest tag existence
         id: check_manifest
