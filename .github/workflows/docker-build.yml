@@ -621,14 +621,27 @@ jobs:
             const imageName = 'giiibates/caddybuddy';
             const isPrerelease = version.includes('-');
 
+            function normalizeVersion(value) {
+              const main = value.split('-', 1)[0];
+              const parts = main.split('.');
+              while (parts.length < 3) {
+                parts.push('0');
+              }
+              return parts.join('.');
+            }
+
             function extractVersionSection(markdown, targetVersion) {
               const headingPattern = /^## \[([^\]]+)\] - .+$/gm;
               let startIndex = -1;
               let endIndex = markdown.length;
+              const normalizedTargetVersion = normalizeVersion(targetVersion);
               let match;
 
               while ((match = headingPattern.exec(markdown)) !== null) {
-                if (startIndex === -1 && match[1] === targetVersion) {
+                if (
+                  startIndex === -1 &&
+                  (match[1] === targetVersion || normalizeVersion(match[1]) === normalizedTargetVersion)
+                ) {
                   startIndex = match.index;
                   continue;
                 }
@@ -641,7 +654,8 @@ jobs:
               if (startIndex === -1) {
                 return null;
               }
-              return markdown.slice(startIndex, endIndex).trim();
+              const section = markdown.slice(startIndex, endIndex).trim();
+              return section.replace(/^## \[[^\]]+\] - .+\n+/, '').trim();
             }
 
             let changelogSection = null;
@@ -666,8 +680,6 @@ jobs:
             }
 
             const body = [
-              '## CaddyBuddy ' + version,
-              '',
               '**Docker Image:** `docker pull ' + imageName + ':' + version + '`',
               '',
               '### Available Tags',
