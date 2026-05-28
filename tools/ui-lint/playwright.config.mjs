@@ -19,7 +19,7 @@ export default defineConfig({
     retries: process.env.CI ? 1 : 0,
     reporter: [
         ['list'],
-        ['html', { open: 'never', outputFolder: 'test-results/report' }],
+        ['html', { open: 'never', outputFolder: 'playwright-report' }],
     ],
     outputDir: 'test-results',
     use: {

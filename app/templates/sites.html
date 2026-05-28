@@ -3,7 +3,8 @@
 {% set page_title = "Sites" %}
 
 {% block content %}
-<section class="app-page">
+<section class="app-page app-page--sites"
+    data-sites-certificates-url="{{ request.app.url_path_for('sites_certificates') }}">
     <div class="app-page__header">
         <div class="app-page__lede">
             <p class="eyebrow mb-2">Configuration</p>
@@ -12,17 +13,26 @@
     </div>
 
     <div class="row app-grid">
-        <div class="col-xl-5">
-            <div class="panel-card" id="form-panel">
+        <div class="col-xl-5 sites-form-column">
+            <div class="panel-card sites-form-panel" id="form-panel">
                 <div class="panel-card__header">
                     <h2 class="h5 mb-0">{% if selected_site %}Edit site{% else %}Create site{% endif %}</h2>
                 </div>
-                <form action="{{ request.app.url_path_for('save_site') }}" method="post" class="d-grid gap-3"
-                    id="site-form" data-loading-submit-form data-site-config-form>
+                <form action="{{ request.app.url_path_for('save_site') }}" method="post"
+                    class="d-grid gap-3 sites-form-panel__form" id="site-form" data-loading-submit-form
+                    data-site-config-form>
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     {% if selected_site %}
                     <input type="hidden" name="site_id" value="{{ selected_site.id }}">
                     {% endif %}
+
+                    <div>
+                        <label class="form-label" for="site-name">Site</label>
+                        <input type="text" id="site-name" name="site_name" class="form-control"
+                            value="{{ selected_site.site_name if selected_site else '' }}" maxlength="255"
+                            autocomplete="off" required>
+                        <div class="form-text">Stable site label for grouping this configuration and its domains.</div>
+                    </div>
 
                     <div class="tag-input" data-domain-tag-input data-existing-domains='{{ domain_catalog | tojson }}'
                         data-selected-site-id='{{ selected_site.id if selected_site else "" }}'>
@@ -63,7 +73,7 @@
                         </div>
                     </div>
 
-                    <div class="d-grid d-sm-flex gap-2">
+                    <div class="d-grid d-sm-flex gap-2 sites-form-panel__actions">
                         <button type="button" class="btn btn-outline-secondary" id="validate-btn"
                             data-validate-form-button
                             data-validate-url="{{ request.app.url_path_for('validate_site') }}"
@@ -76,10 +86,18 @@
                         <button type="submit" class="btn btn-primary flex-grow-1 js-confirm" id="save-btn"
                             data-loading-submit-button
                             data-loading-label="{% if selected_site %}Saving &amp; Deploying...{% else %}Creating &amp; Deploying...{% endif %}"
+                            data-loading-label-deploy="{% if selected_site %}Saving &amp; Deploying...{% else %}Creating &amp; Deploying...{% endif %}"
+                            data-loading-label-safe="{% if selected_site %}Saving...{% else %}Creating...{% endif %}"
                             data-site-save-button
                             data-confirm-title="{% if selected_site %}Deploy site changes{% else %}Create site{% endif %}"
-                            data-confirm="{% if selected_site %}Validate, save, and deploy changes for {{ selected_site.domain }}?{% else %}Create this site and deploy the updated Caddy configuration?{% endif %}"
+                            data-confirm="{% if selected_site %}Validate, save, and deploy changes for {{ selected_site.site_name }}?{% else %}Create this site and deploy the updated Caddy configuration?{% endif %}"
                             data-confirm-accept="{% if selected_site %}Deploy changes{% else %}Create &amp; Deploy{% endif %}"
+                            data-confirm-title-deploy="{% if selected_site %}Deploy site changes{% else %}Create site{% endif %}"
+                            data-confirm-deploy="{% if selected_site %}Validate, save, and deploy changes for {{ selected_site.site_name }}?{% else %}Create this site and deploy the updated Caddy configuration?{% endif %}"
+                            data-confirm-accept-deploy="{% if selected_site %}Deploy changes{% else %}Create &amp; Deploy{% endif %}"
+                            data-confirm-title-safe="{% if selected_site %}Save site name{% else %}Create site{% endif %}"
+                            data-confirm-safe="{% if selected_site %}Save the updated site name without redeploying Caddy?{% else %}Create this site.{% endif %}"
+                            data-confirm-accept-safe="{% if selected_site %}Save{% else %}Create{% endif %}"
                             data-confirm-btn-class="btn-primary" disabled aria-disabled="true">
                             <span class="save-text" data-loading-submit-label>Save &amp; Deploy</span>
                             <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"
@@ -91,87 +109,156 @@
                         {% endif %}
                     </div>
                 </form>
-
-                {% if selected_site %}
-                <hr class="my-4">
-                <form action="{{ request.app.url_path_for('delete_site', site_id=selected_site.id) }}" method="post"
-                    data-loading-submit-form>
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <button type="submit" class="btn btn-outline-danger w-100 js-confirm" data-loading-submit-button
-                        data-loading-label="Deleting..." data-confirm-title="Delete site"
-                        data-confirm="Delete site {{ selected_site.domain }}? The configuration will be removed from Caddy."
-                        data-confirm-accept="Delete site" data-confirm-btn-class="btn-danger">Delete Site</button>
-                </form>
-                {% endif %}
             </div>
         </div>
 
-        <div class="col-xl-7">
-            <div class="panel-card">
-                <div class="panel-card__header">
+        <div class="col-xl-7 sites-list-column">
+            <div class="panel-card panel-card--table sites-list-panel">
+                <div class="panel-card__header sites-list-panel__header">
                     <h2 class="h5 mb-0">All Sites</h2>
+                    <p class="sites-list-panel__count mb-0">{{ sites | length }} configured</p>
                 </div>
-                <div class="table-responsive">
-                    <table class="table align-middle mb-0">
-                        <thead>
-                            <tr>
-                                <th>Domain</th>
-                                <th>Certificate</th>
-                                <th class="text-end">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for site in sites %}
-                            {% set first_domain = site.domain.split(',')[0].split()[0].strip().lower() %}
-                            {% set cert = cert_info.get(first_domain) %}
-                            <tr {% if selected_site and selected_site.id==site.id %}class="table-active" {% endif %}>
-                                <td>
-                                    <div class="fw-semibold">{{ site.domain }}</div>
-                                    <span class="badge bg-secondary bg-opacity-25 text-body-secondary fw-normal">
-                                        {% if site.enabled %}Enabled{% else %}Disabled{% endif %}
-                                    </span>
-                                </td>
-                                <td>
-                                    {% if cert and cert.exists %}
-                                    <div class="d-flex align-items-center gap-2">
-                                        <span
-                                            class="status-dot {% if cert.valid %}status-dot--online{% else %}status-dot--offline{% endif %}"
-                                            aria-hidden="true"></span>
-                                        <div>
-                                            <div
-                                                class="small {% if cert.valid %}text-success{% else %}text-danger{% endif %}">
-                                                {% if cert.valid %}Valid{% else %}Expired{% endif %}
-                                            </div>
-                                            <div class="small text-body-secondary">
-                                                {% if cert.days_remaining is not none %}
-                                                {% if cert.days_remaining > 0 %}{{ cert.days_remaining }}d remaining{%
-                                                else %}Expired{% endif %}
-                                                {% endif %}
-                                                {% if cert.issued_at %} · Issued {{ cert.issued_at.strftime('%Y-%m-%d')
-                                                }}{% endif %}
-                                            </div>
+                <div class="sites-list-scroll">
+                    <div class="table-responsive">
+                        <table class="table align-middle mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Site</th>
+                                    <th>Domain</th>
+                                    <th>Certificate</th>
+                                    <th class="text-end">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for site in sites %}
+                                {% set primary_domain = primary_domains_by_site_id.get(site.id) %}
+                                {% set site_handler = handler_by_site_id.get(site.id) %}
+                                {% set cert = cert_info.get(primary_domain) if primary_domain else none %}
+                                <tr {% if selected_site and selected_site.id==site.id %}class="table-active" {% endif
+                                    %}>
+                                    <td data-label="Site">
+                                        <div class="site-row-title">
+                                            <span
+                                                class="status-dot site-status-dot {% if site.enabled %}status-dot--online{% else %}status-dot--offline{% endif %}"
+                                                aria-hidden="true"></span>
+                                            <div class="fw-semibold">{{ site.site_name }}</div>
+                                            <span class="visually-hidden">{% if site.enabled %}Enabled{% else
+                                                %}Disabled{% endif %}</span>
                                         </div>
-                                    </div>
-                                    {% else %}
-                                    <span class="small text-body-secondary">No certificate</span>
-                                    {% endif %}
-                                </td>
-                                <td>
-                                    <div class="cell-actions">
-                                        <a href="{{ request.app.url_path_for('sites_page', site_id=site.id) }}#form-panel"
-                                            class="btn btn-sm btn-outline-primary">Edit</a>
-                                    </div>
-                                </td>
-                            </tr>
-                            {% else %}
-                            <tr>
-                                <td colspan="3" class="text-center text-body-secondary py-4">
-                                    No sites configured. Create one using the form.
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
+                                        <div class="site-row-badges">
+                                            {% if site_handler %}
+                                            <span
+                                                class="badge bg-secondary bg-opacity-25 text-body-secondary site-handler-badge">{{
+                                                site_handler
+                                                }}</span>
+                                            {% endif %}
+                                        </div>
+                                    </td>
+                                    <td data-label="Domain">
+                                        <div class="site-domain-badges" aria-label="Domains for {{ site.site_name }}">
+                                            {% for domain_name in site.domain.split(',') %}
+                                            <span
+                                                class="badge bg-secondary bg-opacity-25 text-body-secondary site-domain-badge">{{
+                                                domain_name.strip()
+                                                }}</span>
+                                            {% endfor %}
+                                        </div>
+                                    </td>
+                                    <td data-label="Certificate">
+                                        <div class="site-cert"
+                                            data-site-certificate-domain="{{ primary_domain or '' }}">
+                                            {% if cert and cert.exists %}
+                                            <div
+                                                class="site-cert__summary {% if cert.valid %}site-cert__summary--valid{% else %}site-cert__summary--expired{% endif %}">
+                                                <span
+                                                    class="status-dot {% if cert.valid %}status-dot--online{% else %}status-dot--offline{% endif %}"
+                                                    aria-hidden="true"></span>
+                                                <span class="site-cert__status">{% if cert.valid %}Valid{% else
+                                                    %}Expired{% endif %}</span>
+                                                {% if cert.days_remaining is not none and cert.days_remaining > 0 %}
+                                                <span class="site-cert__days">{{ cert.days_remaining }}d
+                                                    remaining</span>
+                                                {% endif %}
+                                            </div>
+                                            <div class="site-cert__meta">
+                                                {% if primary_domain %}
+                                                <div class="site-cert__primary">Primary domain {{ primary_domain }}
+                                                </div>
+                                                {% endif %}
+                                                {% if cert.issued_at %}
+                                                <div class="site-cert__issued">Issued {{
+                                                    cert.issued_at.strftime('%Y-%m-%d') }}</div>
+                                                {% endif %}
+                                            </div>
+                                            {% elif cert and cert.error_message %}
+                                            <div class="site-cert__error">
+                                                <div class="site-cert__error-title">Certificate check failed</div>
+                                                <div class="site-cert__error-message">{{ cert.error_message }}</div>
+                                                {% if primary_domain %}
+                                                <div class="site-cert__primary">Primary domain {{ primary_domain }}
+                                                </div>
+                                                {% endif %}
+                                            </div>
+                                            {% elif primary_domain %}
+                                            <span class="site-cert__pending">Checking certificate...</span>
+                                            {% else %}
+                                            <span class="site-cert__empty">No primary domain</span>
+                                            {% endif %}
+                                        </div>
+                                    </td>
+                                    <td data-label="Actions">
+                                        <div class="cell-actions">
+                                            <a href="{{ request.app.url_path_for('sites_page', site_id=site.id) }}#form-panel"
+                                                class="btn btn-sm btn-outline-primary btn--icon-only"
+                                                aria-label="Edit {{ site.site_name }}"
+                                                title="Edit {{ site.site_name }}">
+                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                                                    stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                                    stroke-linejoin="round" aria-hidden="true" focusable="false">
+                                                    <path d="M12 20h9"></path>
+                                                    <path d="M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z">
+                                                    </path>
+                                                </svg>
+                                                <span class="visually-hidden">Edit site</span>
+                                            </a>
+                                            <form
+                                                action="{{ request.app.url_path_for('delete_site', site_id=site.id) }}"
+                                                method="post" class="d-inline-flex" data-loading-submit-form>
+                                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                                <button type="submit"
+                                                    class="btn btn-sm btn-outline-danger btn--icon-only js-confirm"
+                                                    data-loading-submit-button data-loading-label="Deleting..."
+                                                    data-confirm-title="Delete site"
+                                                    data-confirm="Delete site {{ site.site_name }}? The configuration will be removed from Caddy."
+                                                    data-confirm-accept="Delete site"
+                                                    data-confirm-btn-class="btn-danger"
+                                                    aria-label="Delete {{ site.site_name }}"
+                                                    title="Delete {{ site.site_name }}">
+                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                                                        stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                                        stroke-linejoin="round" aria-hidden="true" focusable="false">
+                                                        <path d="M3 6h18"></path>
+                                                        <path d="M8 6V4h8v2"></path>
+                                                        <path d="M19 6l-1 14H6L5 6"></path>
+                                                        <path d="M10 11v6"></path>
+                                                        <path d="M14 11v6"></path>
+                                                    </svg>
+                                                    <span class="visually-hidden">Delete site</span>
+                                                </button>
+                                            </form>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% else %}
+                                <tr>
+                                    <td colspan="4" class="text-center text-body-secondary py-4">
+                                        No sites configured. Create one using the form.
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>

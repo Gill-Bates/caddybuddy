@@ -110,6 +110,49 @@ class CaddyOnboardingFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(status.onboarding_required)
         self.assertEqual(status.error, "caddyfile_not_writable")
 
+    async def test_runtime_status_reports_too_large_caddyfile(self) -> None:
+        caddyfile_path = self.temp_path / "Caddyfile"
+        self.current_caddyfile_path = caddyfile_path
+        caddyfile_path.write_text("x" * (caddyfile_manager._MAX_CADDYFILE_BYTES + 1), encoding="utf-8")
+
+        async with self.session_factory() as session:
+            with (
+                patch.object(caddyfile_manager, "get_settings", return_value=self._settings(caddyfile_path)),
+                patch.object(caddyfile_manager, "_admin_api_reachable", new=AsyncMock(return_value=True)),
+            ):
+                status = await caddyfile_manager.get_caddy_runtime_status(session)
+
+        self.assertFalse(status.managed)
+        self.assertFalse(status.onboarding_required)
+        self.assertEqual(status.error, "caddyfile_too_large")
+
+    async def test_get_baseline_caddyfile_falls_back_to_unmanaged_config_snippets(self) -> None:
+        caddyfile_path = self.temp_path / "Caddyfile"
+        self.current_caddyfile_path = caddyfile_path
+        caddyfile_path.write_text(
+            """{
+    admin 127.0.0.1:2019
+}
+
+(security_headers) {
+    header X-Frame-Options DENY
+}
+
+example.com {
+    import security_headers
+    respond \"ok\" 200
+}
+""",
+            encoding="utf-8",
+        )
+
+        async with self.session_factory() as session:
+            baseline = await caddyfile_manager.get_baseline_caddyfile(session)
+
+        self.assertIn("admin 127.0.0.1:2019", baseline)
+        self.assertIn("(security_headers)", baseline)
+        self.assertNotIn("example.com {", baseline)
+
     async def test_onboard_imports_snapshot_replaces_marker_and_syncs(self) -> None:
         caddyfile_path = self.temp_path / "Caddyfile"
         self.current_caddyfile_path = caddyfile_path
@@ -280,7 +323,22 @@ example.com {
         self.assertTrue(
             caddyfile_path.read_text(encoding="utf-8").startswith(caddyfile_manager.MANAGED_CADDYFILE_MARKER)
         )
-        self.assertFalse((self.temp_path / ".Caddyfile.tmp").exists())
+        self.assertFalse((self.temp_path / ".Caddyfile.caddybuddy.tmp").exists())
+
+    async def test_operation_guard_times_out_when_file_lock_cannot_be_acquired(self) -> None:
+        lock_path = self.temp_path / "data" / ".caddybuddy.caddy.lock"
+
+        with (
+            patch.object(caddyfile_manager, "get_settings", return_value=self._settings(self.current_caddyfile_path)),
+            patch.object(caddyfile_manager, "fcntl", SimpleNamespace(LOCK_EX=1, LOCK_NB=2, LOCK_UN=8, flock=lambda *args: None)),
+            patch.object(caddyfile_manager, "_LOCK_TIMEOUT_SECONDS", 0.0),
+            patch.object(caddyfile_manager, "_try_acquire_file_lock", return_value=False),
+        ):
+            with self.assertRaisesRegex(TimeoutError, "Timed out waiting for Caddy operation lock"):
+                async with caddyfile_manager._acquire_operation_guard():
+                    self.fail("lock acquisition should have timed out")
+
+        self.assertTrue(lock_path.parent.exists())
 
     async def test_sync_is_noop_when_hash_is_unchanged(self) -> None:
         caddyfile_path = self.temp_path / "Caddyfile"

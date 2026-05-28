@@ -4,14 +4,10 @@
 # Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
 #
 
-# Authentication routes (login/logout).
-# Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
-#
-
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.limiter import limiter
@@ -40,7 +36,7 @@ def _render_login_failure(request: Request, *, next_path: str, status_code: int 
         request,
         "login.html",
         current_user=None,
-        context={"safe_next_url": safe_next(next_path)},
+        context={"safe_next_url": safe_next(next_path), "auth_error": True},
         status_code=status_code,
     )
 
@@ -52,7 +48,7 @@ async def _validate_csrf_only(request: Request) -> None:
 
 
 @router.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request, session: AsyncSession = Depends(get_db_session)):
+async def login_page(request: Request, session: AsyncSession = Depends(get_db_session)) -> Response:
     current_user = await get_session_user(request, session)
     if current_user is not None:
         return redirect_to("/")
@@ -66,8 +62,8 @@ async def login_page(request: Request, session: AsyncSession = Depends(get_db_se
 
 
 @router.post("/login")
-@limiter.limit("30/minute")
-async def login_action(request: Request, session: AsyncSession = Depends(get_db_session)):
+@limiter.limit("10/minute")
+async def login_action(request: Request, session: AsyncSession = Depends(get_db_session)) -> Response:
     form = await validated_form(request)
     username = str(form.get("username", "")).strip()
     password = str(form.get("password", ""))
@@ -84,7 +80,7 @@ async def login_action(request: Request, session: AsyncSession = Depends(get_db_
             len(password),
         )
         return _render_login_failure(request, next_path=next_path)
-    logger.debug("Login attempt for username=%r password_len=%d", username, len(password))
+    logger.debug("Login attempt for username=%r", username)
     user = await auth_service.authenticate(session, username, password)
     if user is None:
         logger.warning("Authentication failed for username=%r status_code=403", username)
@@ -99,7 +95,7 @@ async def login_action(request: Request, session: AsyncSession = Depends(get_db_
 
 
 @router.post("/logout")
-async def logout_action(request: Request, session: AsyncSession = Depends(get_db_session)):
+async def logout_action(request: Request, session: AsyncSession = Depends(get_db_session)) -> Response:
     await _validate_csrf_only(request)
     current_user = await get_session_user(request, session)
     request.session.clear()

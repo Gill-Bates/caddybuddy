@@ -1,10 +1,13 @@
 {% if flashes %}
-<div class="app-flash-stack">
+<div class="toast-container app-toast-stack position-fixed top-0 end-0 p-3" aria-live="polite" aria-atomic="true">
     {% for flash in flashes %}
-    <div class="alert alert-{{ flash.category }} alert-dismissible fade show shadow-sm border-0" role="alert"
-        data-auto-dismiss-alert data-auto-dismiss-delay="5000">
-        {{ flash.message }}
-        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    <div class="toast align-items-center text-bg-{{ flash.category }} border-0 shadow-sm" role="status"
+        aria-live="polite" aria-atomic="true" data-auto-dismiss-toast data-auto-dismiss-delay="5000">
+        <div class="d-flex">
+            <div class="toast-body">{{ flash.message }}</div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"
+                aria-label="Close"></button>
+        </div>
     </div>
     {% endfor %}
 </div>

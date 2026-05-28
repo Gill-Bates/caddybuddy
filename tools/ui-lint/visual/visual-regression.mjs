@@ -23,6 +23,7 @@ const DEFAULT_SCREENSHOT_HEIGHT = 1400;
 const DEFAULT_FIXED_NOW_ISO = '2026-05-01T12:00:00Z';
 const MASK_STYLE_ATTR = 'data-ui-lint-mask-prev-style';
 const MASK_FLAG_ATTR = 'data-ui-lint-mask-applied';
+const STABILIZE_STYLE_ID = 'ui-lint-stabilize-style';
 
 const GLOBAL_DYNAMIC_SELECTORS = [
     '[data-dynamic]',
@@ -39,7 +40,12 @@ const VIEW_DYNAMIC_SELECTORS = {
         '#global-caddyfile',
     ],
     sites: [
+        '#site-caddy-directives',
         '#site-caddyfile',
+    ],
+    'login-error': [
+        '.toast',
+        '.alert',
     ],
 };
 
@@ -67,14 +73,16 @@ const asFiniteNumber = (value, fallback, { min = -Infinity, max = Infinity } = {
     return parsed;
 };
 
-const sanitizeVisualName = (name) =>
-    String(name || 'view')
+export const sanitizeVisualName = (name) =>
+    String(name ?? '')
         .trim()
         .toLowerCase()
         .replace(/[^a-z0-9-_]+/g, '_')
         .replace(/^_+|_+$/g, '');
 
-const inferViewScope = (name) => {
+export const sanitizeVisualSnapshotName = sanitizeVisualName;
+
+export const inferViewScope = (name) => {
     const safeName = sanitizeVisualName(name);
     if (!safeName) return null;
     const scopes = [
@@ -82,10 +90,13 @@ const inferViewScope = (name) => {
         'sites',
         'login-error',
     ];
-    return scopes.find((scope) => safeName.includes(`-${scope}-`) || safeName.startsWith(`${scope}-`) || safeName.includes(scope)) || null;
+    return scopes.find((scope) => {
+        const pattern = new RegExp(`(^|[-_])${scope}($|[-_])`);
+        return pattern.test(safeName);
+    }) || null;
 };
 
-const buildMaskSelectors = (name, config) => {
+export const buildMaskSelectors = (name, config) => {
     const scope = inferViewScope(name);
     const viewSelectors = scope ? (VIEW_DYNAMIC_SELECTORS[scope] || []) : [];
     const merged = [...GLOBAL_DYNAMIC_SELECTORS, ...viewSelectors, ...(config.maskSelectors || [])];
@@ -134,6 +145,8 @@ export function getVisualRegressionConfig() {
         ),
         screenshotHeight: asPositiveInt(process.env.UI_LINT_VISUAL_SCREENSHOT_HEIGHT, DEFAULT_SCREENSHOT_HEIGHT),
         fixedNowIso: String(process.env.UI_LINT_VISUAL_FIXED_NOW || DEFAULT_FIXED_NOW_ISO),
+        forceNamedViewport: asBoolean(process.env.UI_LINT_VISUAL_FORCE_NAMED_VIEWPORT),
+        skipNetworkIdle: asBoolean(process.env.UI_LINT_VISUAL_SKIP_NETWORKIDLE),
         maskSelectors: asMaskSelectorList(process.env.UI_LINT_VISUAL_MASK_SELECTORS),
         baselineDir: BASELINE_DIR,
         currentDir: CURRENT_DIR,
@@ -150,11 +163,17 @@ export async function ensureVisualRegressionDirs(config = getVisualRegressionCon
 export async function stabilizeVisualSnapshot(page, config = getVisualRegressionConfig()) {
     await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
     await page.waitForLoadState('load', { timeout: 30000 });
-    await page.waitForLoadState('networkidle', { timeout: 3000 }).catch(() => { });
+    if (!config.skipNetworkIdle) {
+        await page.waitForLoadState('networkidle', { timeout: 1500 }).catch(() => { });
+    }
     await page.locator('main').waitFor({ state: 'visible', timeout: 10000 });
     await page.waitForFunction(() => document.readyState === 'complete', { timeout: 10000 });
 
-    await page.addStyleTag({
+    await page.evaluate((styleId) => {
+        document.getElementById(styleId)?.remove();
+    }, STABILIZE_STYLE_ID);
+
+    const styleHandle = await page.addStyleTag({
         content: `
             html {
                 scrollbar-gutter: stable;
@@ -207,6 +226,12 @@ export async function stabilizeVisualSnapshot(page, config = getVisualRegression
             }
         `,
     });
+
+    await styleHandle.evaluate((node, styleId) => {
+        if (node instanceof HTMLStyleElement) {
+            node.id = styleId;
+        }
+    }, STABILIZE_STYLE_ID);
 
     await page.evaluate(async ({ disableResizeObserver, fixedNowIso }) => {
         window.__UI_LINT__ = true;
@@ -363,9 +388,12 @@ export async function captureVisualSnapshot(page, name, config = getVisualRegres
 
     const pageViewport = page.viewportSize();
     const fallback = getViewportForName(safeName, config);
+    if (config.forceNamedViewport) {
+        await page.setViewportSize(fallback);
+    }
     const viewport = {
-        width: pageViewport?.width ?? fallback.width,
-        height: pageViewport?.height ?? fallback.height,
+        width: (config.forceNamedViewport ? fallback.width : pageViewport?.width) ?? fallback.width,
+        height: (config.forceNamedViewport ? fallback.height : pageViewport?.height) ?? fallback.height,
     };
 
     await stabilizeVisualSnapshot(page, config);
@@ -420,22 +448,23 @@ export async function compareVisualSnapshot(name, config = getVisualRegressionCo
     const baselineBuf = await fs.readFile(baselinePath).catch(() => null);
     const currentBuf = await fs.readFile(currentPath);
 
-    if (!baselineBuf) {
-        if (config.updateBaselines) {
-            await fs.copyFile(currentPath, baselinePath);
-            return {
-                name: safeName,
-                pass: true,
-                reason: 'baseline-created',
-                baselinePath,
-                currentPath,
-                diffPath,
-                diffPixels: 0,
-                totalPixels: 0,
-                percent: 0,
-            };
-        }
+    if (config.updateBaselines) {
+        await fs.copyFile(currentPath, baselinePath);
+        await fs.rm(diffPath, { force: true }).catch(() => { });
+        return {
+            name: safeName,
+            pass: true,
+            reason: baselineBuf ? 'baseline-updated' : 'baseline-created',
+            baselinePath,
+            currentPath,
+            diffPath,
+            diffPixels: 0,
+            totalPixels: 0,
+            percent: 0,
+        };
+    }
 
+    if (!baselineBuf) {
         return {
             name: safeName,
             pass: false,
@@ -451,11 +480,12 @@ export async function compareVisualSnapshot(name, config = getVisualRegressionCo
         baseline = readPng(baselineBuf);
         current = readPng(currentBuf);
     } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
         return {
             name: safeName,
             pass: false,
             reason: 'decode-error',
-            error: err.message,
+            error: errorMessage,
             baselinePath,
             currentPath,
             diffPath,

@@ -25,7 +25,7 @@ for key, value in _ENV_OVERRIDES.items():
 
 from app.repositories.sites import DuplicateSiteError
 from app.routers.caddy_api import create_site, update_site
-from app.schemas.caddy import SiteCreateRequest, SiteUpdateRequest
+from app.schemas.caddy import SiteCreateRequest, SiteResponse, SiteUpdateRequest
 
 
 def tearDownModule() -> None:
@@ -37,9 +37,40 @@ def tearDownModule() -> None:
 
 
 class CaddyApiSiteMutationTests(unittest.IsolatedAsyncioTestCase):
+    def test_update_request_rejects_empty_patch(self) -> None:
+        with self.assertRaisesRegex(ValueError, "at least one field must be provided"):
+            SiteUpdateRequest()
+
+    def test_create_request_rejects_control_characters_in_site_name(self) -> None:
+        with self.assertRaisesRegex(ValueError, "site must not contain control characters"):
+            SiteCreateRequest(
+                site_name="Example\tSite",
+                domain="example.com",
+                caddy_directives="reverse_proxy backend.example.test:443",
+                enabled=True,
+            )
+
+    def test_site_response_rejects_naive_timestamps(self) -> None:
+        naive_now = datetime.now()
+
+        with self.assertRaisesRegex(ValueError, "timezone-aware"):
+            SiteResponse.model_validate(
+                SimpleNamespace(
+                    id=1,
+                    site_name="Example Site",
+                    domain="example.com",
+                    upstream_url="http://backend.example.test:443",
+                    caddy_directives="reverse_proxy backend.example.test:443",
+                    enabled=True,
+                    created_at=naive_now,
+                    updated_at=naive_now,
+                )
+            )
+
     async def test_create_site_returns_409_on_duplicate_race(self) -> None:
         create_site_fn = getattr(create_site, "__wrapped__", create_site)
         payload = SiteCreateRequest(
+            site_name="Example Site",
             domain="example.com",
             caddy_directives="reverse_proxy backend.example.test:443",
             enabled=True,
@@ -63,13 +94,14 @@ class CaddyApiSiteMutationTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         self.assertEqual(context.exception.status_code, 409)
-        self.assertEqual(context.exception.detail, "Site domain already exists.")
+        self.assertEqual(context.exception.detail, "Domain 'example.com' already exists.")
         session.rollback.assert_awaited_once()
         session.commit.assert_not_awaited()
 
     async def test_create_site_sync_failure_returns_accepted_and_publishes_event(self) -> None:
         create_site_fn = getattr(create_site, "__wrapped__", create_site)
         payload = SiteCreateRequest(
+            site_name="Example Site",
             domain="example.com",
             caddy_directives="reverse_proxy backend.example.test:443",
             enabled=True,
@@ -77,6 +109,7 @@ class CaddyApiSiteMutationTests(unittest.IsolatedAsyncioTestCase):
         response = Response()
         site = SimpleNamespace(
             id=7,
+            site_name="Example Site",
             domain="example.com",
             upstream_url="http://backend.example.test:443",
             caddy_directives="reverse_proxy backend.example.test:443",
@@ -94,10 +127,9 @@ class CaddyApiSiteMutationTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with (
-            patch("app.routers.caddy_api.site_repository.domain_exists", new=AsyncMock(return_value=False)),
             patch("app.routers.caddy_api.site_repository.create", new=AsyncMock(return_value=site)),
             patch("app.routers.caddy_api.sync_caddy_configuration", new=AsyncMock(return_value=sync_result)),
-            patch("app.routers.caddy_api.publish_resource_event", new=AsyncMock()) as publish_event,
+            patch("app.routers.caddy_api.try_publish_resource_event", new=AsyncMock()) as publish_event,
         ):
             result = await create_site_fn(
                 payload,
@@ -115,15 +147,63 @@ class CaddyApiSiteMutationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.commit.await_count, 2)
         publish_event.assert_awaited_once_with("site", "created", "7")
 
+    async def test_create_site_swallows_event_publish_failure(self) -> None:
+        create_site_fn = getattr(create_site, "__wrapped__", create_site)
+        payload = SiteCreateRequest(
+            site_name="Example Site",
+            domain="example.com",
+            caddy_directives="reverse_proxy backend.example.test:443",
+            enabled=True,
+        )
+        response = Response()
+        site = SimpleNamespace(
+            id=7,
+            site_name="Example Site",
+            domain="example.com",
+            upstream_url="http://backend.example.test:443",
+            caddy_directives="reverse_proxy backend.example.test:443",
+            enabled=True,
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        session = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
+        sync_result = SimpleNamespace(
+            status="synced",
+            synced=True,
+            config_sha256="abc123",
+            error=None,
+            error_code=None,
+        )
+
+        with (
+            patch("app.routers.caddy_api.site_repository.create", new=AsyncMock(return_value=site)),
+            patch("app.routers.caddy_api.sync_caddy_configuration", new=AsyncMock(return_value=sync_result)),
+            patch("app.routers.caddy_api.try_publish_resource_event", new=AsyncMock(side_effect=RuntimeError("boom"))),
+        ):
+            result = await create_site_fn(
+                payload,
+                request=SimpleNamespace(),
+                response=response,
+                session=session,
+                _current_user=SimpleNamespace(is_admin=True),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(result.status, "created")
+        self.assertEqual(result.sync_status, "synced")
+        self.assertTrue(result.synced)
+        self.assertEqual(session.commit.await_count, 2)
+
     async def test_update_site_returns_409_on_duplicate_race(self) -> None:
         update_site_fn = getattr(update_site, "__wrapped__", update_site)
         payload = SiteUpdateRequest(
+            site_name="Example Site",
             domain="example.com",
             caddy_directives="reverse_proxy backend.example.test:443",
             enabled=True,
         )
         session = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
-        existing_site = SimpleNamespace(id=1, domain="old.example.com")
+        existing_site = SimpleNamespace(id=1, site_name="Old Site", domain="old.example.com")
 
         with (
             patch("app.routers.caddy_api.site_repository.get_by_id", new=AsyncMock(return_value=existing_site)),
@@ -151,6 +231,7 @@ class CaddyApiSiteMutationTests(unittest.IsolatedAsyncioTestCase):
     async def test_update_site_sync_failure_returns_accepted_and_publishes_event(self) -> None:
         update_site_fn = getattr(update_site, "__wrapped__", update_site)
         payload = SiteUpdateRequest(
+            site_name="Example Site",
             domain="example.com",
             caddy_directives="reverse_proxy backend.example.test:443",
             enabled=True,
@@ -158,6 +239,7 @@ class CaddyApiSiteMutationTests(unittest.IsolatedAsyncioTestCase):
         response = Response()
         updated_site = SimpleNamespace(
             id=1,
+            site_name="Example Site",
             domain="example.com",
             upstream_url="http://backend.example.test:443",
             caddy_directives="reverse_proxy backend.example.test:443",
@@ -179,7 +261,7 @@ class CaddyApiSiteMutationTests(unittest.IsolatedAsyncioTestCase):
             patch("app.routers.caddy_api.site_repository.domain_exists", new=AsyncMock(return_value=False)),
             patch("app.routers.caddy_api.site_repository.update", new=AsyncMock(return_value=updated_site)),
             patch("app.routers.caddy_api.sync_caddy_configuration", new=AsyncMock(return_value=sync_result)),
-            patch("app.routers.caddy_api.publish_resource_event", new=AsyncMock()) as publish_event,
+            patch("app.routers.caddy_api.try_publish_resource_event", new=AsyncMock()) as publish_event,
         ):
             result = await update_site_fn(
                 1,

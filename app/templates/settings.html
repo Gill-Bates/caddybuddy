@@ -11,11 +11,11 @@
         </div>
     </div>
 
-    <div class="row app-grid">
-        <div class="col-12">
-            <div class="panel-card mb-4" id="caddy-settings">
+    <div class="row app-grid settings-layout">
+        <div class="col-12 col-xl-6">
+            <div class="panel-card settings-panel settings-panel--primary" id="caddy-settings">
                 <div class="panel-card__header">
-                    <h2 class="h5 mb-0">Runtime Settings</h2>
+                    <h2 class="h5 mb-0">Global Settings</h2>
                 </div>
                 <div class="panel-card__body">
                     <form action="{{ request.app.url_path_for('update_caddy_settings') }}" method="post"
@@ -27,6 +27,7 @@
                                 <label for="caddy_api_url" class="form-label">Caddy Admin URL</label>
                                 <input type="url" class="form-control" id="caddy_api_url" name="caddy_api_url"
                                     value="{{ caddy_api_url }}" placeholder="http://localhost:2019" required
+                                    inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false"
                                     data-auto-save-field>
                                 <div class="form-text">Used for health checks, onboarding, and configuration sync.</div>
                             </div>
@@ -34,7 +35,7 @@
                                 <label for="caddyfile_path" class="form-label">Mounted Caddyfile Path</label>
                                 <input type="text" class="form-control" id="caddyfile_path" name="caddyfile_path"
                                     value="{{ caddyfile_path }}" placeholder="/app/Caddyfile" required
-                                    data-auto-save-field>
+                                    autocapitalize="off" autocomplete="off" spellcheck="false" data-auto-save-field>
                                 <div class="form-text">This file is inspected during onboarding and replaced with the
                                     managed marker.</div>
                             </div>
@@ -49,130 +50,119 @@
                                 <div class="form-text">Protects sensitive endpoints against brute force attacks.</div>
                             </div>
                         </div>
-
-                        <div class="form-text mt-3 text-body-secondary" data-auto-save-status aria-live="polite"></div>
-
-                        <div class="mt-3">
-                            <button type="submit" class="btn btn-primary" data-loading-submit-button
-                                data-loading-label="Saving...">
-                                Save Settings
-                            </button>
-                        </div>
                     </form>
                 </div>
             </div>
         </div>
 
-        <div class="col-12 col-lg-6">
-            <!-- SSL Labs Configuration -->
-            <div class="panel-card mb-4" id="ssllabs-settings">
-                <div class="panel-card__header">
-                    <h2 class="h5 mb-0">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor"
-                            class="bi bi-shield-lock me-2" viewBox="0 0 16 16" aria-hidden="true">
-                            <path
-                                d="M5.338 1.59a61 61 0 0 0-2.837.856.48.48 0 0 0-.328.39c-.554 4.157.726 7.19 2.253 9.188a10.7 10.7 0 0 0 2.287 2.233c.346.244.652.42.893.533q.18.085.293.118a1 1 0 0 0 .101.025 1 1 0 0 0 .1-.025q.114-.034.294-.118c.24-.113.547-.29.893-.533a10.7 10.7 0 0 0 2.287-2.233c1.527-1.997 2.807-5.031 2.253-9.188a.48.48 0 0 0-.328-.39c-.651-.213-1.75-.56-2.837-.855C9.552 1.29 8.531 1.067 8 1.067c-.53 0-1.552.223-2.662.524zM5.072.56C6.157.265 7.31 0 8 0s1.843.265 2.928.56c1.11.3 2.229.655 2.887.87a1.54 1.54 0 0 1 1.044 1.262c.596 4.477-.787 7.795-2.465 9.99a11.8 11.8 0 0 1-2.517 2.453 7 7 0 0 1-1.048.625c-.28.132-.581.24-.829.24s-.548-.108-.829-.24a7 7 0 0 1-1.048-.625 11.8 11.8 0 0 1-2.517-2.453C1.928 10.487.545 7.169 1.141 2.692A1.54 1.54 0 0 1 2.185 1.43 63 63 0 0 1 5.072.56" />
-                            <path
-                                d="M9.5 6.5a1.5 1.5 0 0 1-1 1.415l.385 1.99a.5.5 0 0 1-.491.595h-.788a.5.5 0 0 1-.49-.595l.384-1.99a1.5 1.5 0 1 1 2-1.415" />
-                        </svg>
-                        SSL Labs API
-                    </h2>
-                </div>
-                <div class="panel-card__body">
-                    <form action="{{ request.app.url_path_for('update_ssllabs_settings') }}" method="post"
-                        data-loading-submit-form data-auto-save-form class="mb-3">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                        <label for="ssllabs_email" class="form-label">Configured Email</label>
-                        <input type="email" class="form-control" id="ssllabs_email" name="ssllabs_email"
-                            value="{{ ssllabs_email or '' }}" placeholder="team@example.com" maxlength="320"
-                            inputmode="email" autocapitalize="off" autocomplete="email" data-auto-save-field>
-                        <div class="form-text">
-                            Used for SSL Labs API registration and scan requests. Leave empty to disable SSL Labs.
+        <div class="col-12 col-xl-6">
+            <div class="row g-4 settings-stack">
+                <div class="col-12">
+                    <div class="panel-card settings-panel" id="ssllabs-settings">
+                        <div class="panel-card__header">
+                            <h2 class="h5 mb-0">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor"
+                                    class="bi bi-shield-lock me-2" viewBox="0 0 16 16" aria-hidden="true">
+                                    <path
+                                        d="M5.338 1.59a61 61 0 0 0-2.837.856.48.48 0 0 0-.328.39c-.554 4.157.726 7.19 2.253 9.188a10.7 10.7 0 0 0 2.287 2.233c.346.244.652.42.893.533q.18.085.293.118a1 1 0 0 0 .101.025 1 1 0 0 0 .1-.025q.114-.034.294-.118c.24-.113.547-.29.893-.533a10.7 10.7 0 0 0 2.287-2.233c1.527-1.997 2.807-5.031 2.253-9.188a.48.48 0 0 0-.328-.39c-.651-.213-1.75-.56-2.837-.855C9.552 1.29 8.531 1.067 8 1.067c-.53 0-1.552.223-2.662.524zM5.072.56C6.157.265 7.31 0 8 0s1.843.265 2.928.56c1.11.3 2.229.655 2.887.87a1.54 1.54 0 0 1 1.044 1.262c.596 4.477-.787 7.795-2.465 9.99a11.8 11.8 0 0 1-2.517 2.453 7 7 0 0 1-1.048.625c-.28.132-.581.24-.829.24s-.548-.108-.829-.24a7 7 0 0 1-1.048-.625 11.8 11.8 0 0 1-2.517-2.453C1.928 10.487.545 7.169 1.141 2.692A1.54 1.54 0 0 1 2.185 1.43 63 63 0 0 1 5.072.56" />
+                                    <path
+                                        d="M9.5 6.5a1.5 1.5 0 0 1-1 1.415l.385 1.99a.5.5 0 0 1-.491.595h-.788a.5.5 0 0 1-.49-.595l.384-1.99a1.5 1.5 0 1 1 2-1.415" />
+                                </svg>
+                                SSL Labs API
+                            </h2>
                         </div>
-                        {% if ssllabs_masked_email %}
-                        <div class="form-text">Current stored address: {{ ssllabs_masked_email }}</div>
-                        {% endif %}
-                        <div class="form-text mt-3 text-body-secondary" data-auto-save-status aria-live="polite"></div>
-                        <div class="mt-3">
-                            <button type="submit" class="btn btn-primary" data-loading-submit-button
-                                data-loading-label="Saving...">
-                                Save SSL Labs Email
-                            </button>
-                        </div>
-                    </form>
+                        <div class="panel-card__body">
+                            <form action="{{ request.app.url_path_for('update_ssllabs_settings') }}" method="post"
+                                data-loading-submit-form data-auto-save-form class="mb-3">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <label for="ssllabs_email" class="form-label">Configured Email</label>
+                                <input type="email" class="form-control" id="ssllabs_email" name="ssllabs_email"
+                                    value="{{ ssllabs_email or '' }}" placeholder="team@example.com" maxlength="320"
+                                    inputmode="email" autocapitalize="off" autocomplete="email" data-auto-save-field>
+                                <div class="form-text">
+                                    Used for SSL Labs API registration and scan requests. Leave empty to disable SSL
+                                    Labs.
+                                </div>
+                                {% if ssllabs_masked_email %}
+                                <div class="form-text">Current stored address: {{ ssllabs_masked_email }}</div>
+                                {% endif %}
+                            </form>
 
-                    <div class="mb-3">
-                        <div class="form-label text-body-secondary">Registration Status</div>
-                        <div id="ssllabs-status">
-                            <span class="spinner-border spinner-border-sm text-secondary" role="status">
-                                <span class="visually-hidden">Loading...</span>
-                            </span>
-                        </div>
-                        <div class="form-text" id="ssllabs-status-hint">Checking registration status...</div>
-                    </div>
-
-                    {% if ssllabs_email %}
-                    <form action="{{ request.app.url_path_for('register_ssllabs_email') }}" method="post"
-                        data-loading-submit-form>
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                        <button type="submit" class="btn btn-outline-primary js-confirm" id="ssllabs-register-btn"
-                            data-loading-submit-button data-loading-label="Registering..."
-                            data-confirm-title="Register SSL Labs email"
-                            data-confirm="Register the configured email address with the SSL Labs API?"
-                            data-confirm-accept="Register" data-confirm-btn-class="btn-primary">
-                            Register with SSL Labs
-                        </button>
-                    </form>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
-
-        <div class="col-12 col-lg-6">
-            <!-- Change Password -->
-            <div class="panel-card mb-4" id="password-settings">
-                <div class="panel-card__header">
-                    <h2 class="h5 mb-0">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor"
-                            class="bi bi-key me-2" viewBox="0 0 16 16" aria-hidden="true">
-                            <path
-                                d="M0 8a4 4 0 0 1 7.465-2H14a.5.5 0 0 1 .354.146l1.5 1.5a.5.5 0 0 1 0 .708l-1.5 1.5a.5.5 0 0 1-.708 0L13 9.207l-.646.647a.5.5 0 0 1-.708 0L11 9.207l-.646.647a.5.5 0 0 1-.708 0L9 9.207l-.646.647A.5.5 0 0 1 8 10h-.535A4 4 0 0 1 0 8m4-3a3 3 0 1 0 2.712 4.285A.5.5 0 0 1 7.163 9h.63l.853-.854a.5.5 0 0 1 .708 0l.646.647.646-.647a.5.5 0 0 1 .708 0l.646.647.646-.647a.5.5 0 0 1 .708 0l.646.647.793-.793-1-1h-6.63a.5.5 0 0 1-.451-.285A3 3 0 0 0 4 5" />
-                            <path d="M4 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0" />
-                        </svg>
-                        Change Password
-                    </h2>
-                </div>
-                <div class="panel-card__body">
-                    <form action="{{ request.app.url_path_for('change_password') }}" method="post"
-                        data-loading-submit-form id="password-form">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-
-                        <div class="mb-3">
-                            <label for="current_password" class="form-label">Current Password</label>
-                            <input type="password" class="form-control" id="current_password" name="current_password"
-                                required autocomplete="current-password" maxlength="4096">
-                        </div>
-
-                        <div class="mb-3">
-                            <label for="new_password" class="form-label">New Password</label>
-                            <input type="password" class="form-control" id="new_password" name="new_password" required
-                                minlength="12" maxlength="4096" autocomplete="new-password">
-                            <div class="form-text">
-                                At least 12 characters with uppercase, lowercase, digit, and special character.
+                            <div class="ssllabs-status-panel">
+                                <div class="form-label text-body-secondary">Registration Status</div>
+                                <div id="ssllabs-status">
+                                    <span class="spinner-border spinner-border-sm text-secondary" role="status">
+                                        <span class="visually-hidden">Loading...</span>
+                                    </span>
+                                </div>
+                                <div class="form-text" id="ssllabs-status-hint"></div>
                             </div>
-                        </div>
 
-                        <div class="mb-3">
-                            <label for="confirm_password" class="form-label">Confirm New Password</label>
-                            <input type="password" class="form-control" id="confirm_password" name="confirm_password"
-                                required minlength="12" maxlength="4096" autocomplete="new-password">
+                            {% if ssllabs_email %}
+                            <form action="{{ request.app.url_path_for('register_ssllabs_email') }}" method="post"
+                                data-loading-submit-form class="mt-3">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <button type="submit" class="btn btn-outline-primary js-confirm"
+                                    id="ssllabs-register-btn" data-loading-submit-button
+                                    data-loading-label="Registering..." data-confirm-title="Register SSL Labs email"
+                                    data-confirm="Register the configured email address with the SSL Labs API?"
+                                    data-confirm-accept="Register" data-confirm-btn-class="btn-primary">
+                                    Register with SSL Labs
+                                </button>
+                            </form>
+                            {% endif %}
                         </div>
+                    </div>
+                </div>
 
-                        <button type="submit" class="btn btn-primary" data-loading-submit-button
-                            data-loading-label="Changing password...">
-                            Change Password
-                        </button>
-                    </form>
+                <div class="col-12">
+                    <div class="panel-card settings-panel" id="password-settings">
+                        <div class="panel-card__header">
+                            <h2 class="h5 mb-0">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor"
+                                    class="bi bi-key me-2" viewBox="0 0 16 16" aria-hidden="true">
+                                    <path
+                                        d="M0 8a4 4 0 0 1 7.465-2H14a.5.5 0 0 1 .354.146l1.5 1.5a.5.5 0 0 1 0 .708l-1.5 1.5a.5.5 0 0 1-.708 0L13 9.207l-.646.647a.5.5 0 0 1-.708 0L11 9.207l-.646.647a.5.5 0 0 1-.708 0L9 9.207l-.646.647A.5.5 0 0 1 8 10h-.535A4 4 0 0 1 0 8m4-3a3 3 0 1 0 2.712 4.285A.5.5 0 0 1 7.163 9h.63l.853-.854a.5.5 0 0 1 .708 0l.646.647.646-.647a.5.5 0 0 1 .708 0l.646.647.646-.647a.5.5 0 0 1 .708 0l.646.647.793-.793-1-1h-6.63a.5.5 0 0 1-.451-.285A3 3 0 0 0 4 5" />
+                                    <path d="M4 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0" />
+                                </svg>
+                                Change Password
+                            </h2>
+                        </div>
+                        <div class="panel-card__body">
+                            <form action="{{ request.app.url_path_for('change_password') }}" method="post"
+                                data-loading-submit-form id="password-form">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+                                <div class="mb-3">
+                                    <label for="current_password" class="form-label">Current Password</label>
+                                    <input type="password" class="form-control" id="current_password"
+                                        name="current_password" required autocomplete="current-password"
+                                        maxlength="4096">
+                                </div>
+
+                                <div class="mb-3">
+                                    <label for="new_password" class="form-label">New Password</label>
+                                    <input type="password" class="form-control" id="new_password" name="new_password"
+                                        required minlength="8" maxlength="4096" autocomplete="new-password">
+                                    <div class="form-text">
+                                        At least 8 characters with uppercase, lowercase, digit, and special character.
+                                    </div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label for="confirm_password" class="form-label">Confirm New Password</label>
+                                    <input type="password" class="form-control" id="confirm_password"
+                                        name="confirm_password" required minlength="8" maxlength="4096"
+                                        autocomplete="new-password">
+                                </div>
+
+                                <button type="submit" class="btn btn-primary" data-loading-submit-button
+                                    data-loading-label="Changing password...">
+                                    Change Password
+                                </button>
+                            </form>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

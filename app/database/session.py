@@ -254,6 +254,20 @@ def _apply_known_schema_migrations(
             "ALTER TABLE caddy_sites ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1"
         )
         migrated = True
+    if site_columns is not None and "site_name" not in site_columns:
+        logger.info("Applying known SQLite schema migration: caddy_sites.site_name")
+        sync_connection.exec_driver_sql(
+            "ALTER TABLE caddy_sites ADD COLUMN site_name TEXT NOT NULL DEFAULT ''"
+        )
+        migrated = True
+    if site_columns is not None:
+        logger.info("Repairing empty site_name values in caddy_sites")
+        sync_connection.exec_driver_sql(
+            "UPDATE caddy_sites "
+            "SET site_name = trim(CASE WHEN instr(domain, ',') > 0 THEN substr(domain, 1, instr(domain, ',') - 1) ELSE domain END) "
+            "WHERE site_name IS NULL OR site_name = ''"
+        )
+        migrated = True
 
     return migrated
 

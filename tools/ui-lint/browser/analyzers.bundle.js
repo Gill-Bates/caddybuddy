@@ -51,13 +51,6 @@
         return Math.round(value * factor) / factor;
     }
 
-    function pushStyleMismatch(issues, { el, rule, selector, index, prop, expected }) {
-        const actual = styleOf(el)?.[prop];
-        if (actual !== expected) {
-            issues.push({ rule, selector, index, value: actual, expected });
-        }
-    }
-
     function isModalActive(el) {
         if (!el) return false;
         return el.classList.contains('is-open') || el.matches('.modal.show') || styleOf(el)?.display === 'flex';
@@ -119,8 +112,32 @@
             .trim();
         if (labelText) return labelText;
 
+        const imgAlt = el.querySelector?.('img[alt]')?.getAttribute('alt')?.trim();
+        if (imgAlt) return imgAlt;
+
+        const svgTitle = el.querySelector?.('svg title')?.textContent?.trim();
+        if (svgTitle) return svgTitle;
+
         const wrappingLabelText = el.closest('label')?.textContent?.trim() || '';
         if (wrappingLabelText) return wrappingLabelText;
+
+        if (el instanceof HTMLInputElement) {
+            if (['button', 'submit', 'reset'].includes(el.type)) {
+                const buttonValue = el.value.trim();
+                if (buttonValue) return buttonValue;
+            }
+            if (el.type === 'image') {
+                const altText = el.getAttribute('alt')?.trim() || '';
+                if (altText) return altText;
+            }
+            const placeholder = el.getAttribute('placeholder')?.trim() || '';
+            if (placeholder) return placeholder;
+        }
+
+        if (el instanceof HTMLTextAreaElement) {
+            const placeholder = el.getAttribute('placeholder')?.trim() || '';
+            if (placeholder) return placeholder;
+        }
 
         const title = el.getAttribute('title');
         if (title && title.trim()) return title.trim();
@@ -142,6 +159,29 @@
             g: Number.parseInt(match[2], 10),
             b: Number.parseInt(match[3], 10),
         };
+    }
+
+    function normalizeColorToRgb(value) {
+        if (!value) return null;
+
+        const direct = parseRgb(value);
+        if (direct) return direct;
+        if (!(document.body instanceof HTMLElement)) return null;
+
+        const probe = document.createElement('span');
+        probe.style.color = String(value);
+        probe.style.position = 'absolute';
+        probe.style.width = '0';
+        probe.style.height = '0';
+        probe.style.pointerEvents = 'none';
+        probe.style.opacity = '0';
+        document.body.appendChild(probe);
+
+        try {
+            return parseRgb(window.getComputedStyle(probe).color);
+        } finally {
+            probe.remove();
+        }
     }
 
     function channelToLinear(value) {
@@ -292,12 +332,17 @@
     function scrollContainmentAnalyzer(constants = {}, scope = '') {
         const tolerance = Number(constants.OVERFLOW_TOLERANCE_PX || 0);
         const isRootScroller = (el) => el === document.documentElement || el === document.body;
-        const isAuditLogsScope = scope === 'audit-logs';
-        const isAllowedAuditLogsScroller = (el) => {
-            if (!isAuditLogsScope || !(el instanceof Element)) {
+        const isAllowedScrollContainer = (el, currentScope) => {
+            if (!(el instanceof Element)) {
                 return false;
             }
-            return el.matches('.audit-logs-stream, #auditTableContainer, .audit-row__details');
+            if (el.matches('.ssllabs-scrollbox, .sites-list-scroll')) {
+                return true;
+            }
+            if (currentScope === 'audit-logs' && el.matches('.audit-logs-stream, #auditTableContainer, .audit-row__details')) {
+                return true;
+            }
+            return false;
         };
         const axisOverflow = (el, axis) => {
             if (axis === 'x') {
@@ -310,7 +355,7 @@
             .filter(isVisible)
             .filter((el) => !isRootScroller(el))
             .filter((el) => !isVisuallyHidden(el))
-            .filter((el) => !isAllowedAuditLogsScroller(el));
+            .filter((el) => !isAllowedScrollContainer(el, scope));
 
         const scrollContainers = baseCandidates.filter((el) => {
             const style = styleOf(el);
@@ -385,7 +430,11 @@
     // ---------------- Interaction ----------------
     function interactionAnalyzer(constants, selectors) {
         const targets = Array.from(document.querySelectorAll(selectors.clickTarget || 'button'));
+        const interactiveTargets = Array.from(document.querySelectorAll(
+            selectors.interactive || 'button, [role="button"], a[href], input:not([type="hidden"]), select, textarea'
+        ));
         const minSize = Number(constants.CLICK_TARGET_MIN_SIZE_PX);
+        const tolerance = Number(constants.OVERFLOW_TOLERANCE_PX || 0);
 
         const tooSmall = targets
             .filter(isVisible)
@@ -399,17 +448,34 @@
                 height: rect.height,
             }));
 
-        const buttonAlignmentIssues = Array.from(document.querySelectorAll('.btn:not(.btn-close):not(input)'))
+        const collectCenteringIssues = (selector, issueType) => Array.from(document.querySelectorAll(selector))
             .filter(isVisible)
             .map((el) => {
                 const style = styleOf(el);
                 const display = style?.display || '';
-                const hasFlexDisplay = display === 'flex' || display === 'inline-flex';
-                if (!hasFlexDisplay) return null;
+                const hasCenteringDisplay = display === 'flex' || display === 'inline-flex' || display === 'grid' || display === 'inline-grid';
+                if (!hasCenteringDisplay) {
+                    return {
+                        tag: el.tagName,
+                        classes: el.className || '',
+                        display,
+                        alignItems: style?.alignItems || '',
+                        justifyContent: style?.justifyContent || '',
+                        placeItems: style?.placeItems || '',
+                        textAlign: style?.textAlign || '',
+                        text: (el.textContent || '').trim().slice(0, 80),
+                        issueType,
+                    };
+                }
 
                 const alignItems = style?.alignItems || '';
                 const justifyContent = style?.justifyContent || '';
-                if (alignItems === 'center' && justifyContent === 'center') return null;
+                const placeItems = style?.placeItems || '';
+                const textAlign = style?.textAlign || '';
+                const centeredByFlex = alignItems === 'center' && justifyContent === 'center';
+                const centeredByGrid = placeItems === 'center' || placeItems === 'center center';
+                const centeredByText = textAlign === 'center';
+                if ((centeredByFlex || centeredByGrid) && centeredByText) return null;
 
                 return {
                     tag: el.tagName,
@@ -417,15 +483,53 @@
                     display,
                     alignItems,
                     justifyContent,
+                    placeItems,
+                    textAlign,
                     text: (el.textContent || '').trim().slice(0, 80),
+                    issueType,
                 };
             })
             .filter(Boolean)
             .slice(0, 20);
 
+        const buttonAlignmentIssues = collectCenteringIssues('.btn:not(.btn-close):not(input)', 'button');
+        const badgeAlignmentIssues = collectCenteringIssues('.badge', 'badge');
+
+        const viewportClippedInteractiveElements = interactiveTargets
+            .filter(isVisible)
+            .filter((el) => !isVisuallyHidden(el))
+            .map((el) => ({ el, rect: rectOf(el) }))
+            .filter(({ rect }) => {
+                const intersectsViewport = rect.right > tolerance
+                    && rect.left < window.innerWidth - tolerance
+                    && rect.bottom > tolerance
+                    && rect.top < window.innerHeight - tolerance;
+                if (!intersectsViewport) {
+                    return false;
+                }
+                return rect.left < (0 - tolerance)
+                    || rect.right > window.innerWidth + tolerance
+                    || rect.top < (0 - tolerance)
+                    || rect.bottom > window.innerHeight + tolerance;
+            })
+            .slice(0, 20)
+            .map(({ el, rect }) => ({
+                tag: el.tagName,
+                className: el.className || '',
+                text: (el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 80),
+                left: roundTo(rect.left, 2),
+                right: roundTo(rect.right, 2),
+                top: roundTo(rect.top, 2),
+                bottom: roundTo(rect.bottom, 2),
+                viewportWidth: window.innerWidth,
+                viewportHeight: window.innerHeight,
+            }));
+
         return {
             clickTargetsTooSmall: tooSmall,
             buttonAlignmentIssues,
+            badgeAlignmentIssues,
+            viewportClippedInteractiveElements,
         };
     }
 
@@ -440,9 +544,8 @@
             const lineEl = liveConsole.querySelector('.console-line, .console-msg');
             const lineStyle = lineEl ? styleOf(lineEl) : null;
 
-            const consoleBgRgb = parseRgb(style.backgroundImage)
-                || parseRgb(style.backgroundColor);
-            const consoleFgRgb = parseRgb(lineStyle?.color || style.color);
+            const consoleBgRgb = normalizeColorToRgb(style.backgroundColor);
+            const consoleFgRgb = normalizeColorToRgb(lineStyle?.color || style.color);
             const consoleLuma = relativeLuminance(consoleBgRgb);
             const ratio = contrastRatio(consoleFgRgb, consoleBgRgb);
 
@@ -477,11 +580,20 @@
     function stateAnalyzer() {
         const buttons = Array.from(document.querySelectorAll('button'));
 
+        const isLoadingButton = (btn) => {
+            const text = (btn.textContent || '').trim();
+            return /loading|saving|creating|deleting|processing|starting/i.test(text)
+                || btn.querySelector('.spinner-border:not(.d-none)')
+                || btn.hasAttribute('data-loading-active');
+        };
+
         const loadingWithoutDisabled = buttons
-            .filter((btn) => /loading|saving|creating|deleting|processing/i.test((btn.textContent || '').trim()) && !btn.disabled)
+            .filter(isLoadingButton)
+            .filter((btn) => !btn.disabled)
             .map((btn) => ({ text: (btn.textContent || '').trim() }));
 
         const missingAriaBusy = buttons
+            .filter(isLoadingButton)
             .filter((btn) => btn.disabled && !btn.hasAttribute('aria-busy'))
             .map((btn) => ({ text: (btn.textContent || '').trim() }));
 
@@ -525,7 +637,7 @@
         }
 
         const dialogStyle = styleOf(dialog);
-        const dialogBg = parseRgb(dialogStyle.backgroundColor);
+        const dialogBg = normalizeColorToRgb(dialogStyle.backgroundColor);
         const dialogLuma = relativeLuminance(dialogBg);
         const modalDialogMaxLuma = Number(constants.MODAL_DARK_DIALOG_MAX_LUMA ?? 0.3);
         const modalControlLightBgMinLuma = Number(constants.MODAL_CONTROL_LIGHT_BG_MIN_LUMA ?? 0.72);
@@ -536,8 +648,8 @@
             .filter(isVisible)
             .map((control) => {
                 const style = styleOf(control);
-                const bg = parseRgb(style.backgroundColor);
-                const fg = parseRgb(style.color);
+                const bg = normalizeColorToRgb(style.backgroundColor);
+                const fg = normalizeColorToRgb(style.color);
                 const bgLuma = relativeLuminance(bg);
                 const fgLuma = relativeLuminance(fg);
                 const overlyLightBackground = bgLuma != null && bgLuma > modalControlLightBgMinLuma;
@@ -575,7 +687,7 @@
     }
 
     function isDangerLike(colorValue) {
-        const rgb = parseRgb(colorValue);
+        const rgb = normalizeColorToRgb(colorValue);
         if (!rgb) return false;
         return rgb.r >= 140 && rgb.r > rgb.g + 20 && rgb.r > rgb.b + 20;
     }
@@ -668,7 +780,36 @@
 
     function pageShellAnalyzer(constants = {}) {
         const page = document.querySelector('.app-page');
+        const mobileToggle = document.querySelector('.mobile-menu-toggle');
+        const appFooter = document.querySelector('.app-footer');
+        const viewportPanels = Array.from(
+            document.querySelectorAll('.ssllabs-panel, .caddyfile-editor-panel, .sites-form-panel, .sites-list-panel')
+        ).filter((panel) => panel instanceof Element && isVisible(panel) && !isVisuallyHidden(panel));
         const maximumGap = Number(constants.APP_PAGE_HEADER_CONTENT_GAP_MAX_PX ?? 56);
+        const alignmentTolerance = Number(constants.MOBILE_TOGGLE_CONTENT_ALIGNMENT_TOLERANCE_PX ?? 2);
+        const panelHeightTolerance = Number(constants.DESKTOP_PRIMARY_PANEL_HEIGHT_TOLERANCE_PX ?? 3);
+        const viewportPanelFooterGapMaximum = Number(constants.DESKTOP_VIEWPORT_PANEL_FOOTER_GAP_MAX_PX ?? 24);
+        const mobileToggleAlignmentFallback = {
+            present: false,
+            toggleLeft: null,
+            contentLeft: null,
+            delta: null,
+            tolerance: alignmentTolerance,
+            passesTolerance: true,
+        };
+        const primaryPanelHeightFallback = {
+            present: false,
+            heights: [],
+            delta: null,
+            tolerance: panelHeightTolerance,
+            passesTolerance: true,
+        };
+        const viewportPanelFooterGapFallback = {
+            present: false,
+            gapPx: null,
+            maximum: viewportPanelFooterGapMaximum,
+            passesMaximum: true,
+        };
         if (!(page instanceof Element) || !isVisible(page) || isVisuallyHidden(page)) {
             return {
                 appPageLayout: {
@@ -676,6 +817,9 @@
                     overflowY: null,
                     locksVerticalOverflow: false,
                 },
+                mobileToggleContentAlignment: mobileToggleAlignmentFallback,
+                desktopPrimaryPanelHeightAlignment: primaryPanelHeightFallback,
+                desktopViewportPanelFooterGap: viewportPanelFooterGapFallback,
                 pageHeaderContentGap: {
                     present: false,
                     gapPx: null,
@@ -687,6 +831,8 @@
 
         const pageStyle = styleOf(page);
         const overflowY = pageStyle?.overflowY || 'visible';
+        const isMobileViewport = window.innerWidth < Number(constants.LG_BREAKPOINT_PX ?? 992);
+        const isDesktopTwoColumnViewport = window.innerWidth >= Number(constants.XL_BREAKPOINT_PX ?? 1200);
         const children = Array.from(page.children).filter((child) => child instanceof Element);
         const header = children.find((child) => child.matches('.app-page__header') && isVisible(child) && !isVisuallyHidden(child)) || null;
         const firstContentBlock = children.find((child) => child !== header && isVisible(child) && !isVisuallyHidden(child)) || null;
@@ -708,12 +854,74 @@
             };
         }
 
+        let mobileToggleContentAlignment = mobileToggleAlignmentFallback;
+        if (
+            isMobileViewport
+            && mobileToggle instanceof HTMLElement
+            && isVisible(mobileToggle)
+        ) {
+            const referenceElement = header || firstContentBlock || page;
+            const toggleLeft = rectOf(mobileToggle).left;
+            const contentLeft = rectOf(referenceElement).left;
+            const delta = Math.abs(toggleLeft - contentLeft);
+            mobileToggleContentAlignment = {
+                present: true,
+                toggleLeft: roundTo(toggleLeft, 2),
+                contentLeft: roundTo(contentLeft, 2),
+                delta: roundTo(delta, 2),
+                tolerance: alignmentTolerance,
+                passesTolerance: delta <= alignmentTolerance,
+            };
+        }
+
+        let desktopPrimaryPanelHeightAlignment = primaryPanelHeightFallback;
+        const pageGrid = page.querySelector(':scope > .row.app-grid');
+        if (isDesktopTwoColumnViewport && pageGrid instanceof Element) {
+            const panels = Array.from(pageGrid.children)
+                .filter((child) => child instanceof Element)
+                .map((column) => column.querySelector(':scope > .panel-card'))
+                .filter((panel) => panel instanceof Element && isVisible(panel) && !isVisuallyHidden(panel));
+
+            if (panels.length >= 2) {
+                const heights = panels.slice(0, 2).map((panel) => roundTo(rectOf(panel).height, 2));
+                const delta = Math.abs(heights[0] - heights[1]);
+                desktopPrimaryPanelHeightAlignment = {
+                    present: true,
+                    heights,
+                    delta: roundTo(delta, 2),
+                    tolerance: panelHeightTolerance,
+                    passesTolerance: delta <= panelHeightTolerance,
+                };
+            }
+        }
+
+        let desktopViewportPanelFooterGap = viewportPanelFooterGapFallback;
+        if (
+            isDesktopTwoColumnViewport
+            && viewportPanels.length > 0
+        ) {
+            const panelBottom = Math.max(...viewportPanels.map((panel) => rectOf(panel).bottom));
+            const footerTop = appFooter instanceof Element && isVisible(appFooter) && !isVisuallyHidden(appFooter)
+                ? rectOf(appFooter).top
+                : window.innerHeight;
+            const gapPx = Math.max(0, footerTop - panelBottom);
+            desktopViewportPanelFooterGap = {
+                present: true,
+                gapPx: roundTo(gapPx, 2),
+                maximum: viewportPanelFooterGapMaximum,
+                passesMaximum: gapPx <= viewportPanelFooterGapMaximum,
+            };
+        }
+
         return {
             appPageLayout: {
                 present: true,
                 overflowY,
                 locksVerticalOverflow: !['visible'].includes(overflowY),
             },
+            mobileToggleContentAlignment,
+            desktopPrimaryPanelHeightAlignment,
+            desktopViewportPanelFooterGap,
             pageHeaderContentGap,
         };
     }
@@ -805,8 +1013,16 @@
         const sidebar = document.querySelector('.app-sidebar');
         const sidebarFooter = document.querySelector('.sidebar-footer');
         const minimum = Number(constants.SIDEBAR_FOOTER_VIEWPORT_CLEARANCE_MIN_PX ?? 0);
+        const sidebarRect = sidebar ? rectOf(sidebar) : null;
+        const sidebarIsOpen = Boolean(
+            sidebar
+            && sidebar.classList.contains('is-open')
+            && sidebarRect
+            && sidebarRect.right > 0
+            && sidebarRect.left < window.innerWidth
+        );
 
-        if (!isMobileViewport || !sidebar || !sidebarFooter || !isVisible(sidebar) || !isVisible(sidebarFooter)) {
+        if (!isMobileViewport || !sidebar || !sidebarFooter || !sidebarIsOpen || !isVisible(sidebarFooter)) {
             return {
                 sidebarFooterViewportGap: {
                     present: false,
@@ -847,6 +1063,67 @@
         };
     }
 
+    function sidebarNavAnalyzer(constants = {}) {
+        const sidebar = document.querySelector('.app-sidebar');
+        const nav = document.querySelector('.app-nav');
+        const isMobileViewport = window.innerWidth < Number(constants.LG_BREAKPOINT_PX ?? 992);
+        const minimumGap = Number(
+            isMobileViewport
+                ? (constants.SIDEBAR_NAV_GAP_MOBILE_MIN_PX ?? 7)
+                : (constants.SIDEBAR_NAV_GAP_MIN_PX ?? 10)
+        );
+        const minimumLinkHeight = Number(
+            isMobileViewport
+                ? (constants.SIDEBAR_NAV_LINK_MOBILE_MIN_HEIGHT_PX ?? 48)
+                : (constants.SIDEBAR_NAV_LINK_MIN_HEIGHT_PX ?? 52)
+        );
+        const fallback = {
+            present: false,
+            navGapPx: null,
+            linkMinHeightPx: null,
+            minimumGap,
+            minimumLinkHeight,
+            passesGap: true,
+            passesLinkHeight: true,
+        };
+
+        if (!(sidebar instanceof Element) || !(nav instanceof Element)) {
+            return { sidebarNavSpacing: fallback };
+        }
+
+        const sidebarRect = rectOf(sidebar);
+        const sidebarVisible = isVisible(sidebar)
+            && !isVisuallyHidden(sidebar)
+            && (!isMobileViewport || (sidebar.classList.contains('is-open') && sidebarRect.right > 0 && sidebarRect.left < window.innerWidth));
+
+        if (!sidebarVisible || !isVisible(nav) || isVisuallyHidden(nav)) {
+            return { sidebarNavSpacing: fallback };
+        }
+
+        const navLinks = Array.from(nav.querySelectorAll(':scope > .app-nav__link'))
+            .filter((link) => link instanceof Element && isVisible(link) && !isVisuallyHidden(link));
+
+        if (navLinks.length === 0) {
+            return { sidebarNavSpacing: fallback };
+        }
+
+        const navStyle = styleOf(nav);
+        const navGapPx = Number.parseFloat(navStyle?.rowGap || navStyle?.gap || '0');
+        const linkMinHeightPx = Math.min(...navLinks.map((link) => rectOf(link).height));
+
+        return {
+            sidebarNavSpacing: {
+                present: true,
+                navGapPx: roundTo(navGapPx, 2),
+                linkMinHeightPx: roundTo(linkMinHeightPx, 2),
+                minimumGap,
+                minimumLinkHeight,
+                passesGap: navGapPx >= minimumGap,
+                passesLinkHeight: linkMinHeightPx >= minimumLinkHeight,
+            },
+        };
+    }
+
     // ---------------- Page Structure Consistency ----------------
     function pageStructureAnalyzer() {
         const appPage = document.querySelector('.app-page');
@@ -854,16 +1131,20 @@
             return { pageStructureConsistent: { present: false, hasRowWrapper: null, issues: [] } };
         }
 
-        // Check if app-page has direct children that are panel-cards without row wrapper
         const directChildren = Array.from(appPage.children).filter((el) => !el.classList.contains('app-page__header'));
-        const hasRowAppGrid = directChildren.some((el) => el.classList.contains('row') && el.classList.contains('app-grid'));
-        const hasMetricGrid = directChildren.some((el) => el.classList.contains('row') && el.classList.contains('metric-grid'));
-        const hasRowWrapper = hasRowAppGrid || hasMetricGrid;
-
-        // Find panel-cards that are direct children of app-page (missing row wrapper)
+        const hasRowWrapper = directChildren.some((el) => el.matches('.row.app-grid, .row.metric-grid'));
         const unwrappedPanelCards = directChildren
-            .filter((el) => el.classList.contains('panel-card') && !el.closest('.row'))
+            .filter((el) => el.classList.contains('panel-card'))
             .map((el) => ({
+                rule: 'panel-card-direct-child',
+                tag: el.tagName,
+                className: el.className || '',
+            }));
+
+        const invalidGridChildren = Array.from(appPage.querySelectorAll(':scope > .row.app-grid > *'))
+            .filter((el) => !/\bcol(?:-|$)/.test(el.className || ''))
+            .map((el) => ({
+                rule: 'app-grid-child-not-column',
                 tag: el.tagName,
                 className: el.className || '',
             }));
@@ -872,7 +1153,54 @@
             pageStructureConsistent: {
                 present: true,
                 hasRowWrapper,
-                issues: unwrappedPanelCards,
+                issues: [
+                    ...unwrappedPanelCards,
+                    ...invalidGridChildren,
+                ],
+            },
+        };
+    }
+
+    function sitesFormControlHeightAnalyzer(constants = {}, scope = '') {
+        const expectedHeight = Number(constants.SITES_FORM_CONTROL_HEIGHT_EXPECTED_PX ?? 50);
+        const tolerance = Number(constants.SITES_FORM_CONTROL_HEIGHT_TOLERANCE_PX ?? 2);
+        const fallback = {
+            present: false,
+            expectedHeight,
+            tolerance,
+            siteNameHeightPx: null,
+            domainControlHeightPx: null,
+            passesSiteName: true,
+            passesDomainControl: true,
+        };
+
+        if (scope !== 'sites') {
+            return { sitesFormControlHeights: fallback };
+        }
+
+        const siteNameInput = document.getElementById('site-name');
+        const domainControl = document.querySelector('[data-domain-tag-shell]');
+        if (!(siteNameInput instanceof Element) || !(domainControl instanceof Element)) {
+            return { sitesFormControlHeights: fallback };
+        }
+        if (!isVisible(siteNameInput) || isVisuallyHidden(siteNameInput) || !isVisible(domainControl) || isVisuallyHidden(domainControl)) {
+            return { sitesFormControlHeights: fallback };
+        }
+
+        const siteNameHeightPx = rectOf(siteNameInput).height;
+        const domainControlHeightPx = rectOf(domainControl).height;
+        const passesSiteName = Math.abs(siteNameHeightPx - expectedHeight) <= tolerance;
+        const passesDomainControl = Math.abs(domainControlHeightPx - expectedHeight) <= tolerance;
+
+        return {
+            sitesFormControlHeights: {
+                present: true,
+                expectedHeight,
+                tolerance,
+                siteNameHeightPx: roundTo(siteNameHeightPx, 2),
+                domainControlHeightPx: roundTo(domainControlHeightPx, 2),
+                passesSiteName,
+                passesDomainControl,
             },
         };
     }
@@ -887,9 +1215,11 @@
         const contrast = contrastAnalyzer(constants);
         const footerGap = footerGapAnalyzer(constants);
         const sidebarFooterGap = mobileSidebarFooterAnalyzer(constants);
+        const sidebarNavSpacing = sidebarNavAnalyzer(constants);
         const pageShell = pageShellAnalyzer(constants);
         const primaryPanelPadding = primaryPanelPaddingAnalyzer(constants);
         const pageStructure = pageStructureAnalyzer();
+        const sitesFormControlHeights = sitesFormControlHeightAnalyzer(constants, scope);
         const state = stateAnalyzer();
         const components = componentAnalyzer();
         const modalTheme = modalThemeAnalyzer(constants);
@@ -911,9 +1241,11 @@
             ...contrast,
             ...footerGap,
             ...sidebarFooterGap,
+            ...sidebarNavSpacing,
             ...pageShell,
             ...primaryPanelPadding,
             ...pageStructure,
+            ...sitesFormControlHeights,
             ...modalTheme,
 
             state,

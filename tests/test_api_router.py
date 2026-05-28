@@ -128,21 +128,66 @@ class ApiRouterTests(unittest.TestCase):
             {"status": "ok", "app": "CaddyBuddy", "version": "1.2.3"},
         )
 
+    def test_dashboard_metrics_endpoint_returns_metrics_for_authenticated_user(self) -> None:
+        app = _build_app(SimpleNamespace())
+
+        with (
+            TestClient(app) as client,
+            patch.object(system_api, "get_session_user", new=AsyncMock(return_value=SimpleNamespace(id=1))),
+            patch.object(
+                system_api,
+                "get_dashboard_metrics",
+                new=AsyncMock(
+                    return_value=SimpleNamespace(
+                        domain_count=12,
+                        enabled_domain_count=10,
+                        valid_certificate_count=5,
+                        expired_certificate_count=2,
+                        expiring_soon_certificate_count=1,
+                        caddy_service_status="Running",
+                        caddy_service_uptime="Unavailable",
+                        caddy_version="v2.10.0",
+                    )
+                ),
+            ),
+        ):
+            response = client.get("/api/v1/dashboard/metrics")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "domain_count": 12,
+                "enabled_domain_count": 10,
+                "valid_certificate_count": 5,
+                "expired_certificate_count": 2,
+                "expiring_soon_certificate_count": 1,
+                "caddy_service_status": "Running",
+                "caddy_service_uptime": "Unavailable",
+                "caddy_version": "v2.10.0",
+            },
+        )
+
     def test_ssllabs_registration_status_uses_database_email(self) -> None:
         app = _build_app(SimpleNamespace())
+        check_status = AsyncMock(return_value=True)
 
         with (
             TestClient(app) as client,
             patch.object(system_api, "get_session_user", new=AsyncMock(return_value=SimpleNamespace(id=1))),
             patch.object(system_api, "get_settings", return_value=SimpleNamespace(ssllabs_api_base_url="https://api.ssllabs.com/api/v4")),
             patch.object(system_api, "get_ssllabs_email", new=AsyncMock(return_value="team@example.com")),
-            patch.object(system_api, "check_email_registration_status", new=AsyncMock(return_value=True)),
+            patch.object(system_api, "check_email_registration_status", new=check_status),
         ):
             response = client.get("/api/v1/ssllabs/registration-status")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["email"], "team@example.com")
         self.assertTrue(response.json()["is_registered"])
+        check_status.assert_awaited_once_with(
+            "team@example.com",
+            api_base_url="https://api.ssllabs.com/api/v4",
+        )
 
     def test_ssllabs_registration_status_reports_missing_database_email(self) -> None:
         app = _build_app(SimpleNamespace())

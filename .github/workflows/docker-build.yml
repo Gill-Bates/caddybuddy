@@ -655,7 +655,9 @@ jobs:
                 return null;
               }
               const section = markdown.slice(startIndex, endIndex).trim();
-              return section.replace(/^## \[[^\]]+\] - .+\n+/, '').trim();
+              const withoutHeading = section.replace(/^## \[[^\]]+\] - .+\n+/, '').trim();
+              const detailsIndex = withoutHeading.indexOf('<details>');
+              return (detailsIndex >= 0 ? withoutHeading.slice(0, detailsIndex) : withoutHeading).trim();
             }
 
             let changelogSection = null;
@@ -690,9 +692,7 @@ jobs:
               '- **arm64:** ' + trivyArm64,
               '',
               '### Changelog',
-              changelogSection || '_No matching CHANGELOG entry found for this version._',
-              '',
-              '**Source:** [CaddyBuddy Repository](https://github.com/' + context.repo.owner + '/' + context.repo.repo + ')'
+              changelogSection || '_No matching CHANGELOG entry found for this version._'
             ].join('\n');
 
             try {

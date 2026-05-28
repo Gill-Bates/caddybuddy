@@ -2,7 +2,7 @@
    <img src="app/static/img/caddybuddy_1c.svg" width="400" alt="CaddyBuddy logo">
 </p>
 
-<h2 align="center">Manage your Caddy servers with ease!</h2>
+<h3 align="center">Manage your Caddy server with ease!</h3>
 
 <p align="center">
   <a href="https://github.com/Gill-Bates/caddybuddy/releases"><img src="https://img.shields.io/github/v/release/Gill-Bates/caddybuddy?logo=github&logoColor=white" alt="GitHub Release"></a>

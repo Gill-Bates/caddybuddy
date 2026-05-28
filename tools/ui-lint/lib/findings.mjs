@@ -15,6 +15,9 @@ import {
     KPI_ROW_VARIANCE_MAX,
     LAYOUT_SHIFT_THRESHOLD,
     APP_PAGE_HEADER_CONTENT_GAP_MAX_PX,
+    MOBILE_TOGGLE_CONTENT_ALIGNMENT_TOLERANCE_PX,
+    DESKTOP_PRIMARY_PANEL_HEIGHT_TOLERANCE_PX,
+    DESKTOP_VIEWPORT_PANEL_FOOTER_GAP_MAX_PX,
     VISUAL_DRIFT_THRESHOLD,
 } from './constants.mjs';
 
@@ -110,6 +113,7 @@ export function summarizeFindings(result) {
         'tablesWithoutHeaders',
         'clippedButtons',
         'hiddenInteractiveElements',
+        'viewportClippedInteractiveElements',
         'contrastProblems',
     ].forEach((key) => ensureArray(metrics, key));
 
@@ -118,7 +122,46 @@ export function summarizeFindings(result) {
     ensureObject(metrics, 'cardContainment', { cardsPastFooter: [] });
     ensureObject(metrics, 'footerViewportGap', { present: false, gapPx: null, minimum: 0, passesMinimum: true });
     ensureObject(metrics, 'sidebarFooterViewportGap', { present: false, gapPx: null, minimum: 0, passesMinimum: true, requiresScroll: false });
+    ensureObject(metrics, 'sidebarNavSpacing', {
+        present: false,
+        navGapPx: null,
+        linkMinHeightPx: null,
+        minimumGap: 0,
+        minimumLinkHeight: 0,
+        passesGap: true,
+        passesLinkHeight: true,
+    });
+    ensureObject(metrics, 'sitesFormControlHeights', {
+        present: false,
+        expectedHeight: 0,
+        tolerance: 0,
+        siteNameHeightPx: null,
+        domainControlHeightPx: null,
+        passesSiteName: true,
+        passesDomainControl: true,
+    });
     ensureObject(metrics, 'appPageLayout', { present: false, overflowY: null, locksVerticalOverflow: false });
+    ensureObject(metrics, 'mobileToggleContentAlignment', {
+        present: false,
+        toggleLeft: null,
+        contentLeft: null,
+        delta: null,
+        tolerance: MOBILE_TOGGLE_CONTENT_ALIGNMENT_TOLERANCE_PX,
+        passesTolerance: true,
+    });
+    ensureObject(metrics, 'desktopPrimaryPanelHeightAlignment', {
+        present: false,
+        heights: [],
+        delta: null,
+        tolerance: DESKTOP_PRIMARY_PANEL_HEIGHT_TOLERANCE_PX,
+        passesTolerance: true,
+    });
+    ensureObject(metrics, 'desktopViewportPanelFooterGap', {
+        present: false,
+        gapPx: null,
+        maximum: DESKTOP_VIEWPORT_PANEL_FOOTER_GAP_MAX_PX,
+        passesMaximum: true,
+    });
     ensureObject(metrics, 'primaryPanelPadding', { present: false, tolerance: 0, panels: [], mismatches: [] });
     ensureObject(metrics, 'pageHeaderContentGap', {
         present: false,
@@ -196,7 +239,11 @@ export function summarizeFindings(result) {
     }
     if (metrics.clippedButtons.length) pushWarning(`clippedButtons=${metrics.clippedButtons.length}`);
     if (metrics.buttonAlignmentIssues?.length) pushHard(`buttonAlignmentIssues=${metrics.buttonAlignmentIssues.length}`);
+    if (metrics.badgeAlignmentIssues?.length) pushHard(`badgeAlignmentIssues=${metrics.badgeAlignmentIssues.length}`);
     if (metrics.clickTargetsTooSmall?.length) pushHard(`clickTargetsTooSmall=${metrics.clickTargetsTooSmall.length}`);
+    if (metrics.viewportClippedInteractiveElements.length) {
+        pushHard(`viewportClippedInteractive=${metrics.viewportClippedInteractiveElements.length}`);
+    }
     if (metrics.hiddenInteractiveElements.length) pushHard(`hiddenInteractive=${metrics.hiddenInteractiveElements.length}`);
     if (metrics.bootstrapGridIssues?.length) pushWarning(`bootstrapGridIssues=${metrics.bootstrapGridIssues.length}`);
     if (metrics.bootstrapColumnsOutsideRows?.length) pushWarning(`bootstrapColumnsOutsideRows=${metrics.bootstrapColumnsOutsideRows.length}`);
@@ -247,8 +294,33 @@ export function summarizeFindings(result) {
             : metrics.sidebarFooterViewportGap.gapPx;
         pushHard(`sidebarFooterViewportGap=${gapLabel}/${metrics.sidebarFooterViewportGap.minimum}`);
     }
+    if (
+        metrics.sidebarNavSpacing.present
+        && (metrics.sidebarNavSpacing.passesGap === false || metrics.sidebarNavSpacing.passesLinkHeight === false)
+    ) {
+        pushHard(
+            `sidebarNavSpacing=${metrics.sidebarNavSpacing.navGapPx}/${metrics.sidebarNavSpacing.minimumGap}/${metrics.sidebarNavSpacing.linkMinHeightPx}/${metrics.sidebarNavSpacing.minimumLinkHeight}`
+        );
+    }
+    if (
+        metrics.sitesFormControlHeights.present
+        && (metrics.sitesFormControlHeights.passesSiteName === false || metrics.sitesFormControlHeights.passesDomainControl === false)
+    ) {
+        pushHard(
+            `sitesFormControlHeights=${metrics.sitesFormControlHeights.siteNameHeightPx}/${metrics.sitesFormControlHeights.domainControlHeightPx}/${metrics.sitesFormControlHeights.expectedHeight}/${metrics.sitesFormControlHeights.tolerance}`
+        );
+    }
     if (metrics.appPageLayout.present && metrics.appPageLayout.locksVerticalOverflow) {
         pushWarning(`appPageOverflow=${metrics.appPageLayout.overflowY}`);
+    }
+    if (isMobile && metrics.mobileToggleContentAlignment.present && metrics.mobileToggleContentAlignment.passesTolerance === false) {
+        pushHard(`mobileToggleContentAlignment=${metrics.mobileToggleContentAlignment.delta}/${metrics.mobileToggleContentAlignment.tolerance}`);
+    }
+    if (isDesktop && metrics.desktopPrimaryPanelHeightAlignment.present && metrics.desktopPrimaryPanelHeightAlignment.passesTolerance === false) {
+        pushHard(`desktopPrimaryPanelHeightAlignment=${metrics.desktopPrimaryPanelHeightAlignment.delta}/${metrics.desktopPrimaryPanelHeightAlignment.tolerance}`);
+    }
+    if (isDesktop && metrics.desktopViewportPanelFooterGap.present && metrics.desktopViewportPanelFooterGap.passesMaximum === false) {
+        pushHard(`desktopViewportPanelFooterGap=${metrics.desktopViewportPanelFooterGap.gapPx}/${metrics.desktopViewportPanelFooterGap.maximum}`);
     }
     if (metrics.cardContainment.cardsPastFooter.length) pushWarning(`cardsPastFooter=${metrics.cardContainment.cardsPastFooter.length}`);
     if (metrics.primaryPanelPadding.present && metrics.primaryPanelPadding.mismatches?.length) {

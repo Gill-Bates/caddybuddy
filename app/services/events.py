@@ -19,7 +19,7 @@ import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Literal, Self
 
 
 logger = logging.getLogger(__name__)
@@ -57,6 +57,15 @@ def _validate_event_payload_size(payload: str) -> None:
         raise ValueError("event payload exceeds size limit")
 
 
+def _close_queue(queue: asyncio.Queue["ResourceEvent | None"]) -> None:
+    while True:
+        try:
+            queue.get_nowait()
+        except asyncio.QueueEmpty:
+            break
+    queue.put_nowait(None)
+
+
 @dataclass(frozen=True, slots=True)
 class ResourceEvent:
     """Immutable event representing a resource change."""
@@ -64,18 +73,19 @@ class ResourceEvent:
     resource_type: ResourceType
     action: EventAction
     resource_id: str | None = None
-    details: EventDetails | None = None
+    details: EventDetails = field(default_factory=dict)
     timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     _payload: str = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        normalized_details = dict(self.details)
         try:
             payload = json.dumps(
                 {
                     "type": self.resource_type,
                     "action": self.action,
                     "id": self.resource_id,
-                    "details": self.details or {},
+                    "details": normalized_details,
                     "ts": self.timestamp,
                 },
                 ensure_ascii=False,
@@ -85,10 +95,65 @@ class ResourceEvent:
         except (TypeError, ValueError) as exc:
             raise ValueError("event details must be JSON-serializable") from exc
         _validate_event_payload_size(payload)
+        object.__setattr__(self, "details", normalized_details)
         object.__setattr__(self, "_payload", payload)
 
     def to_json(self) -> str:
         return self._payload
+
+
+class _SubscriberStream(AsyncIterator[ResourceEvent]):
+    def __init__(self, bus: EventBus) -> None:
+        self._bus = bus
+        self._queue: asyncio.Queue[ResourceEvent | None] = asyncio.Queue(maxsize=bus._queue_size)
+        self._active = False
+        self._closed = False
+
+    def __aiter__(self) -> Self:
+        return self
+
+    async def __anext__(self) -> ResourceEvent:
+        if self._closed:
+            raise StopAsyncIteration
+
+        if not self._active:
+            self._bus._activate_subscriber(self)
+            self._active = True
+
+        event = await self._queue.get()
+        if event is None:
+            self._closed = True
+            self._active = False
+            self._bus._release_subscriber(self)
+            raise StopAsyncIteration
+        return event
+
+    async def aclose(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._active = False
+        self._bus._release_subscriber(self)
+
+    def close_from_bus(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        was_active = self._active
+        self._active = False
+        self._bus._release_subscriber(self)
+        if was_active:
+            _close_queue(self._queue)
+
+    def deliver(self, event: ResourceEvent) -> None:
+        self._queue.put_nowait(event)
+
+    def __del__(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._active = False
+        self._bus._release_subscriber(self)
 
 
 class EventBus:
@@ -104,7 +169,13 @@ class EventBus:
     """
 
     def __init__(self, max_subscribers: int = 100, queue_size: int = _MAX_SUBSCRIBER_QUEUE_SIZE) -> None:
-        self._subscribers: set[asyncio.Queue[ResourceEvent | None]] = set()
+        if max_subscribers < 1:
+            raise ValueError("max_subscribers must be >= 1")
+        if queue_size < 1:
+            raise ValueError("queue_size must be >= 1")
+
+        self._subscribers: set[_SubscriberStream] = set()
+        self._pending_subscribers: set[_SubscriberStream] = set()
         self._max_subscribers = max_subscribers
         self._queue_size = queue_size
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -112,25 +183,29 @@ class EventBus:
     def _capture_loop(self) -> None:
         try:
             loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return
+        except RuntimeError as exc:
+            raise RuntimeError("EventBus methods must run inside the application event loop") from exc
+
         if self._loop is None or self._loop.is_closed():
             self._loop = loop
+            return
 
-    @staticmethod
-    def _close_queue(queue: asyncio.Queue[ResourceEvent | None]) -> None:
-        """Drain a queue and enqueue the shutdown sentinel to unblock waiters."""
-        while True:
-            try:
-                queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-        queue.put_nowait(None)
+        if self._loop is not loop:
+            raise RuntimeError("EventBus used from a different event loop")
+
+    def _activate_subscriber(self, subscriber: _SubscriberStream) -> None:
+        self._pending_subscribers.discard(subscriber)
+        self._subscribers.add(subscriber)
+
+    def _release_subscriber(self, subscriber: _SubscriberStream) -> None:
+        self._pending_subscribers.discard(subscriber)
+        self._subscribers.discard(subscriber)
 
     def _close_all_subscribers(self) -> None:
-        for queue in tuple(self._subscribers):
-            self._close_queue(queue)
+        for subscriber in tuple(self._subscribers | self._pending_subscribers):
+            subscriber.close_from_bus()
         self._subscribers.clear()
+        self._pending_subscribers.clear()
 
     def subscribe(self) -> AsyncIterator[ResourceEvent]:
         """
@@ -139,49 +214,43 @@ class EventBus:
         The generator exits when the client disconnects or the bus is shut down.
         """
         self._capture_loop()
-        if len(self._subscribers) >= self._max_subscribers:
+        total_subscribers = len(self._subscribers) + len(self._pending_subscribers)
+        if total_subscribers >= self._max_subscribers:
             logger.warning("Max SSE subscribers reached, rejecting new connection")
             raise SubscriberLimitReachedError("Max SSE subscribers reached")
-
-        queue: asyncio.Queue[ResourceEvent | None] = asyncio.Queue(maxsize=self._queue_size)
-        self._subscribers.add(queue)
-
-        async def _iterator() -> AsyncIterator[ResourceEvent]:
-            try:
-                while True:
-                    event = await queue.get()
-                    if event is None:
-                        break
-                    yield event
-            finally:
-                self._subscribers.discard(queue)
-
-        return _iterator()
+        subscriber = _SubscriberStream(self)
+        self._pending_subscribers.add(subscriber)
+        return subscriber
 
     async def publish(self, event: ResourceEvent) -> None:
         """Broadcast an event without blocking on slow subscribers."""
         self._capture_loop()
-        dead_queues: list[asyncio.Queue[ResourceEvent | None]] = []
-        for queue in tuple(self._subscribers):
+        dead_subscribers: list[_SubscriberStream] = []
+        for subscriber in tuple(self._subscribers):
             try:
-                queue.put_nowait(event)
+                subscriber.deliver(event)
             except asyncio.QueueFull:
-                dead_queues.append(queue)
+                dead_subscribers.append(subscriber)
                 logger.warning("Dropping slow SSE subscriber and closing connection")
 
-        for queue in dead_queues:
-            self._subscribers.discard(queue)
-            self._close_queue(queue)
+        for subscriber in dead_subscribers:
+            subscriber.close_from_bus()
 
     async def shutdown(self) -> None:
         """Signal all subscribers to disconnect."""
+        self._capture_loop()
         self._close_all_subscribers()
 
     def request_shutdown(self) -> None:
         """Schedule subscriber shutdown from sync exit handlers."""
         loop = self._loop
         if loop is None or loop.is_closed():
-            self._close_all_subscribers()
+            if self._subscribers:
+                logger.warning("Cannot close SSE subscribers safely without a running event loop")
+            for subscriber in tuple(self._pending_subscribers):
+                subscriber.close_from_bus()
+            self._subscribers.clear()
+            self._pending_subscribers.clear()
             return
         loop.call_soon_threadsafe(self._close_all_subscribers)
 
@@ -206,6 +275,30 @@ async def publish_resource_event(
         resource_type=resource_type,
         action=action,
         resource_id=resource_id,
-        details=details,
+        details=dict(details or {}),
     )
     await event_bus.publish(event)
+
+
+async def try_publish_resource_event(
+    resource_type: ResourceType,
+    action: EventAction,
+    resource_id: str | None = None,
+    details: EventDetails | None = None,
+) -> None:
+    try:
+        await publish_resource_event(
+            resource_type=resource_type,
+            action=action,
+            resource_id=resource_id,
+            details=details,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to publish resource event",
+            extra={
+                "resource_type": resource_type,
+                "action": action,
+                "resource_id": resource_id,
+            },
+        )

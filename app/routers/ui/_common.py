@@ -25,10 +25,9 @@ _UNSAFE_NEXT_PATH_RE = re.compile(r"[\x00-\x1f\x7f\\]")
 
 
 async def require_user(request: Request, session: AsyncSession) -> User | None:
-    """Return the current user or None (with flash) if not authenticated."""
+    """Return the current user or None if not authenticated."""
     current_user = await get_session_user(request, session)
     if current_user is None:
-        push_flash(request, "warning", "Please sign in to continue.")
         return None
     return current_user
 

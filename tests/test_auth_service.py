@@ -76,6 +76,12 @@ class AuthServiceTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(WeakPasswordError):
             await AuthService.hash_password("weakpassword12")
 
+    async def test_hash_password_accepts_eight_character_password_when_policy_is_met(self) -> None:
+        password_hash = await AuthService.hash_password("Abcdef1!")
+
+        self.assertIsInstance(password_hash, str)
+        self.assertTrue(password_hash)
+
     async def test_authenticate_treats_invalid_stored_hash_as_failed_login(self) -> None:
         session = SimpleNamespace()
         stored_user = SimpleNamespace(is_active=True, password_hash="broken-hash")
@@ -88,6 +94,19 @@ class AuthServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(user)
         update_last_login.assert_not_awaited()
+
+    async def test_authenticate_rejects_inactive_user(self) -> None:
+        session = SimpleNamespace()
+        stored_user = SimpleNamespace(is_active=False, password_hash="unused")
+
+        with (
+            patch.object(auth_module.user_repository, "get_by_username", new=AsyncMock(return_value=stored_user)),
+            patch.object(AuthService, "verify_password", new=AsyncMock()) as verify_password,
+        ):
+            user = await auth_module.auth_service.authenticate(session, "admin", "Password123!")
+
+        self.assertIsNone(user)
+        verify_password.assert_awaited_once_with("Password123!", auth_module._DUMMY_BCRYPT_HASH)
 
     async def test_authenticate_updates_last_login_for_valid_credentials(self) -> None:
         session = SimpleNamespace()

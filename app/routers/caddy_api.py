@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,14 +27,16 @@ from app.schemas.caddy import (
     SiteUpdateRequest,
 )
 from app.services.caddyfile_manager import (
+    CaddySyncResult,
     get_caddy_runtime_status,
     onboard_caddy,
     sync_caddy_configuration,
 )
-from app.services.events import publish_resource_event
+from app.services.events import try_publish_resource_event
 
 
 router = APIRouter(prefix="/api", tags=["caddy"])
+logger = logging.getLogger(__name__)
 
 
 def _sync_error_status(error_code: str | None) -> int:
@@ -47,7 +51,7 @@ def _sync_succeeded(sync_status: str) -> bool:
     return sync_status in {"synced", "no_change"}
 
 
-async def _run_sync_followup(session: AsyncSession):
+async def _run_sync_followup(session: AsyncSession) -> CaddySyncResult:
     try:
         sync_result = await sync_caddy_configuration(session)
         await session.commit()
@@ -55,6 +59,13 @@ async def _run_sync_followup(session: AsyncSession):
         await session.rollback()
         raise
     return sync_result
+
+
+async def _publish_site_event(action: str, site_id: int) -> None:
+    try:
+        await try_publish_resource_event("site", action, str(site_id))
+    except Exception:
+        logger.exception("Failed to publish site event", extra={"action": action, "site_id": site_id})
 
 
 async def _require_admin_api_user(
@@ -139,10 +150,13 @@ async def caddy_sync(
 
 
 @router.get("/sites", response_model=list[SiteResponse])
+@limiter.limit("60/minute")
 async def list_sites(
+    request: Request,
     session: AsyncSession = Depends(get_db_session),
     _current_user: User = Depends(_require_admin_api_user),
 ) -> list[SiteResponse]:
+    del request
     sites = await site_repository.list_all(session)
     return [SiteResponse.model_validate(site) for site in sites]
 
@@ -158,19 +172,18 @@ async def create_site(
 ) -> SiteMutationResponse:
     # SlowAPI requires the Request parameter in the endpoint signature.
     del request
-    if await site_repository.domain_exists(session, payload.domain):
-        raise HTTPException(status_code=409, detail=f"Domain '{payload.domain}' already exists.")
 
     try:
         site = await site_repository.create(
             session,
+            site_name=payload.site_name,
             domain=payload.domain,
             caddy_directives=payload.caddy_directives,
             enabled=payload.enabled,
         )
     except DuplicateSiteError as exc:
         await session.rollback()
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=f"Domain '{payload.domain}' already exists.") from exc
     await session.commit()
 
     sync_result = await _run_sync_followup(session)
@@ -182,7 +195,7 @@ async def create_site(
         config_sha256=sync_result.config_sha256,
         sync_error=sync_result.error,
     )
-    await publish_resource_event("site", "created", str(site.id))
+    await _publish_site_event("created", site.id)
     if not _sync_succeeded(sync_result.status):
         response.status_code = status.HTTP_202_ACCEPTED
     return response_payload
@@ -212,6 +225,7 @@ async def update_site(
         site = await site_repository.update(
             session,
             site,
+            site_name=payload.site_name,
             domain=payload.domain,
             caddy_directives=payload.caddy_directives,
             enabled=payload.enabled,
@@ -230,7 +244,7 @@ async def update_site(
         config_sha256=sync_result.config_sha256,
         sync_error=sync_result.error,
     )
-    await publish_resource_event("site", "updated", str(site.id))
+    await _publish_site_event("updated", site.id)
     if not _sync_succeeded(sync_result.status):
         response.status_code = status.HTTP_202_ACCEPTED
     return response_payload
@@ -261,7 +275,7 @@ async def delete_site(
         config_sha256=sync_result.config_sha256,
         sync_error=sync_result.error,
     )
-    await publish_resource_event("site", "deleted", str(site_id))
+    await _publish_site_event("deleted", site_id)
     if not _sync_succeeded(sync_result.status):
         response.status_code = status.HTTP_202_ACCEPTED
     return response_payload

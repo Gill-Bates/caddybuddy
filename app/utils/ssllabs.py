@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from datetime import UTC, datetime, timedelta
 from ipaddress import ip_address
@@ -77,8 +78,30 @@ def ensure_aware_utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
-def next_schedule_time(frequency: SslLabsScheduleFrequency, reference: datetime) -> datetime:
-    return ensure_aware_utc(reference) + schedule_interval(frequency)
+def _deterministic_jitter_seconds(key: str, max_jitter_seconds: int) -> int:
+    if max_jitter_seconds <= 0:
+        return 0
+    digest = hashlib.sha256(key.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big") % (max_jitter_seconds + 1)
+
+
+def next_schedule_time(
+    frequency: SslLabsScheduleFrequency,
+    reference: datetime,
+    *,
+    jitter_key: str | None = None,
+    max_jitter: timedelta | None = None,
+) -> datetime:
+    scheduled = ensure_aware_utc(reference) + schedule_interval(frequency)
+    if jitter_key is None or max_jitter is None:
+        return scheduled
+
+    max_jitter_seconds = max(int(max_jitter.total_seconds()), 0)
+    if max_jitter_seconds == 0:
+        return scheduled
+
+    jitter_seconds = _deterministic_jitter_seconds(f"{frequency}:{jitter_key}", max_jitter_seconds)
+    return scheduled + timedelta(seconds=jitter_seconds)
 
 
 def grade_badge_class(grade: str | None) -> str:
@@ -117,11 +140,11 @@ def extract_endpoint_details(result_json: dict | None) -> list[dict]:
     """Extract endpoint details (IP, grade, protocol) from SSL Labs result JSON."""
     if not result_json or not isinstance(result_json, dict):
         return []
-    
+
     endpoints = result_json.get("endpoints")
     if not isinstance(endpoints, list):
         return []
-    
+
     details = []
     for ep in endpoints:
         if not isinstance(ep, dict):
@@ -129,10 +152,10 @@ def extract_endpoint_details(result_json: dict | None) -> list[dict]:
         ip = ep.get("ipAddress", "")
         grade = ep.get("grade") or ep.get("gradeTrustIgnored") or ""
         status_msg = ep.get("statusMessage", "")
-        
+
         # Determine if IPv4 or IPv6
         ip_version = "IPv6" if ":" in ip else "IPv4"
-        
+
         details.append({
             "ip": ip,
             "ip_version": ip_version,
@@ -140,5 +163,5 @@ def extract_endpoint_details(result_json: dict | None) -> list[dict]:
             "status": status_msg,
             "badge_class": grade_badge_class(grade),
         })
-    
+
     return details

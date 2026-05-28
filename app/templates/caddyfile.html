@@ -31,7 +31,7 @@
                 </div>
                 <div class="panel-card__body">
                     <p class="mb-3">
-                        CaddyBuddy needs to initialize your Caddyfile at
+                        CaddyBuddy needs to initialize the Caddyfile from your configured Mounted Caddyfile Path:
                         <code>{{ caddyfile_path or 'not configured' }}</code> before it can
                         manage
                         sites.
@@ -72,20 +72,20 @@
             </div>
             {% endif %}
 
-            <div class="panel-card">
+            <div class="panel-card caddyfile-editor-panel">
                 <div class="panel-card__header">
                     <h2 class="h5 mb-0">Global Caddyfile</h2>
                 </div>
-                <form action="{{ request.app.url_path_for('save_caddyfile') }}" method="post" class="d-grid gap-3"
-                    id="caddyfile-form" data-loading-submit-form data-caddyfile-config-form {% if onboarding_required %}
-                    data-caddyfile-locked="true" {% endif %}>
+                <form action="{{ request.app.url_path_for('save_caddyfile') }}" method="post"
+                    class="d-grid gap-3 caddyfile-editor-panel__form" id="caddyfile-form" data-loading-submit-form
+                    data-caddyfile-config-form {% if onboarding_required %} data-caddyfile-locked="true" {% endif %}>
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
-                    <div>
+                    <div class="caddyfile-editor-panel__body">
                         <label class="form-label" for="global-caddyfile">Caddyfile Configuration</label>
-                        <textarea id="global-caddyfile" name="caddyfile" rows="18" class="form-control font-monospace"
-                            spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off" maxlength="524288"
-                            placeholder="{
+                        <textarea id="global-caddyfile" name="caddyfile" rows="18"
+                            class="form-control font-monospace caddyfile-editor-panel__textarea" spellcheck="false"
+                            autocapitalize="off" autocomplete="off" wrap="off" maxlength="524288" placeholder="{
     email admin@example.com
 }
 

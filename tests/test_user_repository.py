@@ -22,24 +22,6 @@ from app.repositories.users import UserRepository
 
 
 class UserRepositoryTests(unittest.IsolatedAsyncioTestCase):
-    async def test_get_by_username_normalizes_input_before_query(self) -> None:
-        session = SimpleNamespace()
-        repository = UserRepository()
-
-        async def execute(statement):
-            self.assertEqual(str(statement.compile(compile_kwargs={"literal_binds": True})), (
-                "SELECT users.id, users.username, users.email, users.password_hash, users.role, users.is_active, users.last_login, users.created_at, users.updated_at \n"
-                "FROM users \n"
-                "WHERE lower(users.username) = 'admin'"
-            ))
-            return SimpleNamespace(scalar_one_or_none=lambda: None)
-
-        session.execute = execute
-
-        result = await repository.get_by_username(session, "  Admin  ")
-
-        self.assertIsNone(result)
-
     async def test_create_normalizes_username_and_email(self) -> None:
         session = SimpleNamespace(add=lambda user: None, flush=AsyncMock())
         repository = UserRepository()
@@ -158,6 +140,24 @@ class UserRepositoryIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     password_hash="hash-2",
                 )
                 await session.commit()
+
+    async def test_get_by_username_finds_user_case_insensitively(self) -> None:
+        repository = UserRepository()
+
+        async with self.session_factory() as session:
+            await repository.create(
+                session,
+                username="Admin",
+                email="admin@example.com",
+                password_hash="hash",
+            )
+            await session.commit()
+
+        async with self.session_factory() as session:
+            user = await repository.get_by_username(session, "  admin  ")
+
+        self.assertIsNotNone(user)
+        self.assertEqual(user.username, "Admin")
 
 
 if __name__ == "__main__":

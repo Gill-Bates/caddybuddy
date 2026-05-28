@@ -49,6 +49,15 @@ def _normalize_domain_name(value: str) -> str:
     return normalize_domain_list(value)
 
 
+def _normalize_site_name(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError("site_name cannot be empty")
+    if "\n" in normalized or "\r" in normalized:
+        raise ValueError("site_name must not contain newlines")
+    return normalized
+
+
 def _normalize_upstream_url(value: str) -> str:
     normalized = value.strip()
     if not normalized:
@@ -225,10 +234,15 @@ class Site(TimestampMixin, Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    site_name: Mapped[str] = mapped_column(String(255, collation="NOCASE"), nullable=False, index=True)
     domain: Mapped[str] = mapped_column(Text, nullable=False)
     upstream_url: Mapped[str] = mapped_column(Text, nullable=False)
     caddy_directives: Mapped[str | None] = mapped_column(Text, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    @validates("site_name")
+    def _validate_site_name(self, _key: str, value: str) -> str:
+        return _normalize_site_name(value)
 
     @validates("domain")
     def _validate_domain(self, _key: str, value: str) -> str:

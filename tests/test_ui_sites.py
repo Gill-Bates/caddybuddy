@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import unittest
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -27,14 +28,10 @@ for key, value in _ENV_OVERRIDES.items():
 
 get_settings.cache_clear()
 
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
-from starlette.middleware.sessions import SessionMiddleware
-
-from app.database.session import get_db_session
-from app.middleware.csrf import CSRFMiddleware, SecurityHeadersMiddleware
+from app.routers.ui.sites import _site_update_requires_deploy
 from app.routers.ui.sites import router as sites_router
+from tests.ui_test_app import build_ui_test_app
 
 
 def tearDownModule() -> None:
@@ -59,35 +56,25 @@ class UISitesTests(unittest.TestCase):
     async def _session_override():
         yield AsyncMock()
 
-    def _build_app(self) -> FastAPI:
-        app = FastAPI()
-        app.add_middleware(CSRFMiddleware)
-        app.add_middleware(SessionMiddleware, secret_key="unit-test-secret-key")
-        app.add_middleware(SecurityHeadersMiddleware)
-        app.mount("/static", StaticFiles(directory="/opt/caddybuddy/app/static"), name="static")
-
-        @app.get("/", name="home_page")
-        async def _home_page() -> dict[str, str]:
-            return {"status": "ok"}
-
-        @app.get("/caddyfile", name="caddyfile_page")
-        async def _caddyfile_page() -> dict[str, str]:
-            return {"status": "ok"}
-
-        @app.post("/logout", name="logout_action")
-        async def _logout_action() -> dict[str, str]:
-            return {"status": "ok"}
-
-        app.include_router(sites_router)
-        app.dependency_overrides[get_db_session] = self._session_override
-        return app
+    def _build_app(self):
+        return build_ui_test_app(
+            sites_router,
+            session_override=self._session_override,
+            stub_routes=[
+                ("GET", "/", "home_page"),
+                ("GET", "/caddyfile", "caddyfile_page"),
+                ("POST", "/logout", "logout_action"),
+            ],
+        )
 
     def test_sites_page_renders_config_textarea_and_status_toggle(self) -> None:
         app = self._build_app()
         current_user = SimpleNamespace(username="admin", role="admin")
         site = SimpleNamespace(
             id=1,
+            site_name="Marketing",
             domain="example.com",
+            upstream_url="http://backend:8080",
             enabled=False,
             caddy_directives="reverse_proxy backend:8080",
         )
@@ -96,24 +83,91 @@ class UISitesTests(unittest.TestCase):
             patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)),
             patch("app.routers.ui.sites.site_repository.list_all", new=AsyncMock(return_value=[site])),
             patch("app.routers.ui.sites.site_repository.get_by_id", new=AsyncMock(return_value=site)),
+            patch("app.routers.ui.sites.get_cached_certificate_info_for_domains", new=AsyncMock(return_value={})),
         ):
             with TestClient(app) as client:
                 response = client.get("/sites/1")
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn('name="site_name"', response.text)
+        self.assertIn("Marketing", response.text)
         self.assertIn('name="caddy_directives"', response.text)
         self.assertIn("Site-specific Caddy directives.", response.text)
         self.assertNotIn("Upstream URL", response.text)
         self.assertIn('role="switch"', response.text)
-        self.assertNotIn(">Disabled</span>", response.text)
         self.assertIn("site-enabled-label", response.text)
         self.assertIn(">Enabled</label>", response.text)
+        self.assertIn(">Site</label>", response.text)
         self.assertIn("data-site-config-form", response.text)
         self.assertIn("data-domain-tag-input", response.text)
         self.assertIn("data-domain-tag-entry", response.text)
         self.assertIn("data-existing-domains=", response.text)
-        self.assertIn("data-site-save-button disabled", response.text)
-        self.assertIn("data-validate-error-prefix=\"Site configuration invalid\" disabled", response.text)
+        self.assertRegex(response.text, r"<button[^>]*data-site-save-button[^>]*disabled")
+        self.assertRegex(
+            response.text,
+            r"<button[^>]*data-validate-error-prefix=\"Site configuration invalid\"[^>]*disabled",
+        )
+        self.assertIn('action="/sites/1/delete"', response.text)
+        self.assertIn('aria-label="Delete Marketing"', response.text)
+        self.assertNotIn('class="btn btn-outline-danger w-100 js-confirm"', response.text)
+        self.assertIn('class="site-row-title"', response.text)
+        self.assertIn('class="status-dot site-status-dot status-dot--offline"', response.text)
+        self.assertIn('class="site-row-badges"', response.text)
+        self.assertIn('class="badge bg-secondary bg-opacity-25 text-body-secondary site-handler-badge">reverse_proxy</span>', response.text)
+        self.assertIn('class="site-domain-badges"', response.text)
+        self.assertIn('class="badge bg-secondary bg-opacity-25 text-body-secondary site-domain-badge">example.com</span>', response.text)
+        self.assertIn('class="panel-card panel-card--table sites-list-panel"', response.text)
+        self.assertIn('class="sites-list-scroll"', response.text)
+        self.assertIn('class="app-page app-page--sites"', response.text)
+        self.assertIn('data-label="Certificate"', response.text)
+        self.assertIn('data-sites-certificates-url="/sites/certificates"', response.text)
+        self.assertIn('data-site-certificate-domain="example.com"', response.text)
+        self.assertIn("Checking certificate...", response.text)
+        self.assertIn('class="site-cert__pending"', response.text)
+        self.assertIn('class="btn btn-sm btn-outline-primary btn--icon-only"', response.text)
+        self.assertIn('aria-label="Edit Marketing"', response.text)
+
+    def test_sites_page_renders_multi_domain_badges_in_sites_table(self) -> None:
+        app = self._build_app()
+        current_user = SimpleNamespace(username="admin", role="admin")
+        site = SimpleNamespace(
+            id=1,
+            site_name="Roundcube",
+            domain="mail.steiner.rs, mail.kwiring.com",
+            upstream_url="http://backend:8080",
+            enabled=True,
+            caddy_directives="reverse_proxy backend:8080",
+        )
+
+        with (
+            patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)),
+            patch("app.routers.ui.sites.site_repository.list_all", new=AsyncMock(return_value=[site])),
+            patch("app.routers.ui.sites.get_cached_certificate_info_for_domains", new=AsyncMock(return_value={})),
+        ):
+            with TestClient(app) as client:
+                response = client.get("/sites")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('class="badge bg-secondary bg-opacity-25 text-body-secondary site-domain-badge">mail.steiner.rs</span>', response.text)
+        self.assertIn('class="badge bg-secondary bg-opacity-25 text-body-secondary site-domain-badge">mail.kwiring.com</span>', response.text)
+        self.assertIn('class="status-dot site-status-dot status-dot--online"', response.text)
+
+    def test_sites_page_includes_safe_save_metadata_for_site_name_only_changes(self) -> None:
+        app = self._build_app()
+        current_user = SimpleNamespace(username="admin", role="admin")
+
+        with (
+            patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)),
+            patch("app.routers.ui.sites.site_repository.list_all", new=AsyncMock(return_value=[])),
+            patch("app.routers.ui.sites.get_cached_certificate_info_for_domains", new=AsyncMock(return_value={})),
+        ):
+            with TestClient(app) as client:
+                response = client.get("/sites")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('data-loading-label-safe="Creating..."', response.text)
+        self.assertIn('data-confirm-safe="Create this site."', response.text)
+        self.assertIn('data-confirm-accept-safe="Create"', response.text)
 
     def test_create_sites_page_renders_validate_and_save_disabled_initially(self) -> None:
         app = self._build_app()
@@ -122,13 +176,207 @@ class UISitesTests(unittest.TestCase):
         with (
             patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)),
             patch("app.routers.ui.sites.site_repository.list_all", new=AsyncMock(return_value=[])),
+            patch("app.routers.ui.sites.get_cached_certificate_info_for_domains", new=AsyncMock(return_value={})),
         ):
             with TestClient(app) as client:
                 response = client.get("/sites")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("data-site-save-button disabled", response.text)
-        self.assertIn("data-validate-error-prefix=\"Site configuration invalid\" disabled", response.text)
+        self.assertIn('name="site_name"', response.text)
+        self.assertIn('class="app-page app-page--sites"', response.text)
+        self.assertIn("sites-list-column", response.text)
+        self.assertIn("sites-form-column", response.text)
+        self.assertIn('class="panel-card sites-form-panel"', response.text)
+        self.assertIn('class="d-grid gap-3 sites-form-panel__form"', response.text)
+        self.assertRegex(response.text, r"<button[^>]*data-site-save-button[^>]*disabled")
+        self.assertRegex(
+            response.text,
+            r"<button[^>]*data-validate-error-prefix=\"Site configuration invalid\"[^>]*disabled",
+        )
+
+    def test_sites_certificates_endpoint_returns_primary_domain_data(self) -> None:
+        app = self._build_app()
+        current_user = SimpleNamespace(username="admin", role="admin")
+        site = SimpleNamespace(
+            id=1,
+            site_name="Marketing",
+            domain="example.com, www.example.com",
+            upstream_url="http://backend:8080",
+            enabled=True,
+            caddy_directives="reverse_proxy backend:8080",
+        )
+
+        certificate_info = {
+            "example.com": SimpleNamespace(
+                exists=True,
+                valid=True,
+                issued_at=None,
+                expires_at=None,
+                days_remaining=12,
+            )
+        }
+
+        with (
+            patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)),
+            patch("app.routers.ui.sites.site_repository.list_all", new=AsyncMock(return_value=[site])),
+            patch("app.routers.ui.sites.get_certificate_info_for_domains", new=AsyncMock(return_value=certificate_info)),
+        ):
+            with TestClient(app) as client:
+                response = client.get("/sites/certificates")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "certificates": {
+                    "example.com": {
+                        "exists": True,
+                        "valid": True,
+                        "issued_at": None,
+                        "expires_at": None,
+                        "days_remaining": 12,
+                        "error_message": None,
+                    }
+                }
+            },
+        )
+
+    def test_sites_page_renders_compact_certificate_summary(self) -> None:
+        app = self._build_app()
+        current_user = SimpleNamespace(username="admin", role="admin")
+        site = SimpleNamespace(
+            id=1,
+            site_name="Marketing",
+            domain="example.com, www.example.com",
+            upstream_url="http://backend:8080",
+            enabled=True,
+            caddy_directives="reverse_proxy backend:8080",
+        )
+        issued_at = datetime(2026, 5, 28, tzinfo=UTC)
+        certificate_info = {
+            "example.com": SimpleNamespace(
+                exists=True,
+                valid=True,
+                issued_at=issued_at,
+                expires_at=None,
+                days_remaining=74,
+            )
+        }
+
+        with (
+            patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)),
+            patch("app.routers.ui.sites.site_repository.list_all", new=AsyncMock(return_value=[site])),
+            patch("app.routers.ui.sites.get_cached_certificate_info_for_domains", new=AsyncMock(return_value=certificate_info)),
+        ):
+            with TestClient(app) as client:
+                response = client.get("/sites")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('class="site-cert__summary site-cert__summary--valid"', response.text)
+        self.assertIn('class="site-cert__days">74d', response.text)
+        self.assertIn('remaining</span>', response.text)
+        self.assertIn('class="site-cert__primary">Primary domain example.com', response.text)
+        self.assertIn('class="site-cert__issued">Issued 2026-05-28</div>', response.text)
+
+    def test_sites_page_renders_certificate_fetch_error_message(self) -> None:
+        app = self._build_app()
+        current_user = SimpleNamespace(username="admin", role="admin")
+        site = SimpleNamespace(
+            id=1,
+            site_name="Marketing",
+            domain="example.com",
+            upstream_url="http://backend:8080",
+            enabled=True,
+            caddy_directives="reverse_proxy backend:8080",
+        )
+        certificate_info = {
+            "example.com": SimpleNamespace(
+                exists=False,
+                valid=False,
+                issued_at=None,
+                expires_at=None,
+                days_remaining=None,
+                error_message="TLS handshake failed: the remote server aborted the connection with an internal TLS error.",
+            )
+        }
+
+        with (
+            patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)),
+            patch("app.routers.ui.sites.site_repository.list_all", new=AsyncMock(return_value=[site])),
+            patch("app.routers.ui.sites.get_cached_certificate_info_for_domains", new=AsyncMock(return_value=certificate_info)),
+        ):
+            with TestClient(app) as client:
+                response = client.get("/sites")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('class="site-cert__error"', response.text)
+        self.assertIn("Certificate check failed", response.text)
+        self.assertIn("internal TLS error", response.text)
+        self.assertIn('class="site-cert__primary">Primary domain example.com', response.text)
+
+    def test_validate_site_uses_baseline_for_import_snippets(self) -> None:
+        app = self._build_app()
+        current_user = SimpleNamespace(username="admin", role="admin")
+        form_data = {
+            "site_name": "App",
+            "domain": "example.com",
+            "caddy_directives": "import security_headers\nimport default_log\n\nreverse_proxy 10.30.0.10:8000",
+            "enabled": "true",
+        }
+        baseline = "(security_headers) {\n\theader X-Frame-Options DENY\n}\n\n(default_log) {\n\tlog\n}"
+
+        with (
+            patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)),
+            patch("app.routers.ui.sites.validated_form", new=AsyncMock(return_value=form_data)),
+            patch("app.routers.ui.sites.get_baseline_caddyfile", new=AsyncMock(return_value=baseline)),
+            patch("app.routers.ui.sites.caddy_service.validate_caddyfile", new=AsyncMock(return_value=(True, "Configuration is valid"))) as validate_mock,
+        ):
+            with TestClient(app) as client:
+                response = client.post("/sites/validate")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "valid": True,
+                "message": "Site configuration for 'App' is valid.",
+            },
+        )
+
+        validate_mock.assert_awaited_once()
+        validated_caddyfile = validate_mock.await_args.args[0]
+        self.assertIn("(security_headers)", validated_caddyfile)
+        self.assertIn("(default_log)", validated_caddyfile)
+        self.assertIn("import security_headers", validated_caddyfile)
+        self.assertIn("import default_log", validated_caddyfile)
+        self.assertIn("example.com {", validated_caddyfile)
+
+    def test_site_update_requires_deploy_ignores_site_name_only_changes(self) -> None:
+        site = SimpleNamespace(
+            site_name="Old name",
+            domain="example.com",
+            caddy_directives="reverse_proxy backend:8080",
+            enabled=True,
+        )
+
+        self.assertFalse(
+            _site_update_requires_deploy(
+                site,
+                site_name="New name",
+                domain="example.com",
+                caddy_directives="reverse_proxy backend:8080",
+                enabled=True,
+            )
+        )
+        self.assertTrue(
+            _site_update_requires_deploy(
+                site,
+                site_name="New name",
+                domain="www.example.com",
+                caddy_directives="reverse_proxy backend:8080",
+                enabled=True,
+            )
+        )
 
 
 if __name__ == "__main__":

@@ -36,6 +36,10 @@ class SettingsValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "caddy_api_url must not include username or password"):
             Settings(**_settings_kwargs(caddy_api_url="http://user:pass@localhost"))
 
+    def test_caddy_admin_url_rejects_credentials(self) -> None:
+        with self.assertRaisesRegex(ValueError, "caddy_admin_url must not include username or password"):
+            Settings(**_settings_kwargs(caddy_admin_url="http://user:pass@localhost:2019"))
+
     def test_caddy_admin_api_path_is_normalized(self) -> None:
         settings = Settings(**_settings_kwargs(CADDYBUDDY_CADDY_ADMIN_API_PATH=" load "))
 
@@ -64,6 +68,7 @@ class SettingsValidationTests(unittest.TestCase):
                 "CADDYBUDDY_SECRET_KEY": "",
                 "SECRET_KEY": "",
             },
+            clear=True,
         ):
             with self.assertRaisesRegex(ValueError, "Set a strong secret key"):
                 Settings(
@@ -78,7 +83,7 @@ class SettingsValidationTests(unittest.TestCase):
                 "CB_CADDY_API_URL": "http://host.docker.internal:2019",
                 "CB_CADDYFILE_PATH": "/etc/caddy/Caddyfile",
             },
-            clear=False,
+            clear=True,
         ):
             settings = Settings(
                 CB_SECRET_KEY="StrongSecretKey-1234567890",

@@ -27,14 +27,9 @@ for key, value in _ENV_OVERRIDES.items():
 
 get_settings.cache_clear()
 
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
-from starlette.middleware.sessions import SessionMiddleware
-
-from app.database.session import get_db_session
-from app.middleware.csrf import CSRFMiddleware, SecurityHeadersMiddleware
 from app.routers.ui.caddyfile import router as caddyfile_router
+from tests.ui_test_app import build_ui_test_app
 
 
 def tearDownModule() -> None:
@@ -59,51 +54,57 @@ class UICaddyfileTests(unittest.TestCase):
     async def _session_override():
         yield AsyncMock()
 
-    def _build_app(self) -> FastAPI:
-        app = FastAPI()
-        app.add_middleware(CSRFMiddleware)
-        app.add_middleware(SessionMiddleware, secret_key="unit-test-secret-key")
-        app.add_middleware(SecurityHeadersMiddleware)
-        app.mount("/static", StaticFiles(directory="/opt/caddybuddy/app/static"), name="static")
-
-        @app.get("/", name="home_page")
-        async def _home_page() -> dict[str, str]:
-            return {"status": "ok"}
-
-        @app.get("/sites", name="sites_page")
-        async def _sites_page() -> dict[str, str]:
-            return {"status": "ok"}
-
-        @app.post("/logout", name="logout_action")
-        async def _logout_action() -> dict[str, str]:
-            return {"status": "ok"}
-
-        app.include_router(caddyfile_router)
-        app.dependency_overrides[get_db_session] = self._session_override
-        return app
+    def _build_app(self):
+        return build_ui_test_app(
+            caddyfile_router,
+            session_override=self._session_override,
+            stub_routes=[
+                ("GET", "/", "home_page"),
+                ("GET", "/sites", "sites_page"),
+                ("POST", "/logout", "logout_action"),
+            ],
+        )
 
     def test_caddyfile_page_disables_validate_button_when_empty(self) -> None:
         app = self._build_app()
         current_user = SimpleNamespace(username="admin", role="admin")
+        runtime_status = SimpleNamespace(
+            onboarding_required=False,
+            caddyfile_path="/app/Caddyfile",
+            admin_api_reachable=True,
+        )
 
         with (
             patch("app.routers.ui.caddyfile.require_user", new=AsyncMock(return_value=current_user)),
             patch("app.routers.ui.caddyfile.get_baseline_caddyfile", new=AsyncMock(return_value="")),
+            patch("app.routers.ui.caddyfile.get_caddy_runtime_status", new=AsyncMock(return_value=runtime_status)),
         ):
             with TestClient(app) as client:
                 response = client.get("/caddyfile")
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn('class="app-page app-page--caddyfile"', response.text)
+        self.assertIn('class="panel-card caddyfile-editor-panel"', response.text)
+        self.assertIn('class="d-grid gap-3 caddyfile-editor-panel__form"', response.text)
+        self.assertIn('class="form-control font-monospace caddyfile-editor-panel__textarea"', response.text)
         self.assertIn("data-caddyfile-config-form", response.text)
         self.assertIn('id="caddyfile-validate-btn"', response.text)
         self.assertIn('data-validate-error-prefix="Caddyfile invalid"', response.text)
-        self.assertIn('disabled aria-disabled="true"', response.text)
+        self.assertRegex(
+            response.text,
+            r'id="caddyfile-validate-btn"[^>]*disabled[^>]*aria-disabled="true"',
+        )
         self.assertIn('build ', response.text)
 
     def test_caddyfile_page_buttons_start_disabled_until_changes(self) -> None:
         """Buttons start disabled; JavaScript enables them when changes are made."""
         app = self._build_app()
         current_user = SimpleNamespace(username="admin", role="admin")
+        runtime_status = SimpleNamespace(
+            onboarding_required=False,
+            caddyfile_path="/app/Caddyfile",
+            admin_api_reachable=True,
+        )
 
         with (
             patch("app.routers.ui.caddyfile.require_user", new=AsyncMock(return_value=current_user)),
@@ -111,16 +112,47 @@ class UICaddyfileTests(unittest.TestCase):
                 "app.routers.ui.caddyfile.get_baseline_caddyfile",
                 new=AsyncMock(return_value="{")
             ),
+            patch("app.routers.ui.caddyfile.get_caddy_runtime_status", new=AsyncMock(return_value=runtime_status)),
         ):
             with TestClient(app) as client:
                 response = client.get("/caddyfile")
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn('class="app-page app-page--caddyfile"', response.text)
+        self.assertIn('class="panel-card caddyfile-editor-panel"', response.text)
         self.assertIn('id="caddyfile-validate-btn"', response.text)
         self.assertIn('id="caddyfile-save-btn"', response.text)
         # Buttons start disabled in HTML; JavaScript enables them on change
-        self.assertIn('disabled aria-disabled="true"', response.text)
+        self.assertRegex(
+            response.text,
+            r'id="caddyfile-validate-btn"[^>]*disabled[^>]*aria-disabled="true"',
+        )
+        self.assertRegex(
+            response.text,
+            r'id="caddyfile-save-btn"[^>]*disabled[^>]*aria-disabled="true"',
+        )
         self.assertIn('build ', response.text)
+
+    def test_caddyfile_page_shows_configured_mounted_path_in_onboarding_notice(self) -> None:
+        app = self._build_app()
+        current_user = SimpleNamespace(username="admin", role="admin")
+        runtime_status = SimpleNamespace(
+            onboarding_required=True,
+            caddyfile_path="/custom/mounted/Caddyfile",
+            admin_api_reachable=True,
+        )
+
+        with (
+            patch("app.routers.ui.caddyfile.require_user", new=AsyncMock(return_value=current_user)),
+            patch("app.routers.ui.caddyfile.get_baseline_caddyfile", new=AsyncMock(return_value="")),
+            patch("app.routers.ui.caddyfile.get_caddy_runtime_status", new=AsyncMock(return_value=runtime_status)),
+        ):
+            with TestClient(app) as client:
+                response = client.get("/caddyfile")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Mounted Caddyfile Path", response.text)
+        self.assertIn("/custom/mounted/Caddyfile", response.text)
 
 
 if __name__ == "__main__":

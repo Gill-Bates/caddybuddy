@@ -8,12 +8,15 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from urllib.parse import urlsplit
+from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.utils.caddyfile import normalize_caddy_directives
 from app.utils.domains import normalize_domain_list
+
+
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]", re.ASCII)
 
 
 def _normalize_domain(value: str) -> str:
@@ -26,23 +29,19 @@ def _normalize_domain(value: str) -> str:
     )
 
 
-def _normalize_upstream_url(value: str) -> str:
+def _normalize_site_name(value: str) -> str:
     normalized = value.strip()
     if not normalized:
-        raise ValueError("upstream_url is required")
-    if "\n" in normalized or "\r" in normalized:
-        raise ValueError("upstream_url must not contain newlines")
-
-    parsed = urlsplit(normalized)
-    if parsed.scheme not in {"http", "https"}:
-        raise ValueError("upstream_url must use http or https")
-    if not parsed.hostname:
-        raise ValueError("upstream_url must include a host")
-    if parsed.query or parsed.fragment:
-        raise ValueError("upstream_url must not include query or fragment")
-    if parsed.path not in {"", "/"}:
-        raise ValueError("upstream_url must not include a path")
+        raise ValueError("site is required")
+    if _CONTROL_CHARS_RE.search(normalized):
+        raise ValueError("site must not contain control characters")
     return normalized
+
+
+def _require_tz_aware(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("datetime must be timezone-aware")
+    return value
 
 
 class CaddyStatusResponse(BaseModel):
@@ -73,6 +72,7 @@ class SiteResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    site_name: str
     domain: str
     upstream_url: str
     caddy_directives: str | None
@@ -80,11 +80,22 @@ class SiteResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    @field_validator("created_at", "updated_at")
+    @classmethod
+    def _validate_datetimes(cls, value: datetime) -> datetime:
+        return _require_tz_aware(value)
+
 
 class SiteCreateRequest(BaseModel):
+    site_name: str = Field(min_length=1, max_length=255)
     domain: str = Field(min_length=1, max_length=4096)
     caddy_directives: str = Field(min_length=1, max_length=524288)
     enabled: bool = True
+
+    @field_validator("site_name")
+    @classmethod
+    def _validate_site_name(cls, value: str) -> str:
+        return _normalize_site_name(value)
 
     @field_validator("domain")
     @classmethod
@@ -101,9 +112,17 @@ class SiteCreateRequest(BaseModel):
 
 
 class SiteUpdateRequest(BaseModel):
+    site_name: str | None = Field(default=None, min_length=1, max_length=255)
     domain: str | None = Field(default=None, min_length=1, max_length=4096)
     caddy_directives: str | None = Field(default=None, min_length=1, max_length=524288)
     enabled: bool | None = None
+
+    @field_validator("site_name")
+    @classmethod
+    def _validate_site_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _normalize_site_name(value)
 
     @field_validator("domain")
     @classmethod
@@ -121,6 +140,17 @@ class SiteUpdateRequest(BaseModel):
         if normalized is None:
             raise ValueError("config is required")
         return normalized
+
+    @model_validator(mode="after")
+    def _validate_non_empty_update(self) -> Self:
+        if (
+            self.site_name is None
+            and self.domain is None
+            and self.caddy_directives is None
+            and self.enabled is None
+        ):
+            raise ValueError("at least one field must be provided")
+        return self
 
 
 class SiteMutationResponse(BaseModel):

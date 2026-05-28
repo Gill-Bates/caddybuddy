@@ -17,10 +17,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.session import get_db_session
 from app.dependencies.web import get_session_user
 from app.models.entities import User
-from app.schemas.system import BuildInfoResponse, CaddyStatusResponse, HealthResponse
+from app.schemas.system import (
+    BuildInfoResponse,
+    CaddyStatusResponse,
+    DashboardMetricsResponse,
+    HealthResponse,
+)
 from app.services.build_info import get_build_info
 from app.services.caddyfile_manager import get_caddy_runtime_status
-from app.services.dashboard import get_caddy_status
+from app.services.dashboard import get_caddy_status, get_dashboard_metrics
 from app.services.events import ResourceEvent, SubscriberLimitReachedError, event_bus
 from app.services.runtime_settings import get_ssllabs_email
 
@@ -91,6 +96,24 @@ async def caddy_status(
         status=metrics.status,
         uptime=metrics.uptime,
         version=metrics.version,
+    )
+
+
+@router.get("/dashboard/metrics", response_model=DashboardMetricsResponse)
+async def dashboard_metrics(
+    _current_user: User = Depends(_require_api_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> DashboardMetricsResponse:
+    metrics = await get_dashboard_metrics(session)
+    return DashboardMetricsResponse(
+        domain_count=metrics.domain_count,
+        enabled_domain_count=metrics.enabled_domain_count,
+        valid_certificate_count=metrics.valid_certificate_count,
+        expired_certificate_count=metrics.expired_certificate_count,
+        expiring_soon_certificate_count=metrics.expiring_soon_certificate_count,
+        caddy_service_status=metrics.caddy_service_status,
+        caddy_service_uptime=metrics.caddy_service_uptime,
+        caddy_version=metrics.caddy_version,
     )
 
 

@@ -11,8 +11,6 @@
 	<img src="https://img.shields.io/badge/Platform-linux%2Famd64%20%7C%20linux%2Farm64-lightgrey?logo=linux&logoColor=white" alt="Platform">
 </p>
 
-# CaddyBuddy
-
 CaddyBuddy is a lightweight web UI for managing a single Caddy installation.
 
 It provides a dashboard, site management, a Caddyfile editor, SSL monitoring, onboarding, and secure defaults in one compact container image.

@@ -20,7 +20,7 @@ from app.database.session import get_session_factory
 from app.repositories.sites import site_repository
 from app.repositories.ssllabs import TERMINAL_SCAN_STATUSES, ssllabs_repository
 from app.schemas.ssllabs import SslLabsScanStatus, SslLabsScheduleFrequency
-from app.services.events import publish_resource_event
+from app.services.events import try_publish_resource_event
 from app.services.runtime_settings import get_ssllabs_email
 from app.utils.ssllabs import mask_email, next_schedule_time, validate_ssllabs_host
 
@@ -31,6 +31,8 @@ _INITIAL_POLL_SECONDS = 5
 _RUNNING_POLL_SECONDS = 10
 _SCHEDULER_POLL_SECONDS = 60
 _MIN_SECONDS_BETWEEN_NEW_SCANS = 300
+_MAX_RETRY_AFTER_SECONDS = 60 * 60
+_SCHEDULE_JITTER = timedelta(minutes=15)
 
 
 @dataclass(slots=True, frozen=True)
@@ -69,6 +71,20 @@ class SslLabsServiceError(RuntimeError):
     pass
 
 
+def _next_scheduled_at_for_target(target, reference: datetime) -> datetime | None:
+    frequency = getattr(target, "schedule_frequency", None)
+    if frequency is None:
+        return None
+
+    jitter_key = f"{getattr(target, 'site_id', 'unknown')}:{getattr(target, 'host', 'unknown')}"
+    return next_schedule_time(
+        frequency,
+        reference,
+        jitter_key=jitter_key,
+        max_jitter=_SCHEDULE_JITTER,
+    )
+
+
 def _retry_after_seconds(response: httpx.Response, fallback: int) -> int:
     raw_value = response.headers.get("Retry-After")
     if raw_value is None:
@@ -77,7 +93,14 @@ def _retry_after_seconds(response: httpx.Response, fallback: int) -> int:
         parsed = int(raw_value)
     except ValueError:
         return fallback
-    return max(parsed, fallback)
+    retry_after_seconds = min(max(parsed, fallback), _MAX_RETRY_AFTER_SECONDS)
+    if retry_after_seconds != parsed:
+        logger.info(
+            "Capped SSL Labs Retry-After from %s to %s seconds",
+            parsed,
+            retry_after_seconds,
+        )
+    return retry_after_seconds
 
 
 def _poll_delay_for_status(status: str) -> int:
@@ -183,8 +206,10 @@ async def check_email_registration_status(
                 if "not yet registered" in body or "register api" in body:
                     _registration_status_cache[email] = (False, now)
                     return False
-            # Other errors - assume not registered
-            _registration_status_cache[email] = (False, now)
+            logger.warning(
+                "SSL Labs registration status returned unexpected response",
+                extra={"status_code": response.status_code, "email": mask_email(email)},
+            )
             return False
     except Exception as exc:
         logger.warning("Failed to check SSL Labs registration status: %s", exc)
@@ -238,9 +263,11 @@ async def register_email_with_ssllabs(
                     clear_registration_status_cache(email)
                     return True
             logger.warning(
-                "SSL Labs registration failed: HTTP %d - %s",
-                response.status_code,
-                response.text[:200],
+                "SSL Labs registration failed",
+                extra={
+                    "status_code": response.status_code,
+                    "email": mask_email(email),
+                },
             )
             return False
     except Exception as exc:
@@ -344,12 +371,10 @@ class SslLabsClient:
 
 class SslLabsService:
     def __init__(self) -> None:
-        self._client: SslLabsClient | None = None
         self._task_lock: asyncio.Lock | None = None
         self._shutdown_event: asyncio.Event | None = None
         self._scheduler_task: asyncio.Task[None] | None = None
         self._active_tasks: dict[int, asyncio.Task[None]] = {}
-        self._registration_attempted: bool = False
 
     def _ensure_task_lock(self) -> asyncio.Lock:
         if self._task_lock is None:
@@ -375,17 +400,8 @@ class SslLabsService:
         async with session_factory() as session:
             return mask_email(await get_ssllabs_email(session))
 
-    async def _get_client(self, settings: Settings, *, email: str) -> SslLabsClient:
-        client_settings = self._client_settings_from(settings, email=email)
-        if self._client is None:
-            self._client = SslLabsClient(client_settings)
-        elif self._client.settings != client_settings:
-            await self._client.aclose()
-            self._client = SslLabsClient(client_settings)
-        return self._client
-
     async def startup(self, settings: Settings | None = None) -> None:
-        effective_settings = settings or get_settings()
+        del settings
         shutdown_event = self._ensure_shutdown_event()
         shutdown_event.clear()
         if self._scheduler_task is not None:
@@ -413,10 +429,6 @@ class SslLabsService:
             with suppress(asyncio.CancelledError, Exception):
                 await task
 
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
-
     async def sync_targets(self, session) -> None:
         sites = await site_repository.list_all(session)
         await ssllabs_repository.sync_targets(session, sites)
@@ -436,9 +448,7 @@ class SslLabsService:
             if frequency is not None:
                 validate_ssllabs_host(target.host)
             target.schedule_frequency = frequency
-            target.next_scheduled_at = (
-                next_schedule_time(frequency, datetime.now(UTC)) if frequency is not None else None
-            )
+            target.next_scheduled_at = _next_scheduled_at_for_target(target, datetime.now(UTC))
             await session.commit()
 
     async def request_scan(
@@ -521,8 +531,53 @@ class SslLabsService:
                 name=f"ssllabs-scan-{target_id}",
             )
             self._active_tasks[target_id] = task
-            task.add_done_callback(lambda _task, *, current_target_id=target_id: self._active_tasks.pop(current_target_id, None))
+            task.add_done_callback(
+                lambda done_task, *, current_target_id=target_id: self._discard_scan_task(
+                    current_target_id,
+                    done_task,
+                )
+            )
             return SslLabsScanRequestResult(scan_id=scan.id, host=scan.host, created=True, status=scan.status)
+
+    def _discard_scan_task(self, target_id: int, task: asyncio.Task[None]) -> None:
+        self._active_tasks.pop(target_id, None)
+
+        if task.cancelled():
+            return
+
+        exc = task.exception()
+        if exc is not None:
+            logger.error(
+                "SSL Labs scan task crashed",
+                exc_info=exc,
+                extra={"target_id": target_id},
+            )
+
+    async def _publish_scan_event(
+        self,
+        *,
+        target_id: int,
+        scan_id: int,
+        status: SslLabsScanStatus,
+        payload: dict[str, Any] | None,
+    ) -> None:
+        action = "scan_updated"
+        if status == "queued":
+            action = "scan_started"
+        elif status in TERMINAL_SCAN_STATUSES:
+            action = "scan_completed" if status == "ready" else "scan_failed"
+
+        await try_publish_resource_event(
+            "ssllabs_scan",
+            action,
+            str(target_id),
+            {
+                "scan_id": scan_id,
+                "status": status,
+                "grade": _extract_grade(payload or {}),
+                "host": (payload or {}).get("host") or None,
+            },
+        )
 
     async def _mark_scan_state(
         self,
@@ -555,22 +610,10 @@ class SslLabsService:
             if completed:
                 scan.completed_at = now
                 target.last_scan_completed_at = now
-                if target.schedule_frequency is not None:
-                    target.next_scheduled_at = next_schedule_time(target.schedule_frequency, now)
+                target.next_scheduled_at = _next_scheduled_at_for_target(target, now)
 
             await session.commit()
-
-        action = "scan_updated"
-        if status == "queued":
-            action = "scan_started"
-        elif status in TERMINAL_SCAN_STATUSES:
-            action = "scan_completed" if status == "ready" else "scan_failed"
-        await publish_resource_event(
-            "ssllabs_scan",
-            action,
-            str(target_id),
-            {"scan_id": scan_id, "status": status, "grade": _extract_grade(payload or {}), "host": (payload or {}).get("host") or None},
-        )
+        await self._publish_scan_event(target_id=target_id, scan_id=scan_id, status=status, payload=payload)
 
     async def _sleep_or_shutdown(self, seconds: int) -> None:
         try:
@@ -592,15 +635,14 @@ class SslLabsService:
 
         if not email:
             raise SslLabsServiceError("SSL Labs email is not configured.")
-
-        await self._mark_scan_state(target_id=target_id, scan_id=scan_id, payload={"host": host}, status="queued")
-
-        client = await self._get_client(settings, email=email)
-        start_new = force_new
-        from_cache = not force_new
-        max_age_hours = settings.ssllabs_cache_max_age_hours if from_cache else None
+        client = SslLabsClient(self._client_settings_from(settings, email=email))
 
         try:
+            await self._mark_scan_state(target_id=target_id, scan_id=scan_id, payload={"host": host}, status="queued")
+
+            start_new = force_new
+            from_cache = not force_new
+            max_age_hours = settings.ssllabs_cache_max_age_hours if from_cache else None
             while True:
                 try:
                     payload = await client.analyze(
@@ -609,21 +651,10 @@ class SslLabsService:
                         from_cache=from_cache,
                         max_age_hours=max_age_hours,
                     )
-                except SslLabsEmailNotRegisteredError:
-                    # Auto-register if not yet attempted
-                    if not self._registration_attempted:
-                        self._registration_attempted = True
-                        if email and await register_email_with_ssllabs(
-                            email,
-                            api_base_url=settings.ssllabs_api_base_url,
-                        ):
-                            # Registration succeeded, retry the request
-                            logger.info("Auto-registered with SSL Labs, retrying scan...")
-                            continue
-                    # Registration failed or already attempted
+                except SslLabsEmailNotRegisteredError as exc:
                     raise SslLabsClientError(
-                        "SSL Labs email registration failed. Please register manually."
-                    )
+                        "SSL Labs email is not registered. Register it explicitly before starting scans."
+                    ) from exc
                 except SslLabsRetryableError as exc:
                     retry_at = datetime.now(UTC) + timedelta(seconds=exc.retry_after_seconds)
                     await self._mark_scan_state(
@@ -671,7 +702,7 @@ class SslLabsService:
                 scan_id=scan_id,
                 payload={"host": host},
                 status="failed",
-                completed=True,
+                completed=False,
                 error_code="cancelled",
                 error_message="SSL Labs scan cancelled during shutdown.",
             )
@@ -687,6 +718,19 @@ class SslLabsService:
                 error_code=exc.__class__.__name__,
                 error_message=str(exc),
             )
+        except Exception as exc:
+            logger.exception("Unexpected SSL Labs scan failure for %s", host)
+            await self._mark_scan_state(
+                target_id=target_id,
+                scan_id=scan_id,
+                payload={"host": host},
+                status="failed",
+                completed=True,
+                error_code=exc.__class__.__name__,
+                error_message="Unexpected SSL Labs scan failure.",
+            )
+        finally:
+            await client.aclose()
 
     async def _scheduler_loop(self) -> None:
         while not self._ensure_shutdown_event().is_set():

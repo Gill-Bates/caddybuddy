@@ -47,10 +47,18 @@ async def ssllabs_page(
 
     await ssllabs_service.sync_targets(session)
     await session.commit()
-    rows = []
+    site_rows: list[dict[str, object]] = []
+    site_rows_by_id: dict[int, dict[str, object]] = {}
     now = datetime.now(UTC)
     stale_cutoff = active_scan_cutoff(now)
-    for target, site, latest_scan in await ssllabs_repository.list_targets_with_latest_scans(session):
+    target_rows = sorted(
+        await ssllabs_repository.list_targets_with_latest_scans(session),
+        key=lambda row: (
+            str(getattr(row[1], "site_name", getattr(row[1], "domain", ""))).casefold(),
+            str(getattr(row[0], "host", "")).casefold(),
+        ),
+    )
+    for target, site, latest_scan in target_rows:
         host_error: str | None = None
         try:
             validate_ssllabs_host(target.host)
@@ -67,7 +75,13 @@ async def ssllabs_page(
         if latest_scan is not None:
             endpoints = extract_endpoint_details(getattr(latest_scan, "result_json", None))
 
-        rows.append(
+        site_row = site_rows_by_id.get(site.id)
+        if site_row is None:
+            site_row = {"site": site, "domains": []}
+            site_rows_by_id[site.id] = site_row
+            site_rows.append(site_row)
+
+        site_row["domains"].append(
             {
                 "target": target,
                 "site": site,
@@ -85,7 +99,7 @@ async def ssllabs_page(
 
     context = {
         "page_title": "SSL Labs",
-        "rows": rows,
+        "site_rows": site_rows,
     }
     return render_template(request, "ssllabs.html", current_user=current_user, context=context)
 

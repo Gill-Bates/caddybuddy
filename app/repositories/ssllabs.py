@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import re
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,10 +20,23 @@ from app.utils.domains import split_domain_names
 ACTIVE_SCAN_STATUSES = frozenset({"queued", "starting", "dns", "in_progress", "rate_limited"})
 TERMINAL_SCAN_STATUSES = frozenset({"ready", "error", "failed"})
 ACTIVE_SCAN_STALE_AFTER = timedelta(hours=2)
+_TLS_OFF_RE = re.compile(r"(?im)^\s*tls\s+off\s*$")
+_AUTO_HTTPS_OFF_RE = re.compile(r"(?im)^\s*auto_https\s+off\s*$")
 
 
 def active_scan_cutoff(now: datetime) -> datetime:
     return now - ACTIVE_SCAN_STALE_AFTER
+
+
+def site_uses_https(site: Site) -> bool:
+    if not getattr(site, "enabled", True):
+        return False
+
+    directives = (getattr(site, "caddy_directives", None) or "").strip()
+    if not directives:
+        return True
+
+    return _TLS_OFF_RE.search(directives) is None and _AUTO_HTTPS_OFF_RE.search(directives) is None
 
 
 class SslLabsRepository:
@@ -31,6 +45,8 @@ class SslLabsRepository:
         for site in sites:
             site_id = getattr(site, "id", None)
             if site_id is None:
+                continue
+            if not site_uses_https(site):
                 continue
             for host in split_domain_names(site.domain):
                 desired_keys[(site_id, host)] = site

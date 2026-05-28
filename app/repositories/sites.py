@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.entities import Site, _normalize_domain_name, _normalize_upstream_url
+from app.models.entities import Site, _normalize_domain_name, _normalize_site_name, _normalize_upstream_url
 from app.utils.caddyfile import extract_upstream_from_directives, normalize_caddy_directives
 from app.utils.domains import split_domain_names
 
@@ -54,7 +54,7 @@ class SiteRepository:
         limit: int | None = None,
         enabled_only: bool = False,
     ) -> list[Site]:
-        statement = select(Site).order_by(Site.domain.asc())
+        statement = select(Site).order_by(Site.site_name.asc(), Site.domain.asc())
         if enabled_only:
             statement = statement.where(Site.enabled.is_(True))
         if limit is not None:
@@ -120,10 +120,12 @@ class SiteRepository:
         self,
         session: AsyncSession,
         *,
+        site_name: str,
         domain: str,
         caddy_directives: str,
         enabled: bool = True,
     ) -> Site:
+        normalized_site_name = _normalize_site_name(site_name)
         normalized_domain = _normalize_domain_name(domain)
         if self._supports_execute(session) and await self.domain_exists(session, normalized_domain):
             raise DuplicateSiteError("Site domain already exists.")
@@ -133,6 +135,7 @@ class SiteRepository:
             raise ValueError("caddy_directives cannot be empty")
 
         site = Site(
+            site_name=normalized_site_name,
             domain=normalized_domain,
             upstream_url=self._derive_legacy_upstream_url(normalized_directives),
             caddy_directives=normalized_directives,
@@ -150,10 +153,13 @@ class SiteRepository:
         session: AsyncSession,
         site: Site,
         *,
+        site_name: str | None = None,
         domain: str | None = None,
         caddy_directives: str | None = None,
         enabled: bool | None = None,
     ) -> Site:
+        if site_name is not None:
+            site.site_name = _normalize_site_name(site_name)
         if domain is not None:
             normalized_domain = _normalize_domain_name(domain)
             if self._supports_execute(session) and await self.domain_exists(

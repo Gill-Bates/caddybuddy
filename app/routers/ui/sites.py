@@ -22,10 +22,10 @@ from app.dependencies.web import push_flash, redirect_to, render_template
 from app.repositories.sites import DuplicateSiteError, site_repository
 from app.schemas.caddy import SiteCreateRequest
 from app.services.caddy import caddy_service
-from app.services.caddyfile_manager import validate_and_deploy_full_caddyfile
-from app.services.dashboard import get_certificate_info_for_domains
+from app.services.caddyfile_manager import get_baseline_caddyfile, validate_and_deploy_full_caddyfile
+from app.services.dashboard import CertificateInfo, get_cached_certificate_info_for_domains, get_certificate_info_for_domains
 from app.services.events import publish_resource_event
-from app.utils.caddyfile import build_domain_site_preview
+from app.utils.caddyfile import build_domain_site_preview, extract_site_handler_from_directives
 from app.utils.domains import split_domain_names
 
 from ._common import (
@@ -38,6 +38,85 @@ from ._common import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _site_update_requires_deploy(
+    site,
+    *,
+    site_name: str,
+    domain: str,
+    caddy_directives: str,
+    enabled: bool,
+) -> bool:
+    return any(
+        (
+            site.domain != domain,
+            site.caddy_directives != caddy_directives,
+            site.enabled != enabled,
+        )
+    )
+
+
+def _primary_domain_name(domain_value: str) -> str | None:
+    domain_names = split_domain_names(domain_value)
+    return domain_names[0] if domain_names else None
+
+
+def _serialize_certificate_info(info: CertificateInfo) -> dict[str, object]:
+    return {
+        "exists": info.exists,
+        "valid": info.valid,
+        "issued_at": info.issued_at.isoformat() if info.issued_at else None,
+        "expires_at": info.expires_at.isoformat() if info.expires_at else None,
+        "days_remaining": info.days_remaining,
+        "error_message": getattr(info, "error_message", None),
+    }
+
+
+async def _build_site_validation_caddyfile(
+    session: AsyncSession,
+    *,
+    domain: str,
+    caddy_directives: str,
+) -> str:
+    baseline = (await get_baseline_caddyfile(session)).strip()
+    site_block = build_domain_site_preview(
+        name=domain,
+        upstream=None,
+        caddy_directives=caddy_directives,
+        ssl_enabled=True,
+    ).strip()
+
+    if baseline:
+        return f"{baseline}\n\n{site_block}"
+    return site_block
+
+
+@router.get("/sites/certificates", response_class=JSONResponse)
+async def sites_certificates(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+):
+    """Return certificate information for Sites page rows without blocking initial HTML render."""
+    current_user = await require_user(request, session)
+    if current_user is None:
+        return JSONResponse({"detail": "Authentication required."}, status_code=401)
+
+    sites = await site_repository.list_all(session)
+    primary_domains = [
+        primary_domain
+        for site in sites
+        if (primary_domain := _primary_domain_name(site.domain)) is not None
+    ]
+    cert_info = await get_certificate_info_for_domains(primary_domains)
+    return JSONResponse(
+        {
+            "certificates": {
+                domain: _serialize_certificate_info(info)
+                for domain, info in cert_info.items()
+            }
+        }
+    )
 
 
 @router.get("/sites", response_class=HTMLResponse)
@@ -68,9 +147,20 @@ async def sites_page(
                 "site_id": site.id,
             })
 
-    # Deduplicate domains for certificate lookup (cached, TTL 10min)
-    all_domains = sorted({d["domain"] for d in domain_catalog})
-    cert_info = await get_certificate_info_for_domains(all_domains)
+    primary_domains_by_site_id = {
+        site.id: primary_domain
+        for site in sites
+        if (primary_domain := _primary_domain_name(site.domain)) is not None
+    }
+    handler_by_site_id = {
+        site.id: handler
+        for site in sites
+        if (handler := extract_site_handler_from_directives(site.caddy_directives)) is not None
+    }
+    cert_info = await get_cached_certificate_info_for_domains(
+        list(primary_domains_by_site_id.values()),
+        allow_stale=True,
+    )
 
     context = {
         "page_title": "Sites",
@@ -78,6 +168,8 @@ async def sites_page(
         "selected_site": selected_site,
         "domain_catalog": domain_catalog,
         "cert_info": cert_info,
+        "primary_domains_by_site_id": primary_domains_by_site_id,
+        "handler_by_site_id": handler_by_site_id,
     }
     return render_template(request, "sites.html", current_user=current_user, context=context)
 
@@ -96,12 +188,14 @@ async def save_site(
     form = await validated_form(request)
 
     site_id_raw = str(form.get("site_id", "")).strip()
+    site_name = str(form.get("site_name", "")).strip()
     domain = str(form.get("domain", "")).strip()
     caddy_directives = str(form.get("caddy_directives", "")).strip()
     enabled = str(form.get("enabled", "")).strip().lower() in {"1", "true", "on", "yes"}
 
     try:
         payload = SiteCreateRequest(
+            site_name=site_name,
             domain=domain,
             caddy_directives=caddy_directives,
             enabled=enabled,
@@ -110,6 +204,7 @@ async def save_site(
         push_flash(request, "danger", exc.errors()[0]["msg"])
         return redirect_to(f"/sites/{site_id_raw}" if site_id_raw else "/sites")
 
+    site_name = payload.site_name
     domain = payload.domain
     caddy_directives = payload.caddy_directives
     enabled = payload.enabled
@@ -132,30 +227,42 @@ async def save_site(
                 push_flash(request, "danger", f"Domain '{domain}' is already assigned to another site.")
                 return redirect_to(f"/sites/{site_id}")
 
+            requires_deploy = _site_update_requires_deploy(
+                site,
+                site_name=site_name,
+                domain=domain,
+                caddy_directives=caddy_directives,
+                enabled=enabled,
+            )
+
             await site_repository.update(
                 session,
                 site,
+                site_name=site_name,
                 domain=domain,
                 caddy_directives=caddy_directives,
                 enabled=enabled,
             )
             await session.commit()
 
-            try:
-                success, deploy_message = await validate_and_deploy_full_caddyfile(session)
-                await session.commit()
-                if success:
-                    push_flash(request, "success", f"Site '{domain}' saved and deployed.")
-                else:
-                    logger.warning("Sync failed after site update id=%s domain=%s: %s", site.id, domain, deploy_message)
-                    push_flash(
-                        request,
-                        "warning",
-                        f"Site '{domain}' saved, but synchronization failed: {deploy_message}",
-                    )
-            except Exception:
-                logger.exception("Deployment raised unexpectedly after site update id=%s", site.id)
-                push_flash(request, "warning", f"Site '{domain}' saved, but deployment failed unexpectedly.")
+            if requires_deploy:
+                try:
+                    success, deploy_message = await validate_and_deploy_full_caddyfile(session)
+                    await session.commit()
+                    if success:
+                        push_flash(request, "success", f"Site '{site_name}' saved and deployed.")
+                    else:
+                        logger.warning("Sync failed after site update id=%s site=%s: %s", site.id, site_name, deploy_message)
+                        push_flash(
+                            request,
+                            "warning",
+                            f"Site '{site_name}' saved, but synchronization failed: {deploy_message}",
+                        )
+                except Exception:
+                    logger.exception("Deployment raised unexpectedly after site update id=%s", site.id)
+                    push_flash(request, "warning", f"Site '{site_name}' saved, but deployment failed unexpectedly.")
+            else:
+                push_flash(request, "success", f"Site '{site_name}' saved.")
             await publish_resource_event("site", "updated", str(site.id))
             return redirect_to(f"/sites/{site.id}")
 
@@ -167,6 +274,7 @@ async def save_site(
 
             site = await site_repository.create(
                 session,
+                site_name=site_name,
                 domain=domain,
                 caddy_directives=caddy_directives,
                 enabled=enabled,
@@ -177,17 +285,17 @@ async def save_site(
                 success, deploy_message = await validate_and_deploy_full_caddyfile(session)
                 await session.commit()
                 if success:
-                    push_flash(request, "success", f"Site '{domain}' created and deployed.")
+                    push_flash(request, "success", f"Site '{site_name}' created and deployed.")
                 else:
-                    logger.warning("Sync failed after site create id=%s domain=%s: %s", site.id, domain, deploy_message)
+                    logger.warning("Sync failed after site create id=%s site=%s: %s", site.id, site_name, deploy_message)
                     push_flash(
                         request,
                         "warning",
-                        f"Site '{domain}' created, but synchronization failed: {deploy_message}",
+                        f"Site '{site_name}' created, but synchronization failed: {deploy_message}",
                     )
             except Exception:
                 logger.exception("Deployment raised unexpectedly after site create id=%s", site.id)
-                push_flash(request, "warning", f"Site '{domain}' created, but deployment failed unexpectedly.")
+                push_flash(request, "warning", f"Site '{site_name}' created, but deployment failed unexpectedly.")
             await publish_resource_event("site", "created", str(site.id))
             return redirect_to(f"/sites/{site.id}")
 
@@ -262,6 +370,7 @@ async def validate_site(
     form = await validated_form(request)
     try:
         payload = SiteCreateRequest(
+            site_name=str(form.get("site_name", "")).strip(),
             domain=str(form.get("domain", "")).strip(),
             caddy_directives=str(form.get("caddy_directives", "")).strip(),
             enabled=str(form.get("enabled", "")).strip().lower() in {"1", "true", "on", "yes"},
@@ -269,12 +378,10 @@ async def validate_site(
     except ValidationError as exc:
         return JSONResponse({"valid": False, "message": exc.errors()[0]["msg"]})
 
-    # Build a minimal Caddyfile site block and validate syntax via Caddy
-    test_caddyfile = build_domain_site_preview(
-        name=payload.domain,
-        upstream=None,
+    test_caddyfile = await _build_site_validation_caddyfile(
+        session,
+        domain=payload.domain,
         caddy_directives=payload.caddy_directives,
-        ssl_enabled=True,
     )
     valid, message = await caddy_service.validate_caddyfile(test_caddyfile)
     if not valid:
@@ -283,6 +390,6 @@ async def validate_site(
     return JSONResponse(
         {
             "valid": True,
-            "message": f"Site configuration for '{payload.domain}' is valid.",
+            "message": f"Site configuration for '{payload.site_name}' is valid.",
         }
     )

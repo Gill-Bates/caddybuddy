@@ -48,6 +48,17 @@ _CADDY_DIRECTIVE_KEYWORDS = frozenset(
         "vars",
     }
 )
+_SITE_HANDLER_DIRECTIVES = frozenset(
+    {
+        "file_server",
+        "handle",
+        "handle_path",
+        "php_fastcgi",
+        "redir",
+        "respond",
+        "reverse_proxy",
+    }
+)
 _CADDY_TOKEN_FORBIDDEN_RE = re.compile(r"[\s{}#]", re.ASCII)
 _SITE_LABEL_FORBIDDEN_RE = re.compile(r"[\r\n{}]", re.ASCII)
 _DIRECTIVE_WRAPPER_TEMPLATE = r"^{directive}(?:\s+|\s*\{{)"
@@ -514,6 +525,25 @@ def extract_upstream_from_directives(directives: str | None) -> str | None:
             continue
         args = header.removeprefix("reverse_proxy ").split()
         return args[0] if len(args) == 1 else None
+
+    return None
+
+
+def extract_site_handler_from_directives(directives: str | None) -> str | None:
+    """Extract the first top-level handler directive suitable for Sites UI badges."""
+    if not directives:
+        return None
+
+    try:
+        chunks = _split_top_level_directives(directives)
+    except ValueError:
+        return None
+
+    for chunk in chunks:
+        header, _body = _split_block_header_and_body(chunk)
+        directive = header.split(None, 1)[0].strip()
+        if directive in _SITE_HANDLER_DIRECTIVES:
+            return directive
 
     return None
 

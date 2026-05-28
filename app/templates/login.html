@@ -4,15 +4,14 @@
 
 {% block content %}
 <section class="auth-shell">
-    <div class="auth-card">
+    <div class="auth-card{% if auth_error %} auth-card--shake{% endif %}">
         <div class="card-body p-4 p-sm-5">
             <div class="text-center mb-4">
-                <div class="auth-brand__logo-wrap mx-auto mb-3" aria-hidden="true">
-                    <img src="{{ request.app.url_path_for('static', path='img/favicon.svg') }}" alt=""
-                        class="auth-brand__logo">
+                <div class="auth-brand__logo-wrap auth-brand__logo-wrap--wordmark mx-auto mb-3" aria-hidden="true">
+                    <img src="{{ request.app.url_path_for('static', path='img/caddybuddy_1c.svg') }}" alt=""
+                        class="auth-brand__logo auth-brand__logo--wordmark">
                 </div>
-                <h1 class="auth-card__title mb-2">Sign in</h1>
-                <p class="text-muted small">Access the CaddyBuddy control plane.</p>
+                <p class="text-muted small">Please sign in to continue</p>
             </div>
 
             <form action="{{ request.app.url_path_for('login_action') }}" method="post" class="auth-form"

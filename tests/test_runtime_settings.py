@@ -84,6 +84,10 @@ class RuntimeSettingsTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "must not include a path"):
             normalize_caddy_api_url("http://localhost:2019/config/")
 
+    def test_normalize_caddy_api_url_rejects_credentials(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must not include username or password"):
+            normalize_caddy_api_url("http://user:pass@localhost:2019")
+
     def test_normalize_caddyfile_path_requires_absolute_path(self) -> None:
         with self.assertRaisesRegex(ValueError, "must be absolute"):
             normalize_caddyfile_path("relative/Caddyfile")

@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 import unittest
 
 from sqlalchemy import create_engine, select
@@ -33,7 +33,7 @@ class UTCDateTimeTests(unittest.TestCase):
         self.engine.dispose()
 
     def test_sqlite_roundtrip_returns_utc_aware_datetime(self) -> None:
-        source = datetime(2026, 5, 27, 12, 34, 56, tzinfo=UTC) + timedelta(hours=2)
+        source = datetime(2026, 5, 27, 14, 34, 56, tzinfo=timezone(timedelta(hours=2)))
 
         with Session(self.engine) as session:
             session.add(_TimestampRecord(happened_at=source))

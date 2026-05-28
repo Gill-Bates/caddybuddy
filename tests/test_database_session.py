@@ -26,11 +26,22 @@ class _SessionModuleStateMixin:
 
 class DatabaseSessionLazyInitTests(_SessionModuleStateMixin, unittest.TestCase):
     def _run_workers(self, count: int, worker) -> None:
-        threads = [threading.Thread(target=worker) for _ in range(count)]
+        errors: list[BaseException] = []
+
+        def guarded_worker() -> None:
+            try:
+                worker()
+            except BaseException as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=guarded_worker) for _ in range(count)]
         for thread in threads:
             thread.start()
         for thread in threads:
             thread.join()
+
+        if errors:
+            raise AssertionError("worker thread failed") from errors[0]
 
     def test_get_engine_creates_single_instance_under_contention(self) -> None:
         barrier = threading.Barrier(4)
@@ -174,6 +185,8 @@ class DatabaseSessionInitTests(_SessionModuleStateMixin, unittest.IsolatedAsynci
             self.assertTrue(session_module._sqlite_init_lock_path(database_path).exists())
             execute_database_init.assert_awaited_once()
             self.assertEqual(flock.call_count, 2)
+            self.assertEqual(flock.call_args_list[0].args[1], session_module.fcntl.LOCK_EX)
+            self.assertEqual(flock.call_args_list[1].args[1], session_module.fcntl.LOCK_UN)
 
     async def test_dispose_engine_closes_engine_and_resets_lazy_state(self) -> None:
         fake_engine = AsyncMock()
@@ -273,6 +286,8 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
                 "ALTER TABLE caddy_sites ADD COLUMN upstream_url TEXT NOT NULL DEFAULT 'http://placeholder.invalid'",
                 "ALTER TABLE caddy_sites ADD COLUMN caddy_directives TEXT",
                 "ALTER TABLE caddy_sites ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1",
+                "ALTER TABLE caddy_sites ADD COLUMN site_name TEXT NOT NULL DEFAULT ''",
+                "UPDATE caddy_sites SET site_name = trim(CASE WHEN instr(domain, ',') > 0 THEN substr(domain, 1, instr(domain, ',') - 1) ELSE domain END) WHERE site_name IS NULL OR site_name = ''",
             ],
         )
 
@@ -295,6 +310,8 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
             executed_sql,
             [
                 "UPDATE caddy_sites SET upstream_url = 'http://placeholder.invalid' WHERE upstream_url = ''",
+                "ALTER TABLE caddy_sites ADD COLUMN site_name TEXT NOT NULL DEFAULT ''",
+                "UPDATE caddy_sites SET site_name = trim(CASE WHEN instr(domain, ',') > 0 THEN substr(domain, 1, instr(domain, ',') - 1) ELSE domain END) WHERE site_name IS NULL OR site_name = ''",
             ],
         )
 

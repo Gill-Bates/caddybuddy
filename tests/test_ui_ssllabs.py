@@ -28,14 +28,9 @@ for key, value in _ENV_OVERRIDES.items():
 
 get_settings.cache_clear()
 
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
-from starlette.middleware.sessions import SessionMiddleware
-
-from app.database.session import get_db_session
-from app.middleware.csrf import CSRFMiddleware, SecurityHeadersMiddleware
 from app.routers.ui.ssllabs import router as ssllabs_router
+from tests.ui_test_app import build_ui_test_app
 
 
 def tearDownModule() -> None:
@@ -60,32 +55,17 @@ class UISslLabsTests(unittest.TestCase):
     async def _session_override():
         yield AsyncMock()
 
-    def _build_app(self) -> FastAPI:
-        app = FastAPI()
-        app.add_middleware(CSRFMiddleware)
-        app.add_middleware(SessionMiddleware, secret_key="unit-test-secret-key")
-        app.add_middleware(SecurityHeadersMiddleware)
-        app.mount("/static", StaticFiles(directory="/opt/caddybuddy/app/static"), name="static")
-
-        @app.get("/", name="home_page")
-        async def _home_page() -> dict[str, str]:
-            return {"status": "ok"}
-
-        @app.get("/caddyfile", name="caddyfile_page")
-        async def _caddyfile_page() -> dict[str, str]:
-            return {"status": "ok"}
-
-        @app.get("/sites", name="sites_page")
-        async def _sites_page() -> dict[str, str]:
-            return {"status": "ok"}
-
-        @app.post("/logout", name="logout_action")
-        async def _logout_action() -> dict[str, str]:
-            return {"status": "ok"}
-
-        app.include_router(ssllabs_router)
-        app.dependency_overrides[get_db_session] = self._session_override
-        return app
+    def _build_app(self):
+        return build_ui_test_app(
+            ssllabs_router,
+            session_override=self._session_override,
+            stub_routes=[
+                ("GET", "/", "home_page"),
+                ("GET", "/caddyfile", "caddyfile_page"),
+                ("GET", "/sites", "sites_page"),
+                ("POST", "/logout", "logout_action"),
+            ],
+        )
 
     def test_ssllabs_page_renders_rows_and_external_notice(self) -> None:
         app = self._build_app()
@@ -96,7 +76,13 @@ class UISslLabsTests(unittest.TestCase):
             schedule_frequency="weekly",
             next_scheduled_at=datetime(2026, 5, 28, 12, 0, tzinfo=UTC),
         )
-        site = SimpleNamespace(id=1, domain="example.com, www.example.com")
+        second_target = SimpleNamespace(
+            id=2,
+            host="www.example.com",
+            schedule_frequency="monthly",
+            next_scheduled_at=datetime(2026, 6, 27, 12, 0, tzinfo=UTC),
+        )
+        site = SimpleNamespace(id=1, site_name="Marketing", domain="example.com, www.example.com", enabled=True)
         scan = SimpleNamespace(
             grade="A+",
             status="ready",
@@ -104,6 +90,12 @@ class UISslLabsTests(unittest.TestCase):
             started_at=datetime(2026, 5, 27, 11, 59, tzinfo=UTC),
             endpoint_count=2,
             error_message=None,
+            result_json={
+                "endpoints": [
+                    {"ipAddress": "203.0.113.10", "grade": "A+", "statusMessage": "Ready"},
+                    {"ipAddress": "2001:db8::10", "grade": "A", "statusMessage": "Ready"},
+                ]
+            },
         )
 
         with (
@@ -111,20 +103,62 @@ class UISslLabsTests(unittest.TestCase):
             patch("app.routers.ui.ssllabs.ssllabs_service.sync_targets", new=AsyncMock()),
             patch(
                 "app.routers.ui.ssllabs.ssllabs_repository.list_targets_with_latest_scans",
-                new=AsyncMock(return_value=[(target, site, scan)]),
+                new=AsyncMock(return_value=[(target, site, scan), (second_target, site, None)]),
             ),
-            patch("app.routers.ui.ssllabs.ssllabs_service.masked_email", return_value="s***@example.com"),
         ):
             with TestClient(app) as client:
                 response = client.get("/ssl-labs")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("SSL Labs", response.text)
+        self.assertIn("Marketing", response.text)
         self.assertIn("example.com", response.text)
+        self.assertIn("www.example.com", response.text)
+        self.assertIn('data-ssllabs-filter-root', response.text)
+        self.assertIn('data-ssllabs-search', response.text)
+        self.assertIn('data-ssllabs-grade-filter', response.text)
+        self.assertIn('data-ssllabs-visible-count', response.text)
+        self.assertIn('data-ssllabs-visible-label', response.text)
+        self.assertIn('aria-live="polite"', response.text)
+        self.assertIn("Domains found", response.text)
+        self.assertIn("Scheduler", response.text)
+        self.assertIn('class="app-page ssllabs-page"', response.text)
+        self.assertIn('class="ssllabs-scrollbox"', response.text)
+        self.assertIn('data-ssllabs-site-row', response.text)
+        self.assertIn('data-ssllabs-filter-card', response.text)
+        self.assertIn('data-ssllabs-grade="a+"', response.text)
+        self.assertIn('/static/js/ssllabs-filter.js', response.text)
+        self.assertIn('No domains match the current filter.', response.text)
+        self.assertIn('class="site-row-title"', response.text)
+        self.assertIn('class="status-dot site-status-dot status-dot--online"', response.text)
+        self.assertNotIn('class="ssllabs-site-domains mt-2"', response.text)
+        self.assertNotIn('class="badge bg-secondary bg-opacity-25 text-body-secondary ssllabs-site-domain-badge">example.com</span>', response.text)
+        self.assertNotIn('class="badge bg-secondary bg-opacity-25 text-body-secondary ssllabs-site-domain-badge">www.example.com</span>', response.text)
         self.assertIn("A+", response.text)
         self.assertIn("Weekly", response.text)
-        self.assertIn("Check SSL Labs", response.text)
-        self.assertIn("external Qualys servers", response.text)
+        self.assertIn("Every 30 days", response.text)
+        self.assertIn('>Report</a>', response.text)
+        self.assertIn('>Scan</button>', response.text)
+        self.assertNotIn("View report", response.text)
+        self.assertNotIn("Check SSL Labs", response.text)
+        self.assertIn("Start SSL Labs checks here", response.text)
+        self.assertIn('class="table align-middle mb-0 ssllabs-table"', response.text)
+        self.assertIn('class="ssllabs-table__site-col"', response.text)
+        self.assertIn('class="ssllabs-table__domains-col"', response.text)
+        self.assertIn('class="table-responsive ssllabs-table-wrap"', response.text)
+        self.assertIn('data-label="Site"', response.text)
+        self.assertIn('data-label="Domains"', response.text)
+        self.assertIn('class="ssllabs-domain-list"', response.text)
+        self.assertIn('class="ssllabs-domain-card"', response.text)
+        self.assertIn("data-auto-submit-form", response.text)
+        self.assertIn("data-auto-submit-field", response.text)
+        self.assertNotIn(">Save</button>", response.text)
+        self.assertIn('class="badge bg-success ssllabs-result__grade"', response.text)
+        self.assertIn('class="ssllabs-result__headline"', response.text)
+        self.assertIn('class="ssllabs-result__endpoints"', response.text)
+        self.assertIn("IPv4", response.text)
+        self.assertIn("IPv6", response.text)
+        self.assertIn("2 endpoints", response.text)
 
     def test_ssllabs_page_disables_actions_for_non_public_host(self) -> None:
         app = self._build_app()
@@ -135,7 +169,7 @@ class UISslLabsTests(unittest.TestCase):
             schedule_frequency=None,
             next_scheduled_at=None,
         )
-        site = SimpleNamespace(id=1, domain="service.internal")
+        site = SimpleNamespace(id=1, site_name="Internal", domain="service.internal", enabled=True)
 
         with (
             patch("app.routers.ui.ssllabs.require_user", new=AsyncMock(return_value=current_user)),
@@ -144,11 +178,12 @@ class UISslLabsTests(unittest.TestCase):
                 "app.routers.ui.ssllabs.ssllabs_repository.list_targets_with_latest_scans",
                 new=AsyncMock(return_value=[(target, site, None)]),
             ),
-            patch("app.routers.ui.ssllabs.ssllabs_service.masked_email", return_value="s***@example.com"),
         ):
             with TestClient(app) as client:
                 response = client.get("/ssl-labs")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("public hostname", response.text)
-        self.assertIn("disabled", response.text)
+        self.assertRegex(response.text, r'name="schedule_frequency"[^>]*disabled')
+        self.assertRegex(response.text, r'name="mode"[^>]*value="fresh"[^>]*disabled')
+        self.assertNotIn("Open last report", response.text)

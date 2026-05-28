@@ -21,14 +21,16 @@ from app.models.entities import (
 
 class EntityHardeningTests(unittest.TestCase):
     def test_site_accepts_valid_domain_and_upstream_url(self) -> None:
-        site = Site(domain="Example.com.", upstream_url="http://backend.internal:8080", enabled=True)
+        site = Site(site_name="Example Site", domain="Example.com.", upstream_url="http://backend.internal:8080", enabled=True)
 
+        self.assertEqual(site.site_name, "Example Site")
         self.assertEqual(site.domain, "example.com")
         self.assertEqual(site.upstream_url, "http://backend.internal:8080")
         self.assertTrue(site.enabled)
 
     def test_site_normalizes_multiple_domains_and_deduplicates(self) -> None:
         site = Site(
+            site_name="Example Site",
             domain=" Example.com,\twww.example.com example.com ",
             upstream_url="http://backend.internal:8080",
             enabled=True,
@@ -38,19 +40,24 @@ class EntityHardeningTests(unittest.TestCase):
 
     def test_site_rejects_invalid_domain_name(self) -> None:
         with self.assertRaisesRegex(ValueError, "invalid domain name"):
-            Site(domain="https://example.com", upstream_url="http://backend.internal:8080", enabled=True)
+            Site(site_name="Example Site", domain="https://example.com", upstream_url="http://backend.internal:8080", enabled=True)
 
     def test_site_rejects_invalid_upstream_url(self) -> None:
         with self.assertRaisesRegex(ValueError, "upstream_url must use http or https"):
-            Site(domain="example.com", upstream_url="backend.internal:8080", enabled=True)
+            Site(site_name="Example Site", domain="example.com", upstream_url="backend.internal:8080", enabled=True)
 
     def test_site_rejects_upstream_url_with_newlines(self) -> None:
         with self.assertRaisesRegex(ValueError, "must not contain newlines"):
             Site(
+                site_name="Example Site",
                 domain="example.com",
                 upstream_url="http://backend.internal:8080\nheader_down x y",
                 enabled=True,
             )
+
+    def test_site_rejects_blank_site_name(self) -> None:
+        with self.assertRaisesRegex(ValueError, "site_name cannot be empty"):
+            Site(site_name=" ", domain="example.com", upstream_url="http://backend.internal:8080", enabled=True)
 
     def test_user_normalizes_role_and_email(self) -> None:
         user = User(

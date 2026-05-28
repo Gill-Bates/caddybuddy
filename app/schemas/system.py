@@ -24,3 +24,14 @@ class CaddyStatusResponse(BaseModel):
     status: str
     uptime: str
     version: str
+
+
+class DashboardMetricsResponse(BaseModel):
+    domain_count: int
+    enabled_domain_count: int
+    valid_certificate_count: int | None
+    expired_certificate_count: int | None
+    expiring_soon_certificate_count: int | None
+    caddy_service_status: str
+    caddy_service_uptime: str
+    caddy_version: str

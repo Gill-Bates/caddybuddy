@@ -20,36 +20,35 @@ _ENV_OVERRIDES = {
     "CB_ADMIN_PASSWORD": "UnitTestPassword-123A",
     "CADDYBUDDY_ADMIN_PASSWORD": "UnitTestPassword-123A",
 }
-_ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}
-
-for key, value in _ENV_OVERRIDES.items():
-    os.environ[key] = value
-
-get_settings.cache_clear()
 
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 from fastapi.testclient import TestClient
 from starlette.middleware.sessions import SessionMiddleware
 
-from app.dependencies.web import ensure_csrf_token
-from app.middleware.csrf import CSRFMiddleware, SecurityHeadersMiddleware, _auth_cookie_names
+
+class _SecurityTestEnvMixin:
+    def setUp(self) -> None:
+        self._env_patch = patch.dict(os.environ, _ENV_OVERRIDES, clear=False)
+        self._env_patch.start()
+        get_settings.cache_clear()
+        from app.dependencies.web import ensure_csrf_token
+        from app.middleware import csrf as csrf_module
+
+        self._ensure_csrf_token = ensure_csrf_token
+        self._csrf_module = csrf_module
+        self._csrf_module._auth_cookie_names.cache_clear()
+
+    def tearDown(self) -> None:
+        self._env_patch.stop()
+        get_settings.cache_clear()
+        self._csrf_module._auth_cookie_names.cache_clear()
 
 
-def tearDownModule() -> None:
-    for key, original_value in _ORIGINAL_ENV.items():
-        if original_value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = original_value
-    get_settings.cache_clear()
-    _auth_cookie_names.cache_clear()
-
-
-class SecurityHeadersMiddlewareTests(unittest.TestCase):
+class SecurityHeadersMiddlewareTests(_SecurityTestEnvMixin, unittest.TestCase):
     def test_security_headers_are_added_to_http_responses(self) -> None:
         app = FastAPI()
-        app.add_middleware(SecurityHeadersMiddleware)
+        app.add_middleware(self._csrf_module.SecurityHeadersMiddleware)
 
         @app.get("/")
         async def index() -> dict[str, str]:
@@ -72,7 +71,7 @@ class SecurityHeadersMiddlewareTests(unittest.TestCase):
 
     def test_hsts_is_added_for_https_requests(self) -> None:
         app = FastAPI()
-        app.add_middleware(SecurityHeadersMiddleware)
+        app.add_middleware(self._csrf_module.SecurityHeadersMiddleware)
 
         @app.get("/")
         async def index() -> dict[str, str]:
@@ -87,23 +86,21 @@ class SecurityHeadersMiddlewareTests(unittest.TestCase):
         )
 
 
-class CSRFMiddlewareTests(unittest.TestCase):
+class CSRFMiddlewareTests(_SecurityTestEnvMixin, unittest.TestCase):
     def setUp(self) -> None:
-        get_settings.cache_clear()
-        _auth_cookie_names.cache_clear()
+        super().setUp()
 
     def tearDown(self) -> None:
-        get_settings.cache_clear()
-        _auth_cookie_names.cache_clear()
+        super().tearDown()
 
     def _build_app(self) -> FastAPI:
         app = FastAPI()
-        app.add_middleware(CSRFMiddleware)
+        app.add_middleware(self._csrf_module.CSRFMiddleware)
         app.add_middleware(SessionMiddleware, secret_key="unit-test-secret-key")
 
         @app.get("/login")
         async def login_page(request: Request) -> PlainTextResponse:
-            return PlainTextResponse(ensure_csrf_token(request))
+            return PlainTextResponse(self._ensure_csrf_token(request))
 
         @app.post("/api/protected")
         async def protected() -> PlainTextResponse:
@@ -206,6 +203,21 @@ class CSRFMiddlewareTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.text, "ok")
 
+    def test_cookie_authenticated_api_request_rejects_invalid_csrf_header(self) -> None:
+        app = self._build_app()
+
+        with self._settings_patch():
+            with TestClient(app) as client:
+                client.get("/login")
+                client.cookies.set("caddybuddy_session", client.cookies.get("session") or "session-cookie")
+                response = client.post(
+                    "/api/protected",
+                    headers={"X-CSRF-Token": "invalid"},
+                )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json(), {"detail": "CSRF token missing or invalid"})
+
     def test_safe_requests_prime_session_csrf_token(self) -> None:
         app = self._build_app()
 
@@ -217,7 +229,7 @@ class CSRFMiddlewareTests(unittest.TestCase):
 
     def test_hsts_is_added_for_forwarded_https_requests(self) -> None:
         app = FastAPI()
-        app.add_middleware(SecurityHeadersMiddleware)
+        app.add_middleware(self._csrf_module.SecurityHeadersMiddleware)
 
         @app.get("/")
         async def index() -> dict[str, str]:

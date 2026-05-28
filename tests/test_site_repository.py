@@ -6,12 +6,16 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.models.base import Base
 from app.repositories.sites import DuplicateSiteError, SiteRepository
 
 
@@ -22,28 +26,6 @@ class SiteRepositoryTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(ValueError, "Limit must be between 1 and 500"):
             await repository.list_all(session, limit=0)
-
-    async def test_get_by_domain_normalizes_lookup_value(self) -> None:
-        repository = SiteRepository()
-        expected_statements = [
-            "SELECT caddy_sites.id, caddy_sites.domain, caddy_sites.upstream_url, caddy_sites.caddy_directives, caddy_sites.enabled, caddy_sites.created_at, caddy_sites.updated_at \nFROM caddy_sites \nWHERE caddy_sites.domain = 'example.com'",
-            "SELECT caddy_sites.id, caddy_sites.domain, caddy_sites.upstream_url, caddy_sites.caddy_directives, caddy_sites.enabled, caddy_sites.created_at, caddy_sites.updated_at \nFROM caddy_sites ORDER BY caddy_sites.domain ASC",
-        ]
-
-        async def execute(statement):
-            self.assertEqual(
-                str(statement.compile(compile_kwargs={"literal_binds": True})),
-                expected_statements.pop(0),
-            )
-            if expected_statements:
-                return SimpleNamespace(scalar_one_or_none=lambda: None)
-            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
-
-        session = SimpleNamespace(execute=execute)
-
-        result = await repository.get_by_domain(session, " Example.COM. ")
-
-        self.assertIsNone(result)
 
     async def test_domain_exists_uses_normalized_exists_lookup(self) -> None:
         repository = SiteRepository()
@@ -80,6 +62,7 @@ class SiteRepositoryTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(DuplicateSiteError, "Site domain already exists"):
             await repository.create(
                 session,
+                site_name="Example Site",
                 domain="Example.COM.",
                 caddy_directives="reverse_proxy backend.example.test:443",
             )
@@ -88,6 +71,7 @@ class SiteRepositoryTests(unittest.IsolatedAsyncioTestCase):
         repository = SiteRepository()
         session = SimpleNamespace(flush=AsyncMock())
         site = SimpleNamespace(
+            site_name="Old Site",
             domain="old.example.com",
             upstream_url="https://old.example.com",
             caddy_directives="reverse_proxy old.example.com",
@@ -97,17 +81,76 @@ class SiteRepositoryTests(unittest.IsolatedAsyncioTestCase):
         updated = await repository.update(
             session,
             site,
+            site_name="Example Site",
             domain=" Example.COM. ",
             caddy_directives="reverse_proxy backend.example.test:8443",
             enabled=False,
         )
 
         self.assertIs(updated, site)
+        self.assertEqual(site.site_name, "Example Site")
         self.assertEqual(site.domain, "example.com")
         self.assertEqual(site.caddy_directives, "reverse_proxy backend.example.test:8443")
         self.assertEqual(site.upstream_url, "http://backend.example.test:8443")
         self.assertFalse(site.enabled)
         session.flush.assert_awaited_once()
+
+
+class SiteRepositoryIntegrationTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self._temp_dir = tempfile.TemporaryDirectory()
+        database_path = Path(self._temp_dir.name) / "sites.db"
+        self.engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
+        async with self.engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        self.session_factory = async_sessionmaker(
+            self.engine,
+            expire_on_commit=False,
+            class_=AsyncSession,
+        )
+
+    async def asyncTearDown(self) -> None:
+        await self.engine.dispose()
+        self._temp_dir.cleanup()
+
+    async def test_get_by_domain_finds_normalized_domain(self) -> None:
+        repository = SiteRepository()
+
+        async with self.session_factory() as session:
+            await repository.create(
+                session,
+                site_name="Example",
+                domain="Example.COM.",
+                caddy_directives="reverse_proxy backend.example.test:443",
+            )
+            await session.commit()
+
+        async with self.session_factory() as session:
+            site = await repository.get_by_domain(session, " example.com ")
+
+        self.assertIsNotNone(site)
+        self.assertEqual(site.domain, "example.com")
+
+    async def test_domain_exists_ignores_overlap_for_excluded_row(self) -> None:
+        repository = SiteRepository()
+
+        async with self.session_factory() as session:
+            site = await repository.create(
+                session,
+                site_name="Example",
+                domain="example.com, www.example.com",
+                caddy_directives="reverse_proxy backend.example.test:443",
+            )
+            await session.commit()
+
+        async with self.session_factory() as session:
+            exists = await repository.domain_exists(
+                session,
+                "www.example.com",
+                exclude_id=site.id,
+            )
+
+        self.assertFalse(exists)
 
 
 if __name__ == "__main__":

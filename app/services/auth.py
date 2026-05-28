@@ -23,7 +23,7 @@ from app.repositories.users import user_repository
 
 
 _DUMMY_BCRYPT_HASH = "$2b$12$XoxrmnloUyPG.UR9bJMmh.jZY3PuHalwrTlwknAY8hcepqC8VZ0.K"
-_MIN_PASSWORD_LENGTH = 12
+_MIN_PASSWORD_LENGTH = 8
 _MAX_PASSWORD_LENGTH = 4096
 _BCRYPT_CONCURRENCY = 4
 _bcrypt_semaphore = asyncio.Semaphore(_BCRYPT_CONCURRENCY)

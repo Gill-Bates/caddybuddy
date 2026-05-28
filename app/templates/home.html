@@ -8,7 +8,7 @@
 {% set caddy_version = metrics.caddy_version or 'Unavailable' %}
 {% set caddy_uptime = metrics.caddy_service_uptime or 'Unavailable' %}
 {% set onboarding_required = runtime_status is defined and runtime_status.onboarding_required %}
-<section class="app-page">
+<section class="app-page" data-dashboard-metrics-url="/api/v1/dashboard/metrics">
     <div class="app-page__header">
         <div class="app-page__lede">
             <p class="eyebrow mb-2">Overview</p>
@@ -47,27 +47,70 @@
     </div>
     {% endif %}
 
+    {% set expiring_soon_count = metrics.expiring_soon_certificate_count %}
+    <div class="alert alert-warning border-0 shadow-sm mb-4 {% if not expiring_soon_count %}d-none{% endif %}"
+        id="dashboard-certificate-warning" role="alert" {% if expiring_soon_count %}data-ui-lint-dynamic{% endif %}>
+        <strong>Certificate warning.</strong>
+        <span id="dashboard-certificate-warning-text">
+            {% if expiring_soon_count %}
+            {{ expiring_soon_count }} certificate{% if expiring_soon_count != 1 %}s{% endif %} expire within 7 days.
+            {% endif %}
+        </span>
+    </div>
+
     <section class="row metric-grid" aria-label="Key metrics">
-        <div class="col-12 col-md-4">
+        <div class="col-6 col-md-4">
             <article class="metric-card hero-metric hero-metric--domains">
-                <span class="metric-card__label">Domains</span>
-                <strong class="metric-card__value">{{ metrics.enabled_domain_count or 0 }}<span
-                        class="metric-card__total">/{{ metrics.domain_count or 0 }}</span></strong>
-                <p class="hero-metric__hint mb-0">Enabled / total site domains tracked by CaddyBuddy.</p>
+                <div class="hero-metric__main">
+                    <span class="hero-metric__icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="currentColor" focusable="false">
+                            <path
+                                d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Zm6.93 9h-3.02a15.8 15.8 0 0 0-1.38-5.02A8.03 8.03 0 0 1 18.93 11ZM12 4.04c.83 1.2 1.8 3.27 1.98 6.96h-3.96C10.2 7.31 11.17 5.24 12 4.04ZM4.07 13h3.02a15.8 15.8 0 0 0 1.38 5.02A8.03 8.03 0 0 1 4.07 13Zm3.02-2H4.07a8.03 8.03 0 0 1 4.4-5.02A15.8 15.8 0 0 0 7.09 11ZM12 19.96c-.83-1.2-1.8-3.27-1.98-6.96h3.96c-.18 3.69-1.15 5.76-1.98 6.96ZM15.92 13h3.01a8.03 8.03 0 0 1-4.4 5.02A15.8 15.8 0 0 0 15.92 13Z" />
+                        </svg>
+                    </span>
+                    <div class="hero-metric__content">
+                        <span class="metric-card__label">Domains</span>
+                        <strong class="metric-card__value">{{ metrics.enabled_domain_count or 0 }}<span
+                                class="metric-card__total">/{{ metrics.domain_count or 0 }}</span></strong>
+                    </div>
+                </div>
             </article>
         </div>
-        <div class="col-12 col-md-4">
+        <div class="col-6 col-md-4">
             <article class="metric-card hero-metric hero-metric--valid">
-                <span class="metric-card__label">Valid certificates</span>
-                <strong class="metric-card__value">{{ metrics.valid_certificate_count or 0 }}</strong>
-                <p class="hero-metric__hint mb-0">Local Caddy certificates that are still valid.</p>
+                <div class="hero-metric__main">
+                    <span class="hero-metric__icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="currentColor" focusable="false">
+                            <path
+                                d="M12 2 4 5v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V5Zm-1.2 14.6-3.3-3.3 1.4-1.4 1.9 1.88 4.4-4.38 1.4 1.42Z" />
+                        </svg>
+                    </span>
+                    <div class="hero-metric__content">
+                        <span class="metric-card__label">Valid certificates</span>
+                        <strong class="metric-card__value" id="dashboard-valid-certificates" data-ui-lint-dynamic>{{
+                            metrics.valid_certificate_count if metrics.valid_certificate_count is not none else '...'
+                            }}</strong>
+                    </div>
+                </div>
             </article>
         </div>
-        <div class="col-12 col-md-4">
+        <div class="col-6 col-md-4">
             <article class="metric-card hero-metric hero-metric--expired">
-                <span class="metric-card__label">Expired certificates</span>
-                <strong class="metric-card__value">{{ metrics.expired_certificate_count or 0 }}</strong>
-                <p class="hero-metric__hint mb-0">Local Caddy certificates that are already expired.</p>
+                <div class="hero-metric__main">
+                    <span class="hero-metric__icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="currentColor" focusable="false">
+                            <path
+                                d="M12 2 4 5v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V5Zm1 14h-2v-2h2Zm0-4h-2V7h2Z" />
+                        </svg>
+                    </span>
+                    <div class="hero-metric__content">
+                        <span class="metric-card__label">Expired certificates</span>
+                        <strong class="metric-card__value" id="dashboard-expired-certificates" data-ui-lint-dynamic>{{
+                            metrics.expired_certificate_count if metrics.expired_certificate_count is not none else
+                            '...'
+                            }}</strong>
+                    </div>
+                </div>
             </article>
         </div>
     </section>

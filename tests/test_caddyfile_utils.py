@@ -12,6 +12,7 @@ from app.utils.caddyfile import (
     DomainDirectiveFormState,
     build_domain_directives,
     build_domain_site_preview,
+    extract_site_handler_from_directives,
     extract_upstream_from_directives,
     parse_domain_directive_form_state,
     prepare_domain_directives,
@@ -91,6 +92,21 @@ class CaddyfileUtilsTests(unittest.TestCase):
         self.assertEqual(
             extract_upstream_from_directives("reverse_proxy app1:8000 {\n    health_uri /health\n}"),
             "app1:8000",
+        )
+
+    def test_extract_site_handler_from_directives_returns_first_supported_handler(self) -> None:
+        self.assertEqual(
+            extract_site_handler_from_directives(
+                "import security_headers\nheader {\n    X-Test value\n}\nreverse_proxy app1:8000"
+            ),
+            "reverse_proxy",
+        )
+
+    def test_extract_site_handler_from_directives_returns_none_without_supported_handler(self) -> None:
+        self.assertIsNone(
+            extract_site_handler_from_directives(
+                "import security_headers\nheader {\n    X-Test value\n}\nencode gzip"
+            )
         )
 
     def test_prepare_domain_directives_reports_unmatched_closing_brace(self) -> None:

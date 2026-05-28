@@ -99,6 +99,9 @@ class UIAuthTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertIn("Invalid credentials.", response.text)
+        self.assertIn('class="toast-container app-toast-stack position-fixed top-0 end-0 p-3"', response.text)
+        self.assertIn('class="toast align-items-center text-bg-danger border-0 shadow-sm" role="status"', response.text)
+        self.assertIn('class="toast-body">Invalid credentials.</div>', response.text)
         warning.assert_called_once_with("Authentication failed for username=%r status_code=403", "admin")
 
     def test_successful_login_keeps_redirect_flow(self) -> None:

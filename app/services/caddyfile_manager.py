@@ -10,7 +10,7 @@ import asyncio
 import hashlib
 import logging
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 try:
     import fcntl
@@ -34,6 +34,7 @@ from app.repositories.sites import DuplicateSiteError, site_repository
 from app.services.caddy import CaddyAdminClient, CaddyServiceError, caddy_service
 from app.services.runtime_settings import get_caddy_config
 from app.utils.caddyfile import build_domain_site_preview, parse_caddyfile
+from app.utils.domains import split_domain_names
 
 
 MANAGED_CADDYFILE_MARKER = "### MANAGED BY CADDYBUDDY ###"
@@ -48,9 +49,11 @@ _STATE_KEY_ORIGINAL_CADDYFILE_SHA256 = "original_caddyfile_sha256"
 _STATE_KEY_ONBOARDING_STATUS = "onboarding_status"
 _STATE_KEY_RENDERED_CONFIG_SHA256 = "rendered_config_sha256"
 _STATE_KEY_SNAPSHOT_SHA256 = "snapshot_sha256"
-_EMPTY_CADDY_CONFIG = {"apps": {}}
 _STATUS_MANAGED = "managed"
 _STATUS_ONBOARDING_FAILED = "onboarding_failed"
+_MAX_CADDYFILE_BYTES = 2 * 1024 * 1024
+_LOCK_RETRY_SECONDS = 0.1
+_LOCK_TIMEOUT_SECONDS = 30.0
 _OPERATION_LOCK: asyncio.Lock | None = None
 logger = logging.getLogger(__name__)
 
@@ -118,6 +121,20 @@ def _sync_lock_path() -> Path:
     return settings.data_dir / ".caddybuddy.caddy.lock"
 
 
+def _empty_caddy_config() -> dict[str, dict[str, object]]:
+    return {"apps": {}}
+
+
+def _try_acquire_file_lock(lock_file) -> bool:
+    if fcntl is None:
+        return True
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return False
+    return True
+
+
 @asynccontextmanager
 async def _acquire_operation_guard():
     lock_path = _sync_lock_path()
@@ -131,7 +148,12 @@ async def _acquire_operation_guard():
 
         lock_file = await asyncio.to_thread(lock_path.open, "a+b")
         try:
-            await asyncio.to_thread(fcntl.flock, lock_file.fileno(), fcntl.LOCK_EX)
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + _LOCK_TIMEOUT_SECONDS
+            while not await asyncio.to_thread(_try_acquire_file_lock, lock_file):
+                if loop.time() >= deadline:
+                    raise TimeoutError("Timed out waiting for Caddy operation lock")
+                await asyncio.sleep(_LOCK_RETRY_SECONDS)
             yield
         finally:
             await asyncio.to_thread(fcntl.flock, lock_file.fileno(), fcntl.LOCK_UN)
@@ -145,6 +167,7 @@ def _error_message(error_code: str) -> str:
         "caddyfile_not_regular": "Caddyfile path is not a regular file.",
         "caddyfile_not_readable": "Caddyfile is not readable. Check Docker Compose volume permissions.",
         "caddyfile_not_writable": "Caddyfile is not writable. Check Docker Compose volume permissions.",
+        "caddyfile_too_large": "Caddyfile exceeds the supported size limit.",
         "caddyfile_replace_failed": "Failed to replace Caddyfile with managed marker.",
         "caddy_admin_unavailable": "Caddy Admin API unavailable.",
         "caddy_config_invalid": "Rendered Caddy configuration is invalid.",
@@ -160,6 +183,12 @@ def _inspect_caddyfile_sync(path: Path | None) -> tuple[str | None, str | None, 
         return "caddyfile_missing", None, False
     if not path.is_file():
         return "caddyfile_not_regular", None, False
+
+    try:
+        if path.stat().st_size > _MAX_CADDYFILE_BYTES:
+            return "caddyfile_too_large", None, False
+    except OSError:
+        return "caddyfile_not_readable", None, False
 
     try:
         content = path.read_text(encoding="utf-8")
@@ -273,22 +302,45 @@ def _record_sync_event(
 
 def replace_caddyfile_with_marker(path: Path) -> None:
     marker = _marker_text()
-    with path.open("r+", encoding="utf-8") as handle:
-        handle.seek(0)
-        handle.write(marker)
-        handle.truncate()
-        handle.flush()
-        os.fsync(handle.fileno())
+    tmp_path = path.with_name(f".{path.name}.caddybuddy.tmp")
+    file_mode = path.stat().st_mode & 0o777
 
-    dir_fd = os.open(path.parent, os.O_RDONLY)
     try:
-        os.fsync(dir_fd)
-    finally:
-        os.close(dir_fd)
+        with tmp_path.open("w", encoding="utf-8") as handle:
+            handle.write(marker)
+            handle.flush()
+            os.fsync(handle.fileno())
+
+        os.chmod(tmp_path, file_mode)
+        tmp_path.replace(path)
+
+        dir_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except OSError:
+        with suppress(OSError):
+            tmp_path.unlink()
+        raise
 
 
 async def get_baseline_caddyfile(session: AsyncSession) -> str:
-    return await _get_state_value(session, _STATE_KEY_GLOBAL_CADDYFILE) or ""
+    stored_baseline = await _get_state_value(session, _STATE_KEY_GLOBAL_CADDYFILE)
+    if stored_baseline:
+        return stored_baseline
+
+    snapshot_sha256 = await _get_state_value(session, _STATE_KEY_SNAPSHOT_SHA256)
+    if snapshot_sha256:
+        snapshot = await session.get(CaddyfileSnapshot, snapshot_sha256)
+        if snapshot is not None and snapshot.content:
+            return parse_caddyfile(snapshot.content).global_block.strip()
+
+    file_error, content, marker_present = await _inspect_caddyfile(session)
+    if file_error is None and content and not marker_present:
+        return parse_caddyfile(content).global_block.strip()
+
+    return ""
 
 
 async def set_baseline_caddyfile(session: AsyncSession, caddyfile: str) -> None:
@@ -309,10 +361,10 @@ async def _admin_api_reachable(session: AsyncSession) -> bool:
         return False
 
 
-async def get_caddy_runtime_status(session: AsyncSession) -> CaddyRuntimeStatus:
+async def get_caddy_runtime_status(session: AsyncSession, *, check_admin_api: bool = True) -> CaddyRuntimeStatus:
     path = await _get_caddyfile_path(session)
     file_error, _content, marker_present = await _inspect_caddyfile(session)
-    admin_api_reachable = await _admin_api_reachable(session)
+    admin_api_reachable = await _admin_api_reachable(session) if check_admin_api else False
     last_synced_config_sha256 = await _get_state_value(session, _STATE_KEY_LAST_SYNCED_CONFIG_SHA256)
     persisted_error = await _get_state_value(session, _STATE_KEY_LAST_ERROR)
     error = file_error or persisted_error
@@ -358,24 +410,12 @@ async def _sync_caddy_configuration_locked(
     force: bool = False,
     require_marker: bool = True,
 ) -> CaddySyncResult:
-    status = await get_caddy_runtime_status(session)
-    if require_marker and not status.caddyfile_marker_present:
+    file_error, _content, marker_present = await _inspect_caddyfile(session)
+    if require_marker and (file_error is not None or not marker_present):
         return CaddySyncResult(
             status="onboarding_required",
             error=_error_message("onboarding_required"),
             error_code="onboarding_required",
-        )
-    if not status.admin_api_reachable:
-        await _set_state_value(session, _STATE_KEY_LAST_ERROR, "caddy_admin_unavailable")
-        _record_sync_event(
-            session,
-            status="sync_failed",
-            error=_error_message("caddy_admin_unavailable"),
-        )
-        return CaddySyncResult(
-            status="admin_api_unavailable",
-            error=_error_message("caddy_admin_unavailable"),
-            error_code="caddy_admin_unavailable",
         )
 
     rendered_config = await build_full_caddyfile(session)
@@ -421,7 +461,7 @@ async def _sync_caddy_configuration_locked(
                 error_code="caddy_config_invalid",
             )
     else:
-        config_payload = _EMPTY_CADDY_CONFIG
+            config_payload = _empty_caddy_config()
 
     config = await get_caddy_config(session)
     settings = get_settings()
@@ -522,6 +562,7 @@ async def onboard_caddy(session: AsyncSession) -> CaddyOnboardingResult:
             try:
                 await site_repository.create(
                     session,
+                    site_name=split_domain_names(domain)[0],
                     domain=domain,
                     caddy_directives=directives,
                     enabled=True,

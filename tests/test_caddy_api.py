@@ -124,6 +124,7 @@ class CaddyApiTests(unittest.TestCase):
         now = datetime.now(UTC)
         site = SimpleNamespace(
             id=1,
+            site_name="Example Site",
             domain="example.com",
             upstream_url="http://backend.internal:8080",
             caddy_directives="reverse_proxy backend.internal:8080",
@@ -134,7 +135,6 @@ class CaddyApiTests(unittest.TestCase):
 
         with (
             TestClient(app) as client,
-            patch.object(caddy_api.site_repository, "domain_exists", new=AsyncMock(return_value=False)),
             patch.object(caddy_api.site_repository, "create", new=AsyncMock(return_value=site)),
             patch.object(
                 caddy_api,
@@ -151,6 +151,7 @@ class CaddyApiTests(unittest.TestCase):
             response = client.post(
                 "/api/sites",
                 json={
+                    "site_name": "Example Site",
                     "domain": "Example.com",
                     "caddy_directives": "reverse_proxy backend.internal:8080",
                     "enabled": True,
