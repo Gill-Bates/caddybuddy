@@ -181,7 +181,7 @@ jobs:
             docker rm -f caddybuddy-test-amd64 2>/dev/null || true
             docker rm -f caddy-mock-amd64 2>/dev/null || true
             docker network rm smoke-amd64 2>/dev/null || true
-            rm -rf smoke-test-amd64
+            sudo rm -rf smoke-test-amd64
           }
           trap cleanup EXIT
 
@@ -389,7 +389,7 @@ jobs:
             docker rm -f caddybuddy-test-arm64 2>/dev/null || true
             docker rm -f caddy-mock-arm64 2>/dev/null || true
             docker network rm smoke-arm64 2>/dev/null || true
-            rm -rf smoke-test-arm64
+            sudo rm -rf smoke-test-arm64
           }
           trap cleanup EXIT
 
