@@ -153,3 +153,9 @@ class RuntimeSettingsTests(unittest.IsolatedAsyncioTestCase):
     def test_normalize_ssllabs_email_rejects_invalid_value(self) -> None:
         with self.assertRaisesRegex(ValueError, "valid email address"):
             normalize_ssllabs_email("not-an-email")
+
+    def test_normalize_ssllabs_email_rejects_excessive_length(self) -> None:
+        too_long = f"{'a' * 250}@example.com"
+
+        with self.assertRaisesRegex(ValueError, "must not exceed 255 characters"):
+            normalize_ssllabs_email(too_long)

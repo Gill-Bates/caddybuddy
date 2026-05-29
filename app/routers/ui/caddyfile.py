@@ -68,15 +68,22 @@ async def save_caddyfile(
         return redirect_to("/caddyfile")
 
     await set_baseline_caddyfile(session, baseline_caddyfile)
-    await session.commit()
+    await session.flush()
 
-    success, deploy_message = await validate_and_deploy_full_caddyfile(session)
-    await session.commit()
+    try:
+        success, deploy_message = await validate_and_deploy_full_caddyfile(session)
+    except Exception:
+        await session.rollback()
+        push_flash(request, "danger", "Caddyfile was not saved: deployment failed unexpectedly.")
+        return redirect_to("/caddyfile")
 
-    if success:
-        push_flash(request, "success", "Caddyfile saved and deployed.")
-    else:
-        push_flash(request, "warning", f"Caddyfile saved, but synchronization failed: {deploy_message}")
+    if not success:
+        await session.rollback()
+        push_flash(request, "danger", f"Caddyfile was not saved: {deploy_message}")
+        return redirect_to("/caddyfile")
+
+    await session.commit()
+    push_flash(request, "success", "Caddyfile saved and deployed.")
     await publish_resource_event("caddyfile", "updated", "primary")
     return redirect_to("/caddyfile")
 
@@ -98,7 +105,21 @@ async def validate_caddyfile_only(
         return JSONResponse({"valid": True, "message": "Caddyfile is empty but syntactically valid."})
 
     valid, message = await caddy_service.validate_caddyfile(baseline_caddyfile)
-    return JSONResponse({"valid": valid, "message": message})
+
+    if not valid:
+        return JSONResponse({"valid": False, "message": message})
+
+    # Format caddyfile using Caddy's formatter
+    try:
+        formatted_caddyfile = await caddy_service.format_caddyfile(baseline_caddyfile)
+    except Exception:
+        formatted_caddyfile = baseline_caddyfile
+
+    return JSONResponse({
+        "valid": True,
+        "message": message,
+        "formatted_caddyfile": formatted_caddyfile.strip(),
+    })
 
 
 @router.post("/caddyfile/onboard")

@@ -297,8 +297,13 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
         class FakeConnection:
             dialect = SimpleNamespace(name="sqlite")
 
-            def exec_driver_sql(self, statement: str) -> None:
+            def exec_driver_sql(self, statement: str):
                 executed_sql.append(statement)
+                if "UPDATE caddy_sites SET upstream_url" in statement:
+                    return SimpleNamespace(rowcount=1)
+                if "UPDATE caddy_sites SET site_name" in statement:
+                    return SimpleNamespace(rowcount=1)
+                return None
 
         migrated = session_module._apply_known_schema_migrations(
             FakeConnection(),
@@ -314,6 +319,31 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
                 "UPDATE caddy_sites SET site_name = trim(CASE WHEN instr(domain, ',') > 0 THEN substr(domain, 1, instr(domain, ',') - 1) ELSE domain END) WHERE site_name IS NULL OR site_name = ''",
             ],
         )
+
+    def test_apply_known_schema_migrations_does_not_report_repairs_when_no_rows_change(self) -> None:
+        class FakeConnection:
+            dialect = SimpleNamespace(name="sqlite")
+
+            def exec_driver_sql(self, statement: str):
+                if statement.startswith("UPDATE caddy_sites"):
+                    return SimpleNamespace(rowcount=0)
+                raise AssertionError(f"Unexpected SQL executed: {statement}")
+
+        migrated = session_module._apply_known_schema_migrations(
+            FakeConnection(),
+            {
+                "caddy_sites": {
+                    "id",
+                    "domain",
+                    "upstream_url",
+                    "caddy_directives",
+                    "enabled",
+                    "site_name",
+                },
+            },
+        )
+
+        self.assertFalse(migrated)
 
     def test_apply_known_schema_migrations_rebuilds_app_settings_for_new_allowed_key(self) -> None:
         executed_sql: list[str] = []
@@ -338,7 +368,14 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
 
         connection = FakeConnection()
 
-        with patch.object(session_module.Base.metadata.tables["app_settings"], "create") as create_app_settings:
+        with (
+            patch.object(session_module.Base.metadata.tables["app_settings"], "create") as create_app_settings,
+            patch.object(
+                session_module,
+                "_sqlite_backup_table_name",
+                return_value="app_settings_backup_test",
+            ),
+        ):
             migrated = session_module._apply_known_schema_migrations(
                 connection,
                 {"app_settings": {"id", "key", "value", "created_at", "updated_at"}},
@@ -348,10 +385,10 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
         self.assertEqual(
             executed_sql,
             [
-                'CREATE TABLE app_settings_backup AS SELECT id, "key", value, created_at, updated_at FROM app_settings',
+                'CREATE TABLE "app_settings_backup_test" AS SELECT id, "key", value, created_at, updated_at FROM app_settings',
                 "DROP TABLE app_settings",
-                'INSERT INTO app_settings (id, "key", value, created_at, updated_at) SELECT id, "key", value, created_at, updated_at FROM app_settings_backup',
-                "DROP TABLE app_settings_backup",
+                'INSERT INTO app_settings (id, "key", value, created_at, updated_at) SELECT id, "key", value, created_at, updated_at FROM "app_settings_backup_test"',
+                'DROP TABLE "app_settings_backup_test"',
             ],
         )
         create_app_settings.assert_called_once_with(connection, checkfirst=True)

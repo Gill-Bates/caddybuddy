@@ -203,6 +203,27 @@ class ApiRouterTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["message"], "No SSL Labs email configured.")
 
+    def test_ssllabs_registration_status_hides_internal_exception_details(self) -> None:
+        app = _build_app(SimpleNamespace())
+
+        with (
+            TestClient(app) as client,
+            patch.object(system_api, "get_session_user", new=AsyncMock(return_value=SimpleNamespace(id=1))),
+            patch.object(system_api, "get_settings", return_value=SimpleNamespace(ssllabs_api_base_url="https://api.ssllabs.com/api/v4")),
+            patch.object(system_api, "get_ssllabs_email", new=AsyncMock(return_value="team@example.com")),
+            patch.object(
+                system_api,
+                "check_email_registration_status",
+                new=AsyncMock(side_effect=RuntimeError("internal dns failure")),
+            ),
+        ):
+            response = client.get("/api/v1/ssllabs/registration-status")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["is_registered"], None)
+        self.assertEqual(response.json()["message"], "Could not check SSL Labs registration status.")
+        self.assertNotIn("internal dns failure", response.text)
+
 
 class EventStreamTests(unittest.IsolatedAsyncioTestCase):
     async def test_format_sse_data_prefixes_each_line(self) -> None:

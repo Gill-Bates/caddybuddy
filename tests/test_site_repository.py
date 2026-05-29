@@ -55,8 +55,15 @@ class SiteRepositoryTests(unittest.IsolatedAsyncioTestCase):
     async def test_create_raises_duplicate_site_error_on_unique_collision(self) -> None:
         repository = SiteRepository()
         session = SimpleNamespace(
+            execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None, all=lambda: [])),
             add=lambda site: None,
-            flush=AsyncMock(side_effect=IntegrityError("stmt", "params", Exception("boom"))),
+            flush=AsyncMock(
+                side_effect=IntegrityError(
+                    "INSERT INTO caddy_sites (domain) VALUES (?)",
+                    {"domain": "example.com"},
+                    Exception("UNIQUE constraint failed: caddy_sites.domain"),
+                )
+            ),
         )
 
         with self.assertRaisesRegex(DuplicateSiteError, "Site domain already exists"):
@@ -69,7 +76,10 @@ class SiteRepositoryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_update_normalizes_values_before_flush(self) -> None:
         repository = SiteRepository()
-        session = SimpleNamespace(flush=AsyncMock())
+        session = SimpleNamespace(
+            execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None, all=lambda: [])),
+            flush=AsyncMock(),
+        )
         site = SimpleNamespace(
             site_name="Old Site",
             domain="old.example.com",
@@ -94,6 +104,30 @@ class SiteRepositoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(site.upstream_url, "http://backend.example.test:8443")
         self.assertFalse(site.enabled)
         session.flush.assert_awaited_once()
+
+    async def test_update_does_not_mutate_site_before_validation_completes(self) -> None:
+        repository = SiteRepository()
+        session = SimpleNamespace(flush=AsyncMock())
+        site = SimpleNamespace(
+            site_name="Old Site",
+            domain="old.example.com",
+            upstream_url="https://old.example.com",
+            caddy_directives="reverse_proxy old.example.com",
+            enabled=True,
+        )
+
+        with self.assertRaisesRegex(ValueError, "caddy_directives cannot be empty"):
+            await repository.update(
+                session,
+                site,
+                site_name="New Site",
+                caddy_directives="   ",
+            )
+
+        self.assertEqual(site.site_name, "Old Site")
+        self.assertEqual(site.caddy_directives, "reverse_proxy old.example.com")
+        self.assertEqual(site.upstream_url, "https://old.example.com")
+        session.flush.assert_not_awaited()
 
 
 class SiteRepositoryIntegrationTests(unittest.IsolatedAsyncioTestCase):

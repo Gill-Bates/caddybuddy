@@ -16,6 +16,7 @@ class HealthResponse(BaseModel):
 class BuildInfoResponse(BaseModel):
     version: str
     commit: str
+    build_date: str
 
 
 class CaddyStatusResponse(BaseModel):

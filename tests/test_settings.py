@@ -113,6 +113,33 @@ class SettingsValidationTests(unittest.TestCase):
         self.assertEqual(settings.ssllabs_api_base_url, "https://api.ssllabs.com/api/v4")
         self.assertFalse(hasattr(settings, "ssllabs_email"))
 
+    def test_session_cookie_name_is_stripped_and_validated(self) -> None:
+        settings = Settings(**_settings_kwargs(session_cookie_name=" caddybuddy.session "))
+
+        self.assertEqual(settings.session_cookie_name, "caddybuddy.session")
+
+    def test_session_cookie_name_rejects_invalid_characters(self) -> None:
+        with self.assertRaisesRegex(ValueError, "session_cookie_name may contain only"):
+            Settings(**_settings_kwargs(session_cookie_name="caddybuddy;session"))
+
+    def test_session_cookie_samesite_none_requires_https_only(self) -> None:
+        with self.assertRaisesRegex(ValueError, "requires session_https_only=true"):
+            Settings(
+                **_settings_kwargs(
+                    session_cookie_samesite="none",
+                    session_https_only=False,
+                )
+            )
+
+    def test_ssllabs_http_url_is_allowed_for_localhost_only(self) -> None:
+        settings = Settings(**_settings_kwargs(ssllabs_api_base_url="http://localhost:8080/api/v4"))
+
+        self.assertEqual(settings.ssllabs_api_base_url, "http://localhost:8080/api/v4")
+
+    def test_ssllabs_http_url_rejects_non_localhost_targets(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must use https unless it targets localhost"):
+            Settings(**_settings_kwargs(ssllabs_api_base_url="http://api.ssllabs.com/api/v4"))
+
 
 if __name__ == "__main__":
     unittest.main()

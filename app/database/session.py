@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import threading
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -173,6 +174,24 @@ def _read_existing_unique_constraints(sync_connection) -> dict[str, set[tuple[st
     return table_constraints
 
 
+def _sqlite_backup_table_name(base_name: str) -> str:
+    """Return a per-process backup table name for SQLite rebuild migrations."""
+    if re.fullmatch(r"[a-z0-9_]+", base_name) is None:
+        raise ValueError(f"Invalid SQLite backup table base name: {base_name}")
+    return f"{base_name}_backup_{os.getpid()}_{threading.get_ident()}"
+
+
+def _execute_sqlite_repair(sync_connection, statement: str, *, log_message: str) -> bool:
+    """Run a data repair statement and report whether it changed any rows."""
+    result = sync_connection.exec_driver_sql(statement)
+    rowcount = getattr(result, "rowcount", None)
+    if not isinstance(rowcount, int) or rowcount <= 0:
+        return False
+    suffix = "" if rowcount == 1 else "s"
+    logger.info("%s (%s row%s)", log_message, rowcount, suffix)
+    return True
+
+
 def _apply_known_table_migrations(sync_connection, existing_tables: set[str]) -> bool:
     """Create newly required tables for existing databases."""
     migrated = False
@@ -200,7 +219,7 @@ def _apply_known_schema_migrations(
     sync_connection,
     existing_columns: dict[str, set[str]],
 ) -> bool:
-    """Apply narrowly scoped schema migrations required by the app."""
+    """Apply narrow SQLite compatibility migrations before strict schema validation."""
     dialect_name = getattr(getattr(sync_connection, "dialect", None), "name", None)
     if dialect_name not in {None, "sqlite"}:
         return False
@@ -216,17 +235,18 @@ def _apply_known_schema_migrations(
         table_sql = table_sql_row[0] if table_sql_row is not None else ""
         if isinstance(table_sql, str) and "'ssllabs_email'" not in table_sql:
             logger.info("Applying known SQLite schema migration: app_settings allowed keys")
+            backup_table_name = _sqlite_backup_table_name("app_settings")
             sync_connection.exec_driver_sql(
-                "CREATE TABLE app_settings_backup AS "
+                f'CREATE TABLE "{backup_table_name}" AS '
                 'SELECT id, "key", value, created_at, updated_at FROM app_settings'
             )
             sync_connection.exec_driver_sql("DROP TABLE app_settings")
             Base.metadata.tables["app_settings"].create(sync_connection, checkfirst=True)
             sync_connection.exec_driver_sql(
                 "INSERT INTO app_settings (id, \"key\", value, created_at, updated_at) "
-                'SELECT id, "key", value, created_at, updated_at FROM app_settings_backup'
+                f'SELECT id, "key", value, created_at, updated_at FROM "{backup_table_name}"'
             )
-            sync_connection.exec_driver_sql("DROP TABLE app_settings_backup")
+            sync_connection.exec_driver_sql(f'DROP TABLE "{backup_table_name}"')
             migrated = True
 
     site_columns = existing_columns.get("caddy_sites")
@@ -237,11 +257,11 @@ def _apply_known_schema_migrations(
         )
         migrated = True
     if site_columns is not None and "upstream_url" in site_columns:
-        logger.info("Repairing empty upstream_url values in caddy_sites")
-        sync_connection.exec_driver_sql(
-            "UPDATE caddy_sites SET upstream_url = 'http://placeholder.invalid' WHERE upstream_url = ''"
-        )
-        migrated = True
+        migrated = _execute_sqlite_repair(
+            sync_connection,
+            "UPDATE caddy_sites SET upstream_url = 'http://placeholder.invalid' WHERE upstream_url = ''",
+            log_message="Repairing empty upstream_url values in caddy_sites",
+        ) or migrated
     if site_columns is not None and "caddy_directives" not in site_columns:
         logger.info("Applying known SQLite schema migration: caddy_sites.caddy_directives")
         sync_connection.exec_driver_sql(
@@ -261,13 +281,13 @@ def _apply_known_schema_migrations(
         )
         migrated = True
     if site_columns is not None:
-        logger.info("Repairing empty site_name values in caddy_sites")
-        sync_connection.exec_driver_sql(
+        migrated = _execute_sqlite_repair(
+            sync_connection,
             "UPDATE caddy_sites "
             "SET site_name = trim(CASE WHEN instr(domain, ',') > 0 THEN substr(domain, 1, instr(domain, ',') - 1) ELSE domain END) "
-            "WHERE site_name IS NULL OR site_name = ''"
-        )
-        migrated = True
+            "WHERE site_name IS NULL OR site_name = ''",
+            log_message="Repairing empty site_name values in caddy_sites",
+        ) or migrated
 
     return migrated
 
@@ -399,7 +419,7 @@ async def _execute_database_init() -> None:
 
 
 async def init_database() -> None:
-    """Initialize schema and refuse implicit upgrades of existing databases.
+    """Initialize schema with narrow SQLite repairs and otherwise refuse implicit upgrades.
 
     File-based SQLite databases use a Linux advisory file lock to serialize
     startup initialization across concurrent worker processes.

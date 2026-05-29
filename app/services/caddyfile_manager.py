@@ -470,7 +470,7 @@ async def _sync_caddy_configuration_locked(
             config.admin_url,
             settings.caddy_admin_timeout_seconds,
         ) as client:
-            await client.load_config(config_payload)
+            await client.load_config_force(config_payload, force_reload=force)
     except (CaddyServiceError, ValueError) as exc:
         await _set_state_value(session, _STATE_KEY_LAST_ERROR, "caddy_admin_unavailable")
         _record_sync_event(

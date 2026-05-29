@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.limiter import limiter, update_rate_limit_enabled
 from app.config.settings import get_settings
 from app.database.session import get_db_session
-from app.dependencies.web import push_flash, redirect_to, render_template
+from app.dependencies.web import initialize_user_session, push_flash, redirect_to, render_template
 from app.repositories.users import user_repository
 from app.services.auth import WeakPasswordError, auth_service
 from app.services.runtime_settings import (
@@ -29,6 +29,7 @@ from app.services.runtime_settings import (
 from app.services.ssllabs import (
     clear_registration_status_cache,
     register_email_with_ssllabs,
+    ssllabs_service,
 )
 from app.utils.ssllabs import mask_email
 
@@ -85,6 +86,7 @@ async def settings_page(
 
 
 @router.post("/settings/caddy", response_class=HTMLResponse)
+@limiter.limit("10/minute")
 async def update_caddy_settings(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
@@ -116,6 +118,7 @@ async def update_caddy_settings(
 
 
 @router.post("/settings/ssllabs", response_class=HTMLResponse)
+@limiter.limit("10/minute")
 async def update_ssllabs_settings(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
@@ -141,6 +144,7 @@ async def update_ssllabs_settings(
         clear_registration_status_cache(previous_email)
     if new_email:
         clear_registration_status_cache(new_email)
+        await ssllabs_service.startup()
         return _settings_response(request, success=True, message="SSL Labs email updated.")
     return _settings_response(request, success=True, message="SSL Labs email removed.")
 
@@ -187,6 +191,7 @@ async def change_password(
     await user_repository.update_password(session, current_user, new_hash)
     await session.commit()
 
+    initialize_user_session(request, current_user.id, new_hash)
     push_flash(request, "success", "Password changed successfully.")
     return redirect_to("/settings")
 

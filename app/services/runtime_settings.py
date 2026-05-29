@@ -19,6 +19,7 @@ from app.repositories.app_settings import DEFAULTS, app_settings_repository
 
 
 _SIMPLE_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_MAX_EMAIL_LENGTH = 255
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +125,8 @@ def normalize_ssllabs_email(raw_email: str) -> str:
     normalized = raw_email.strip().lower()
     if not normalized:
         return ""
+    if len(normalized) > _MAX_EMAIL_LENGTH:
+        raise ValueError("ssllabs_email must not exceed 255 characters.")
     if not _SIMPLE_EMAIL_PATTERN.fullmatch(normalized):
         raise ValueError("ssllabs_email must be a valid email address.")
     return normalized

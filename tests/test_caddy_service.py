@@ -10,6 +10,7 @@ import asyncio
 from ipaddress import ip_address
 from pathlib import Path
 import stat
+import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -115,6 +116,56 @@ class CaddyServiceTests(unittest.IsolatedAsyncioTestCase):
 
         mode = stat.S_IMODE(path.stat().st_mode)
         self.assertEqual(mode, 0o600)
+
+    async def test_purge_certificate_artifacts_does_not_delete_shared_parent_for_file_matches(self) -> None:
+        service = CaddyService()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "certificates"
+            ocsp_dir = root.parent / "ocsp"
+            ocsp_dir.mkdir(parents=True)
+            matched_file = ocsp_dir / "example.com.ocsp"
+            sibling_file = ocsp_dir / "other.example.com.ocsp"
+            matched_file.write_text("matched", encoding="utf-8")
+            sibling_file.write_text("sibling", encoding="utf-8")
+
+            removed = await service.purge_certificate_artifacts("example.com", root)
+
+            self.assertEqual(removed, 1)
+            self.assertFalse(matched_file.exists())
+            self.assertTrue(sibling_file.exists())
+
+    async def test_purge_certificate_artifacts_skips_inaccessible_roots(self) -> None:
+        service = CaddyService()
+        root = Path("/var/lib/caddy/.local/share/caddy/certificates")
+
+        def fake_exists(path: Path) -> bool:
+            if path == root:
+                raise PermissionError("denied")
+            return False
+
+        with (
+            patch("app.services.caddy.Path.exists", autospec=True, side_effect=fake_exists),
+            patch("app.services.caddy.logger") as logger_mock,
+        ):
+            removed = await service.purge_certificate_artifacts("example.com", root)
+
+        self.assertEqual(removed, 0)
+        logger_mock.warning.assert_called_once_with(
+            "Skipping inaccessible Caddy certificate storage root: %s",
+            root,
+        )
+
+    async def test_purge_certificate_artifacts_aborts_when_scan_limit_is_exceeded(self) -> None:
+        service = CaddyService()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "certificates"
+            root.mkdir(parents=True)
+            for index in range(4):
+                (root / f"file-{index}.txt").write_text("x", encoding="utf-8")
+
+            with patch("app.services.caddy._MAX_CERT_PURGE_SCAN_PATHS", 2):
+                with self.assertRaisesRegex(CaddyServiceError, "scan limit exceeded"):
+                    await service.purge_certificate_artifacts("example.com", root)
 
 
 if __name__ == "__main__":

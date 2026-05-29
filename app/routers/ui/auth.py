@@ -100,6 +100,5 @@ async def logout_action(request: Request, session: AsyncSession = Depends(get_db
     current_user = await get_session_user(request, session)
     request.session.clear()
     if current_user is not None:
-        await commit_and_flash(session, request)
-    push_flash(request, "info", "You have been signed out.")
+        push_flash(request, "info", "You have been signed out.")
     return redirect_to("/login")

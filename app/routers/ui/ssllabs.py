@@ -6,11 +6,13 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import UTC, datetime
 
+from app.config.limiter import limiter
 from app.database.session import get_db_session
 from app.dependencies.web import push_flash, redirect_to, render_template
 from app.repositories.ssllabs import ACTIVE_SCAN_STATUSES, active_scan_cutoff, ssllabs_repository
@@ -45,8 +47,6 @@ async def ssllabs_page(
     if current_user is None:
         return redirect_to("/login")
 
-    await ssllabs_service.sync_targets(session)
-    await session.commit()
     site_rows: list[dict[str, object]] = []
     site_rows_by_id: dict[int, dict[str, object]] = {}
     now = datetime.now(UTC)
@@ -105,6 +105,7 @@ async def ssllabs_page(
 
 
 @router.post("/ssl-labs/{target_id}/scan")
+@limiter.limit("5/minute")
 async def start_ssllabs_scan(
     request: Request,
     target_id: int,
@@ -140,6 +141,7 @@ async def start_ssllabs_scan(
 
 
 @router.post("/ssl-labs/{target_id}/schedule")
+@limiter.limit("20/minute")
 async def update_ssllabs_schedule(
     request: Request,
     target_id: int,

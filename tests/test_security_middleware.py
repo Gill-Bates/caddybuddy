@@ -227,7 +227,7 @@ class CSRFMiddlewareTests(_SecurityTestEnvMixin, unittest.TestCase):
         self.assertRegex(response.text, r"^[A-Za-z0-9_-]+\.[0-9a-f]{64}$")
         self.assertTrue(client.cookies.get("session"))
 
-    def test_hsts_is_added_for_forwarded_https_requests(self) -> None:
+    def test_forwarded_proto_header_alone_does_not_enable_hsts(self) -> None:
         app = FastAPI()
         app.add_middleware(self._csrf_module.SecurityHeadersMiddleware)
 
@@ -238,10 +238,7 @@ class CSRFMiddlewareTests(_SecurityTestEnvMixin, unittest.TestCase):
         with TestClient(app) as client:
             response = client.get("/", headers={"X-Forwarded-Proto": "https"})
 
-        self.assertEqual(
-            response.headers["strict-transport-security"],
-            "max-age=63072000; includeSubDomains",
-        )
+        self.assertNotIn("strict-transport-security", response.headers)
 
 
 if __name__ == "__main__":

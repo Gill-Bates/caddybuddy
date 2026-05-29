@@ -13,10 +13,9 @@ from datetime import UTC, datetime
 from hashlib import sha256, sha384
 
 from fastapi import HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from starlette.routing import NoMatchFound
-from starlette.templating import _TemplateResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import get_settings
@@ -34,8 +33,13 @@ def _format_datetime(value: datetime | None) -> str:
     """Format a datetime in local time and return '-' for missing values."""
     if value is None:
         return "-"
-    aware = value.replace(tzinfo=UTC) if value.tzinfo is None else value
+    aware = _coerce_aware_datetime(value)
     return aware.astimezone().strftime("%Y-%m-%d %H:%M")
+
+
+def _coerce_aware_datetime(value: datetime) -> datetime:
+    """Treat naive datetimes as UTC before local rendering/comparison."""
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value
 
 
 def _days_until(value: datetime | None) -> int | None:
@@ -43,7 +47,7 @@ def _days_until(value: datetime | None) -> int | None:
     if value is None:
         return None
     now = datetime.now(UTC).astimezone()
-    return (value.astimezone().date() - now.date()).days
+    return (_coerce_aware_datetime(value).astimezone().date() - now.date()).days
 
 
 def _expiry_badge_class(value: datetime | None) -> str:
@@ -263,7 +267,7 @@ def render_template(
     current_user: User | None,
     context: dict[str, object] | None = None,
     status_code: int = 200,
-) -> _TemplateResponse:
+) -> Response:
     """Render a template with protected framework context keys."""
     page_context = dict(context) if context else {}
     page_context.update({

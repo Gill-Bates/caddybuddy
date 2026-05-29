@@ -816,7 +816,28 @@
                         : "Configuration is valid.";
 
                     if (response.ok && payload.valid) {
-                        form.dataset.lastValidatedState = submittedState;
+                        // Apply formatted directives if returned (Sites page)
+                        if (typeof payload.formatted_caddy_directives === "string") {
+                            const directivesField = form.querySelector("#site-caddy-directives");
+                            if (directivesField instanceof HTMLTextAreaElement) {
+                                directivesField.value = payload.formatted_caddy_directives;
+                                directivesField.dispatchEvent(new Event("input", { bubbles: true }));
+                            }
+                        }
+                        // Apply formatted caddyfile if returned (Caddyfile page)
+                        if (typeof payload.formatted_caddyfile === "string") {
+                            const caddyfileField = form.querySelector("#global-caddyfile");
+                            if (caddyfileField instanceof HTMLTextAreaElement) {
+                                caddyfileField.value = payload.formatted_caddyfile;
+                                caddyfileField.dispatchEvent(new Event("input", { bubbles: true }));
+                            }
+                        }
+                        // Capture state AFTER formatting is applied
+                        const formattedState = form.hasAttribute("data-caddyfile-config-form")
+                            ? serializeCaddyfileFormState(form)
+                            : serializeSiteConfigFormState(form);
+                        form.dataset.lastValidatedState = formattedState;
+                        form.dataset.initialSerializedState = formattedState;
                         form.dataset.validationState = "valid";
                         App.pushInlineFlash("success", `${successPrefix}: ${successMessage}`);
                     } else {

@@ -280,3 +280,81 @@ class UISettingsTests(unittest.TestCase):
         self.assertEqual(response.json(), {"success": True, "message": "SSL Labs email updated."})
         set_ssllabs_email.assert_awaited_once_with(ANY, "team@example.com")
         clear_cache.assert_called_once_with("team@example.com")
+
+    def test_settings_page_updates_ssllabs_email_starts_scheduler(self) -> None:
+        app = self._build_app()
+        current_user = SimpleNamespace(username="admin", role="admin")
+
+        with (
+            patch("app.routers.ui.settings.require_admin", new=AsyncMock(return_value=current_user)),
+            patch(
+                "app.routers.ui.settings.get_caddy_config",
+                new=AsyncMock(
+                    return_value=SimpleNamespace(
+                        admin_url="http://localhost:2019",
+                        caddyfile_path_str="/app/Caddyfile",
+                    )
+                ),
+            ),
+            patch("app.routers.ui.settings.get_rate_limit_enabled", new=AsyncMock(return_value=True)),
+            patch("app.routers.ui.settings.get_ssllabs_email", new=AsyncMock(return_value=None)),
+            patch("app.routers.ui.settings.set_ssllabs_email", new=AsyncMock()),
+            patch("app.routers.ui.settings.clear_registration_status_cache"),
+            patch("app.routers.ui.settings.ssllabs_service.startup", new=AsyncMock()) as startup,
+        ):
+            with TestClient(app) as client:
+                page = client.get("/settings")
+                csrf_token = self._extract_csrf_token(page.text)
+                response = client.post(
+                    "/settings/ssllabs",
+                    data={
+                        "csrf_token": csrf_token,
+                        "ssllabs_email": "team@example.com",
+                    },
+                    follow_redirects=False,
+                )
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/settings")
+        startup.assert_awaited_once()
+
+    def test_change_password_reinitializes_current_session(self) -> None:
+        app = self._build_app()
+        current_user = SimpleNamespace(id=7, username="admin", role="admin", password_hash="old-hash")
+
+        with (
+            patch("app.routers.ui.settings.require_admin", new=AsyncMock(return_value=current_user)),
+            patch(
+                "app.routers.ui.settings.get_caddy_config",
+                new=AsyncMock(
+                    return_value=SimpleNamespace(
+                        admin_url="http://localhost:2019",
+                        caddyfile_path_str="/app/Caddyfile",
+                    )
+                ),
+            ),
+            patch("app.routers.ui.settings.get_rate_limit_enabled", new=AsyncMock(return_value=True)),
+            patch("app.routers.ui.settings.get_ssllabs_email", new=AsyncMock(return_value=None)),
+            patch("app.routers.ui.settings.auth_service.verify_password", new=AsyncMock(return_value=True)),
+            patch("app.routers.ui.settings.auth_service.hash_password", new=AsyncMock(return_value="new-hash")),
+            patch("app.routers.ui.settings.user_repository.update_password", new=AsyncMock()) as update_password,
+            patch("app.routers.ui.settings.initialize_user_session") as initialize_session,
+        ):
+            with TestClient(app) as client:
+                page = client.get("/settings")
+                csrf_token = self._extract_csrf_token(page.text)
+                response = client.post(
+                    "/settings/change-password",
+                    data={
+                        "csrf_token": csrf_token,
+                        "current_password": "OldPassword123!",
+                        "new_password": "NewPassword123!",
+                        "confirm_password": "NewPassword123!",
+                    },
+                    follow_redirects=False,
+                )
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/settings")
+        update_password.assert_awaited_once_with(ANY, current_user, "new-hash")
+        initialize_session.assert_called_once_with(unittest.mock.ANY, 7, "new-hash")

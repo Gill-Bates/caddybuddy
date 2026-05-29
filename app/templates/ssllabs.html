@@ -216,7 +216,7 @@
                                                             data-loading-submit-form>
                                                             <input type="hidden" name="csrf_token"
                                                                 value="{{ csrf_token }}">
-                                                            {% if row.scan %}
+                                                            {% if row.scan and row.scan.grade %}
                                                             <a href="https://www.ssllabs.com/ssltest/analyze.html?d={{ row.target.host }}"
                                                                 target="_blank" rel="noopener"
                                                                 class="btn btn-sm btn-outline-secondary"

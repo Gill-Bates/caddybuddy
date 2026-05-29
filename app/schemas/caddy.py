@@ -17,6 +17,7 @@ from app.utils.domains import normalize_domain_list
 
 
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]", re.ASCII)
+_MAX_SITE_DIRECTIVES_BYTES = 256 * 1024
 
 
 def _normalize_domain(value: str) -> str:
@@ -42,6 +43,11 @@ def _require_tz_aware(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("datetime must be timezone-aware")
     return value
+
+
+def _validate_directives_size(value: str) -> None:
+    if len(value.encode("utf-8")) > _MAX_SITE_DIRECTIVES_BYTES:
+        raise ValueError("config is too large")
 
 
 class CaddyStatusResponse(BaseModel):
@@ -108,6 +114,7 @@ class SiteCreateRequest(BaseModel):
         normalized = normalize_caddy_directives(value)
         if normalized is None:
             raise ValueError("config is required")
+        _validate_directives_size(normalized)
         return normalized
 
 
@@ -139,6 +146,7 @@ class SiteUpdateRequest(BaseModel):
         normalized = normalize_caddy_directives(value)
         if normalized is None:
             raise ValueError("config is required")
+        _validate_directives_size(normalized)
         return normalized
 
     @model_validator(mode="after")

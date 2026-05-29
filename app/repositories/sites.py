@@ -31,10 +31,6 @@ class SiteRepository:
         return not set(split_domain_names(left)).isdisjoint(split_domain_names(right))
 
     @staticmethod
-    def _supports_execute(session: AsyncSession) -> bool:
-        return hasattr(session, "execute")
-
-    @staticmethod
     def _derive_legacy_upstream_url(caddy_directives: str) -> str:
         extracted_upstream = extract_upstream_from_directives(caddy_directives)
         if extracted_upstream is None:
@@ -42,6 +38,22 @@ class SiteRepository:
         if "://" in extracted_upstream:
             return _normalize_upstream_url(extracted_upstream)
         return _normalize_upstream_url(f"http://{extracted_upstream}")
+
+    @staticmethod
+    def _is_duplicate_domain_integrity_error(exc: IntegrityError) -> bool:
+        message = " ".join(
+            part.lower()
+            for part in (
+                str(exc.orig or ""),
+                str(exc.statement or ""),
+                str(exc),
+            )
+            if part
+        )
+        return (
+            "caddy_sites.domain" in message
+            or "uq_caddy_sites_domain" in message
+        ) and any(token in message for token in ("unique", "duplicate", "constraint"))
 
     async def count(self, session: AsyncSession) -> int:
         result = await session.execute(select(func.count()).select_from(Site))
@@ -127,7 +139,7 @@ class SiteRepository:
     ) -> Site:
         normalized_site_name = _normalize_site_name(site_name)
         normalized_domain = _normalize_domain_name(domain)
-        if self._supports_execute(session) and await self.domain_exists(session, normalized_domain):
+        if await self.domain_exists(session, normalized_domain):
             raise DuplicateSiteError("Site domain already exists.")
 
         normalized_directives = normalize_caddy_directives(caddy_directives)
@@ -145,7 +157,9 @@ class SiteRepository:
         try:
             await session.flush()
         except IntegrityError as exc:
-            raise DuplicateSiteError("Site domain already exists.") from exc
+            if self._is_duplicate_domain_integrity_error(exc):
+                raise DuplicateSiteError("Site domain already exists.") from exc
+            raise
         return site
 
     async def update(
@@ -158,29 +172,39 @@ class SiteRepository:
         caddy_directives: str | None = None,
         enabled: bool | None = None,
     ) -> Site:
-        if site_name is not None:
-            site.site_name = _normalize_site_name(site_name)
+        next_site_name = site.site_name if site_name is None else _normalize_site_name(site_name)
+        next_domain = site.domain
+        next_caddy_directives = site.caddy_directives
+        next_upstream_url = site.upstream_url
+        next_enabled = site.enabled if enabled is None else enabled
+
         if domain is not None:
             normalized_domain = _normalize_domain_name(domain)
-            if self._supports_execute(session) and await self.domain_exists(
+            if await self.domain_exists(
                 session,
                 normalized_domain,
                 exclude_id=getattr(site, "id", None),
             ):
                 raise DuplicateSiteError("Site domain already exists.")
-            site.domain = normalized_domain
+            next_domain = normalized_domain
         if caddy_directives is not None:
             normalized_directives = normalize_caddy_directives(caddy_directives)
             if not normalized_directives:
                 raise ValueError("caddy_directives cannot be empty")
-            site.caddy_directives = normalized_directives
-            site.upstream_url = self._derive_legacy_upstream_url(normalized_directives)
-        if enabled is not None:
-            site.enabled = enabled
+            next_caddy_directives = normalized_directives
+            next_upstream_url = self._derive_legacy_upstream_url(normalized_directives)
+
+        site.site_name = next_site_name
+        site.domain = next_domain
+        site.caddy_directives = next_caddy_directives
+        site.upstream_url = next_upstream_url
+        site.enabled = next_enabled
         try:
             await session.flush()
         except IntegrityError as exc:
-            raise DuplicateSiteError("Site domain already exists.") from exc
+            if self._is_duplicate_domain_integrity_error(exc):
+                raise DuplicateSiteError("Site domain already exists.") from exc
+            raise
         return site
 
     async def delete(self, session: AsyncSession, site: Site) -> None:

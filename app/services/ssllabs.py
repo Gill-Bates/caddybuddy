@@ -164,7 +164,7 @@ def _map_remote_status(payload: dict[str, Any]) -> SslLabsScanStatus:
 
 
 # Registration status cache: {email: (is_registered, timestamp)}
-_registration_status_cache: dict[str, tuple[bool, datetime]] = {}
+_registration_status_cache: dict[str, tuple[bool | None, datetime]] = {}
 _REGISTRATION_CACHE_TTL_SECONDS = 300  # 5 minutes
 
 
@@ -173,12 +173,12 @@ async def check_email_registration_status(
     *,
     api_base_url: str = "https://api.ssllabs.com/api/v4",
     use_cache: bool = True,
-) -> bool:
+) -> bool | None:
     """
     Check if an email is registered with SSL Labs API v4.
 
     Uses a TTL cache to avoid excessive API calls.
-    Returns True if registered, False otherwise.
+    Returns True if registered, False if explicitly unregistered, else None.
     """
     now = datetime.now(UTC)
 
@@ -210,10 +210,13 @@ async def check_email_registration_status(
                 "SSL Labs registration status returned unexpected response",
                 extra={"status_code": response.status_code, "email": mask_email(email)},
             )
-            return False
+            return None
+    except httpx.HTTPError as exc:
+        logger.warning("Failed to check SSL Labs registration status: %s", exc)
+        return None
     except Exception as exc:
         logger.warning("Failed to check SSL Labs registration status: %s", exc)
-        return False
+        return None
 
 
 def clear_registration_status_cache(email: str | None = None) -> None:
@@ -255,13 +258,16 @@ async def register_email_with_ssllabs(
                 f"{api_base_url.rstrip('/')}/register",
                 json=payload,
             )
-            if response.status_code == 200:
+            response.raise_for_status()
+            try:
                 data = response.json()
-                if data.get("status") == "success":
-                    logger.info("Successfully registered email %s with SSL Labs", mask_email(email))
-                    # Clear cache to reflect new registration status
-                    clear_registration_status_cache(email)
-                    return True
+            except ValueError as exc:
+                raise SslLabsClientError("SSL Labs registration returned invalid JSON.") from exc
+            if data.get("status") == "success":
+                logger.info("Successfully registered email %s with SSL Labs", mask_email(email))
+                # Clear cache to reflect new registration status
+                clear_registration_status_cache(email)
+                return True
             logger.warning(
                 "SSL Labs registration failed",
                 extra={
@@ -270,9 +276,10 @@ async def register_email_with_ssllabs(
                 },
             )
             return False
-    except Exception as exc:
-        logger.warning("SSL Labs registration error: %s", exc)
-        return False
+    except httpx.TimeoutException as exc:
+        raise SslLabsClientError("SSL Labs registration timed out.") from exc
+    except httpx.HTTPError as exc:
+        raise SslLabsClientError("SSL Labs registration request failed.") from exc
 
 
 class SslLabsClient:
@@ -405,12 +412,6 @@ class SslLabsService:
         shutdown_event = self._ensure_shutdown_event()
         shutdown_event.clear()
         if self._scheduler_task is not None:
-            return
-        session_factory = get_session_factory()
-        async with session_factory() as session:
-            email = await get_ssllabs_email(session)
-        if not email:
-            logger.info("SSL Labs scheduler is idle until ssllabs_email is configured.")
             return
         self._scheduler_task = asyncio.create_task(self._scheduler_loop(), name="ssllabs-scheduler")
 
@@ -549,7 +550,7 @@ class SslLabsService:
         if exc is not None:
             logger.error(
                 "SSL Labs scan task crashed",
-                exc_info=exc,
+                exc_info=(type(exc), exc, exc.__traceback__),
                 extra={"target_id": target_id},
             )
 
@@ -737,6 +738,10 @@ class SslLabsService:
             try:
                 session_factory = get_session_factory()
                 async with session_factory() as session:
+                    email = await get_ssllabs_email(session)
+                    if not email:
+                        await self._sleep_or_shutdown(_SCHEDULER_POLL_SECONDS)
+                        continue
                     await self.sync_targets(session)
                     await session.commit()
                     due_targets = await ssllabs_repository.list_due_targets(session, now=datetime.now(UTC))

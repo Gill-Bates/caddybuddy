@@ -17,13 +17,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.limiter import limiter
+from app.config.settings import get_settings
 from app.database.session import get_db_session
 from app.dependencies.web import push_flash, redirect_to, render_template
 from app.repositories.sites import DuplicateSiteError, site_repository
 from app.schemas.caddy import SiteCreateRequest
 from app.services.caddy import caddy_service
-from app.services.caddyfile_manager import get_baseline_caddyfile, validate_and_deploy_full_caddyfile
-from app.services.dashboard import CertificateInfo, get_cached_certificate_info_for_domains, get_certificate_info_for_domains
+from app.services.caddyfile_manager import get_baseline_caddyfile, sync_caddy_configuration, validate_and_deploy_full_caddyfile
+from app.services.dashboard import CertificateInfo, get_cached_certificate_info_for_domains, get_certificate_info_for_domains, invalidate_certificate_cache
 from app.services.events import publish_resource_event
 from app.utils.caddyfile import build_domain_site_preview, extract_site_handler_from_directives
 from app.utils.domains import split_domain_names
@@ -43,7 +44,6 @@ router = APIRouter()
 def _site_update_requires_deploy(
     site,
     *,
-    site_name: str,
     domain: str,
     caddy_directives: str,
     enabled: bool,
@@ -93,6 +93,7 @@ async def _build_site_validation_caddyfile(
 
 
 @router.get("/sites/certificates", response_class=JSONResponse)
+@limiter.limit("10/minute")
 async def sites_certificates(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
@@ -229,7 +230,6 @@ async def save_site(
 
             requires_deploy = _site_update_requires_deploy(
                 site,
-                site_name=site_name,
                 domain=domain,
                 caddy_directives=caddy_directives,
                 enabled=enabled,
@@ -243,24 +243,23 @@ async def save_site(
                 caddy_directives=caddy_directives,
                 enabled=enabled,
             )
-            await session.commit()
 
             if requires_deploy:
                 try:
                     success, deploy_message = await validate_and_deploy_full_caddyfile(session)
-                    await session.commit()
-                    if success:
-                        push_flash(request, "success", f"Site '{site_name}' saved and deployed.")
-                    else:
-                        logger.warning("Sync failed after site update id=%s site=%s: %s", site.id, site_name, deploy_message)
-                        push_flash(
-                            request,
-                            "warning",
-                            f"Site '{site_name}' saved, but synchronization failed: {deploy_message}",
-                        )
+                    if not success:
+                        await session.rollback()
+                        push_flash(request, "danger", f"Site '{site_name}' was not saved: {deploy_message}")
+                        return redirect_to(f"/sites/{site.id}")
                 except Exception:
+                    await session.rollback()
                     logger.exception("Deployment raised unexpectedly after site update id=%s", site.id)
-                    push_flash(request, "warning", f"Site '{site_name}' saved, but deployment failed unexpectedly.")
+                    push_flash(request, "danger", f"Site '{site_name}' was not saved: deployment failed unexpectedly.")
+                    return redirect_to(f"/sites/{site.id}")
+
+            await session.commit()
+            if requires_deploy:
+                push_flash(request, "success", f"Site '{site_name}' saved and deployed.")
             else:
                 push_flash(request, "success", f"Site '{site_name}' saved.")
             await publish_resource_event("site", "updated", str(site.id))
@@ -279,25 +278,23 @@ async def save_site(
                 caddy_directives=caddy_directives,
                 enabled=enabled,
             )
-            await session.commit()
 
             try:
                 success, deploy_message = await validate_and_deploy_full_caddyfile(session)
-                await session.commit()
-                if success:
-                    push_flash(request, "success", f"Site '{site_name}' created and deployed.")
-                else:
-                    logger.warning("Sync failed after site create id=%s site=%s: %s", site.id, site_name, deploy_message)
-                    push_flash(
-                        request,
-                        "warning",
-                        f"Site '{site_name}' created, but synchronization failed: {deploy_message}",
-                    )
+                if not success:
+                    await session.rollback()
+                    push_flash(request, "danger", f"Site '{site_name}' was not created: {deploy_message}")
+                    return redirect_to("/sites")
             except Exception:
+                await session.rollback()
                 logger.exception("Deployment raised unexpectedly after site create id=%s", site.id)
-                push_flash(request, "warning", f"Site '{site_name}' created, but deployment failed unexpectedly.")
+                push_flash(request, "danger", f"Site '{site_name}' was not created: deployment failed unexpectedly.")
+                return redirect_to("/sites")
+
+            await session.commit()
+            push_flash(request, "success", f"Site '{site_name}' created and deployed.")
             await publish_resource_event("site", "created", str(site.id))
-            return redirect_to(f"/sites/{site.id}")
+            return redirect_to("/sites")
 
     except (DuplicateSiteError, IntegrityError):
         await session.rollback()
@@ -329,19 +326,15 @@ async def delete_site(
 
     try:
         await site_repository.delete(session, site)
-        await session.commit()
 
         success, deploy_message = await validate_and_deploy_full_caddyfile(session)
-        await session.commit()
         if not success:
-            logger.warning("Synchronization after site deletion failed: %s", deploy_message)
-            push_flash(
-                request,
-                "warning",
-                f"Site '{domain}' deleted, but synchronization failed: {deploy_message}",
-            )
-        else:
-            push_flash(request, "success", f"Site '{domain}' deleted.")
+            await session.rollback()
+            push_flash(request, "danger", f"Site '{domain}' was not deleted: {deploy_message}")
+            return redirect_to("/sites")
+
+        await session.commit()
+        push_flash(request, "success", f"Site '{domain}' deleted.")
         await publish_resource_event("site", "deleted", str(site_id))
 
     except IntegrityError:
@@ -356,6 +349,87 @@ async def delete_site(
     return redirect_to("/sites")
 
 
+@router.post("/sites/{site_id}/renew-certificate")
+@limiter.limit("5/minute")
+async def renew_certificate(
+    request: Request,
+    site_id: int,
+    session: AsyncSession = Depends(get_db_session),
+):
+    """Force certificate renewal for a site by redeploying configuration."""
+    current_user = await require_admin(request, session)
+    if current_user is None:
+        return redirect_to("/")
+
+    await validated_form(request)
+
+    site = await site_repository.get_by_id(session, site_id)
+    if site is None:
+        push_flash(request, "danger", "Site not found.")
+        return redirect_to("/sites")
+
+    primary_domain = _primary_domain_name(site.domain)
+    if not primary_domain:
+        push_flash(request, "warning", "No domain configured for certificate renewal.")
+        return redirect_to("/sites")
+
+    # Publish renewing event immediately for real-time UI update
+    await publish_resource_event("certificate", "renewing", primary_domain, {"site_id": site_id})
+
+    try:
+        settings = get_settings()
+
+        removed_artifacts = await caddy_service.purge_certificate_artifacts(
+            primary_domain,
+            settings.caddy_certificates_path,
+        )
+        if removed_artifacts == 0:
+            await publish_resource_event(
+                "certificate",
+                "renewal_failed",
+                primary_domain,
+                {"site_id": site_id, "error": "No matching certificate artifacts found in Caddy storage."},
+            )
+            push_flash(
+                request,
+                "warning",
+                f"Certificate renewal was not triggered for '{primary_domain}': no matching certificate artifacts were found in Caddy storage.",
+            )
+            return redirect_to("/sites")
+
+        # Invalidate cache to force fresh certificate check after renewal
+        await invalidate_certificate_cache(primary_domain)
+
+        sync_result = await sync_caddy_configuration(session, force=True)
+        await session.commit()
+        success = sync_result.status in {"synced", "no_change"}
+        deploy_message = sync_result.error or (
+            "Configuration deployed successfully" if sync_result.status == "synced" else "Configuration unchanged"
+        )
+
+        if success:
+            # Publish renewed event
+            await publish_resource_event("certificate", "renewed", primary_domain, {"site_id": site_id})
+            push_flash(
+                request,
+                "success",
+                f"Certificate renewal triggered for '{primary_domain}' after removing {removed_artifacts} certificate artifact(s) from Caddy storage.",
+            )
+        else:
+            await publish_resource_event("certificate", "renewal_failed", primary_domain, {"site_id": site_id, "error": deploy_message})
+            push_flash(
+                request,
+                "warning",
+                f"Certificate renewal could not be triggered: {deploy_message}",
+            )
+    except Exception:
+        logger.exception("Certificate renewal failed for site %s", site_id)
+        await publish_resource_event("certificate", "renewal_failed", primary_domain, {"site_id": site_id, "error": "Unexpected error"})
+        push_flash(request, "danger", "Certificate renewal failed unexpectedly.")
+
+    return redirect_to("/sites")
+
+
 @router.post("/sites/validate")
 @limiter.limit("20/minute")
 async def validate_site(
@@ -366,6 +440,8 @@ async def validate_site(
     current_user = await require_user(request, session)
     if current_user is None:
         return JSONResponse({"detail": "Authentication required."}, status_code=401)
+    if current_user.role != "admin":
+        return JSONResponse({"detail": "Administrator access is required."}, status_code=403)
 
     form = await validated_form(request)
     try:
@@ -387,9 +463,16 @@ async def validate_site(
     if not valid:
         return JSONResponse({"valid": False, "message": message})
 
+    # Format directives using Caddy's formatter
+    try:
+        formatted_directives = await caddy_service.format_site_directives(payload.caddy_directives)
+    except Exception:
+        formatted_directives = payload.caddy_directives
+
     return JSONResponse(
         {
             "valid": True,
             "message": f"Site configuration for '{payload.site_name}' is valid.",
+            "formatted_caddy_directives": formatted_directives,
         }
     )

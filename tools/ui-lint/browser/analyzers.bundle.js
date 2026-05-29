@@ -494,6 +494,48 @@
 
         const buttonAlignmentIssues = collectCenteringIssues('.btn:not(.btn-close):not(input)', 'button');
         const badgeAlignmentIssues = collectCenteringIssues('.badge', 'badge');
+        const ssllabsPrematureDesktopLayoutIssues = (() => {
+            const panel = document.querySelector('.ssllabs-panel');
+            if (!(panel instanceof Element) || !isVisible(panel) || isVisuallyHidden(panel)) {
+                return [];
+            }
+
+            const panelRect = rectOf(panel);
+            const compactModeMaxPanelWidth = 72 * 16;
+            const sameRowTolerance = 12;
+            if (panelRect.width >= compactModeMaxPanelWidth) {
+                return [];
+            }
+
+            return Array.from(document.querySelectorAll('.ssllabs-domain-card'))
+                .filter(isVisible)
+                .map((card) => {
+                    const header = card.querySelector('.ssllabs-domain-card__header');
+                    const result = card.querySelector('.ssllabs-result');
+                    const controls = card.querySelector('.ssllabs-domain-card__controls');
+                    if (!(header instanceof Element) || !(result instanceof Element) || !(controls instanceof Element)) {
+                        return null;
+                    }
+
+                    const headerRect = rectOf(header);
+                    const resultRect = rectOf(result);
+                    const controlsRect = rectOf(controls);
+                    const sameRow = Math.abs(headerRect.top - resultRect.top) <= sameRowTolerance
+                        && Math.abs(headerRect.top - controlsRect.top) <= sameRowTolerance;
+                    if (!sameRow) {
+                        return null;
+                    }
+
+                    const host = (header.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+                    return {
+                        host,
+                        panelWidth: roundTo(panelRect.width, 2),
+                        cardWidth: roundTo(rectOf(card).width, 2),
+                    };
+                })
+                .filter(Boolean)
+                .slice(0, 20);
+        })();
 
         const viewportClippedInteractiveElements = interactiveTargets
             .filter(isVisible)
@@ -529,6 +571,7 @@
             clickTargetsTooSmall: tooSmall,
             buttonAlignmentIssues,
             badgeAlignmentIssues,
+            ssllabsPrematureDesktopLayoutIssues,
             viewportClippedInteractiveElements,
         };
     }

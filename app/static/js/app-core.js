@@ -98,6 +98,19 @@
         return false;
     };
 
+    // Global list of SSE event listeners that modules can register
+    const sseEventListeners = new Set();
+
+    App.addSseEventListener = (listener) => {
+        if (typeof listener === "function") {
+            sseEventListeners.add(listener);
+        }
+    };
+
+    App.removeSseEventListener = (listener) => {
+        sseEventListeners.delete(listener);
+    };
+
     App.initializeLiveUpdates = () => {
         const relevantResources = {
             "/caddyfile": ["caddyfile"],
@@ -109,9 +122,8 @@
         const segments = currentPath.split("/").filter(Boolean);
         const activeBaseSegment = segments.length > 0 ? `/${segments[0]}` : "/";
         const relevantTypes = new Set(relevantResources[activeBaseSegment] || []);
-        if (relevantTypes.size === 0) {
-            return;
-        }
+        // Allow SSE connection even if no reload types, for real-time UI updates (e.g., certificates)
+        const hasRelevantTypes = relevantTypes.size > 0;
         if (App.liveUpdatesInitializedPath === activeBaseSegment) {
             return;
         }
@@ -188,9 +200,19 @@
             };
 
             const handleResourceEvent = (event) => {
+                // Notify all registered listeners first
+                for (const listener of sseEventListeners) {
+                    try {
+                        listener(event);
+                    } catch {
+                        // Ignore listener errors
+                    }
+                }
+
+                // Then handle reload logic
                 try {
                     const payload = JSON.parse(event.data);
-                    if (relevantTypes.has(payload.type)) {
+                    if (hasRelevantTypes && relevantTypes.has(payload.type)) {
                         triggerReload();
                     }
                 } catch {

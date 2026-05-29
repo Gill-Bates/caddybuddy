@@ -20,6 +20,9 @@ from app.utils.ssllabs import validate_ssllabs_host
 
 
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$", re.ASCII)
+_SIMPLE_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", re.ASCII)
+_USERNAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,48}[A-Za-z0-9])?$", re.ASCII)
+_SSLLABS_GRADE_RE = re.compile(r"^(?:A\+|A-|[A-F]|T|M|Mixed)$", re.ASCII)
 _SYNC_EVENT_STATUSES = (
     "synced",
     "sync_failed",
@@ -55,6 +58,24 @@ def _normalize_site_name(value: str) -> str:
         raise ValueError("site_name cannot be empty")
     if "\n" in normalized or "\r" in normalized:
         raise ValueError("site_name must not contain newlines")
+    return normalized
+
+
+def _normalize_username(value: str) -> str:
+    normalized = value.strip()
+    if _USERNAME_RE.fullmatch(normalized) is None:
+        raise ValueError("invalid username")
+    return normalized
+
+
+def _normalize_email(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if not normalized:
+        return None
+    if _SIMPLE_EMAIL_RE.fullmatch(normalized) is None:
+        raise ValueError("invalid email address")
     return normalized
 
 
@@ -98,6 +119,17 @@ def _normalize_ssllabs_scan_status(value: str) -> str:
     return normalized
 
 
+def _normalize_ssllabs_grade(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if _SSLLABS_GRADE_RE.fullmatch(normalized) is None:
+        raise ValueError("invalid ssllabs grade")
+    return normalized
+
+
 def _normalize_ssllabs_schedule_frequency(value: str | None) -> str | None:
     if value is None:
         return None
@@ -135,6 +167,10 @@ class User(TimestampMixin, Base):
     def is_admin(self) -> bool:
         return self.role == "admin"
 
+    @validates("username")
+    def _validate_username(self, _key: str, value: str) -> str:
+        return _normalize_username(value)
+
     @validates("role")
     def _validate_role(self, _key: str, value: str) -> str:
         normalized = value.strip().lower()
@@ -144,10 +180,7 @@ class User(TimestampMixin, Base):
 
     @validates("email")
     def _validate_email(self, _key: str, value: str | None) -> str | None:
-        if value is None:
-            return None
-        normalized = value.strip().lower()
-        return normalized or None
+        return _normalize_email(value)
 
 
 class CaddyBuddyState(Base):
@@ -335,6 +368,10 @@ class SslLabsScan(Base):
     @validates("status")
     def _validate_status(self, _key: str, value: str) -> str:
         return _normalize_ssllabs_scan_status(value)
+
+    @validates("grade")
+    def _validate_grade(self, _key: str, value: str | None) -> str | None:
+        return _normalize_ssllabs_grade(value)
 
     @validates("endpoint_count")
     def _validate_endpoint_count(self, _key: str, value: int) -> int:

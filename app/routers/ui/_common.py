@@ -11,7 +11,7 @@ import re
 from collections.abc import Sequence
 from urllib.parse import unquote
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import FormData
@@ -22,6 +22,7 @@ from app.models.entities import User
 logger = logging.getLogger(__name__)
 
 _UNSAFE_NEXT_PATH_RE = re.compile(r"[\x00-\x1f\x7f\\]")
+_MAX_FORM_BODY_BYTES = 2 * 1024 * 1024
 
 
 async def require_user(request: Request, session: AsyncSession) -> User | None:
@@ -45,6 +46,14 @@ async def require_admin(request: Request, session: AsyncSession) -> User | None:
 
 async def validated_form(request: Request) -> FormData:
     """Parse form data and validate CSRF token."""
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            parsed_length = int(content_length)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid form body length.") from exc
+        if parsed_length > _MAX_FORM_BODY_BYTES:
+            raise HTTPException(status_code=413, detail="Form body too large.")
     form = await request.form()
     validate_csrf_token(request, str(form.get("csrf_token", "")))
     return form

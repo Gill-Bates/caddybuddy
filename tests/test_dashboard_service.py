@@ -324,6 +324,20 @@ class DashboardServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(info.exists)
         self.assertEqual(info.error_message, "Certificate checks require a public hostname.")
 
+    def test_validate_public_certificate_target_returns_pinned_public_ip(self) -> None:
+        with patch.object(
+            dashboard_module.socket,
+            "getaddrinfo",
+            return_value=[
+                (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", 443)),
+                (socket.AF_INET6, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("2001:4860:4860::8888", 443, 0, 0)),
+            ],
+        ):
+            domain, pinned_ip = dashboard_module._validate_public_certificate_target("example.com")
+
+        self.assertEqual(domain, "example.com")
+        self.assertEqual(pinned_ip, "8.8.8.8")
+
 
 if __name__ == "__main__":
     unittest.main()

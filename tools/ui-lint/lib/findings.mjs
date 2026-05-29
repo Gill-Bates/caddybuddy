@@ -238,6 +238,9 @@ export function summarizeFindings(result) {
         pushHard(`overflowOffenders=${metrics.horizontalOverflow.offenders.length}`);
     }
     if (metrics.clippedButtons.length) pushWarning(`clippedButtons=${metrics.clippedButtons.length}`);
+    if (metrics.ssllabsPrematureDesktopLayoutIssues?.length) {
+        pushHard(`ssllabsPrematureDesktopLayout=${metrics.ssllabsPrematureDesktopLayoutIssues.length}`);
+    }
     if (metrics.buttonAlignmentIssues?.length) pushHard(`buttonAlignmentIssues=${metrics.buttonAlignmentIssues.length}`);
     if (metrics.badgeAlignmentIssues?.length) pushHard(`badgeAlignmentIssues=${metrics.badgeAlignmentIssues.length}`);
     if (metrics.clickTargetsTooSmall?.length) pushHard(`clickTargetsTooSmall=${metrics.clickTargetsTooSmall.length}`);

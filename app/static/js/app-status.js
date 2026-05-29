@@ -432,7 +432,6 @@
                     <div class="site-cert__error">
                         <div class="site-cert__error-title">Certificate check failed</div>
                         <div class="site-cert__error-message">${escapeHtml(cert.error_message)}</div>
-                        <div class="site-cert__primary">Primary domain ${escapeHtml(domain)}</div>
                     </div>
                 `;
                 return;
@@ -450,9 +449,6 @@
             const daysMarkup = Number.isInteger(cert.days_remaining) && cert.days_remaining > 0
                 ? `<span class="site-cert__days">${escapeHtml(`${cert.days_remaining}d remaining`)}</span>`
                 : "";
-            const primaryMarkup = domain
-                ? `<div class="site-cert__primary">Primary domain ${escapeHtml(domain)}</div>`
-                : "";
             const issuedMarkup = issuedAt
                 ? `<div class="site-cert__issued">Issued ${escapeHtml(issuedAt)}</div>`
                 : "";
@@ -464,8 +460,16 @@
                     ${daysMarkup}
                 </div>
                 <div class="site-cert__meta">
-                    ${primaryMarkup}
                     ${issuedMarkup}
+                </div>
+            `;
+        };
+
+        const renderCertificateRenewing = (cell) => {
+            cell.innerHTML = `
+                <div class="site-cert__summary site-cert__summary--renewing">
+                    <span class="spinner-border spinner-border-sm text-primary me-2" role="status" aria-hidden="true"></span>
+                    <span class="site-cert__status">Renewing...</span>
                 </div>
             `;
         };
@@ -500,6 +504,42 @@
                 // Keep cached or placeholder certificate state on transient failures.
             }
         };
+
+        // Handle certificate SSE events for real-time updates
+        const handleCertificateEvent = (event) => {
+            try {
+                const payload = JSON.parse(event.data);
+                if (payload.type !== "certificate") {
+                    return;
+                }
+
+                const domain = normalizeDomain(payload.id);
+                if (!domain) {
+                    return;
+                }
+
+                const domainCells = cellsByDomain.get(domain);
+                if (!Array.isArray(domainCells) || domainCells.length === 0) {
+                    return;
+                }
+
+                if (payload.action === "renewing") {
+                    for (const cell of domainCells) {
+                        renderCertificateRenewing(cell);
+                    }
+                } else if (payload.action === "renewed" || payload.action === "renewal_failed") {
+                    // Refresh certificates after a short delay to get updated info
+                    window.setTimeout(refreshCertificates, 1000);
+                }
+            } catch {
+                // Ignore malformed event payloads.
+            }
+        };
+
+        // Set up SSE listener for certificate events
+        if (typeof App.addSseEventListener === "function") {
+            App.addSseEventListener(handleCertificateEvent);
+        }
 
         refreshCertificates();
     };

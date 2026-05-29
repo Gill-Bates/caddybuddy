@@ -120,7 +120,13 @@
                 </div>
                 <div class="sites-list-scroll">
                     <div class="table-responsive">
-                        <table class="table align-middle mb-0">
+                        <table class="table sites-table align-middle mb-0">
+                            <colgroup>
+                                <col class="sites-table__site-col">
+                                <col class="sites-table__domain-col">
+                                <col class="sites-table__certificate-col">
+                                <col class="sites-table__actions-col">
+                            </colgroup>
                             <thead>
                                 <tr>
                                     <th>Site</th>
@@ -181,10 +187,6 @@
                                                 {% endif %}
                                             </div>
                                             <div class="site-cert__meta">
-                                                {% if primary_domain %}
-                                                <div class="site-cert__primary">Primary domain {{ primary_domain }}
-                                                </div>
-                                                {% endif %}
                                                 {% if cert.issued_at %}
                                                 <div class="site-cert__issued">Issued {{
                                                     cert.issued_at.strftime('%Y-%m-%d') }}</div>
@@ -194,15 +196,11 @@
                                             <div class="site-cert__error">
                                                 <div class="site-cert__error-title">Certificate check failed</div>
                                                 <div class="site-cert__error-message">{{ cert.error_message }}</div>
-                                                {% if primary_domain %}
-                                                <div class="site-cert__primary">Primary domain {{ primary_domain }}
-                                                </div>
-                                                {% endif %}
                                             </div>
                                             {% elif primary_domain %}
                                             <span class="site-cert__pending">Checking certificate...</span>
                                             {% else %}
-                                            <span class="site-cert__empty">No primary domain</span>
+                                            <span class="site-cert__empty">No certificate</span>
                                             {% endif %}
                                         </div>
                                     </td>
@@ -221,6 +219,33 @@
                                                 </svg>
                                                 <span class="visually-hidden">Edit site</span>
                                             </a>
+                                            {% if primary_domain %}
+                                            <form
+                                                action="{{ request.app.url_path_for('renew_certificate', site_id=site.id) }}"
+                                                method="post" class="d-inline-flex" data-loading-submit-form>
+                                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                                <button type="submit"
+                                                    class="btn btn-sm btn-outline-secondary btn--icon-only js-confirm"
+                                                    data-loading-submit-button data-loading-label="Renewing..."
+                                                    data-confirm-title="Renew certificate"
+                                                    data-confirm="Trigger certificate renewal for {{ site.site_name }}? Caddy will request a new certificate if the current one is within the renewal window."
+                                                    data-confirm-accept="Renew" data-confirm-btn-class="btn-secondary"
+                                                    aria-label="Renew certificate for {{ site.site_name }}"
+                                                    title="Renew certificate for {{ site.site_name }}">
+                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                                                        stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                                        stroke-linejoin="round" aria-hidden="true" focusable="false">
+                                                        <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8">
+                                                        </path>
+                                                        <path d="M3 3v5h5"></path>
+                                                        <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16">
+                                                        </path>
+                                                        <path d="M16 16h5v5"></path>
+                                                    </svg>
+                                                    <span class="visually-hidden">Renew certificate</span>
+                                                </button>
+                                            </form>
+                                            {% endif %}
                                             <form
                                                 action="{{ request.app.url_path_for('delete_site', site_id=site.id) }}"
                                                 method="post" class="d-inline-flex" data-loading-submit-form>

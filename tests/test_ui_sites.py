@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import unittest
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -275,7 +276,6 @@ class UISitesTests(unittest.TestCase):
         self.assertIn('class="site-cert__summary site-cert__summary--valid"', response.text)
         self.assertIn('class="site-cert__days">74d', response.text)
         self.assertIn('remaining</span>', response.text)
-        self.assertIn('class="site-cert__primary">Primary domain example.com', response.text)
         self.assertIn('class="site-cert__issued">Issued 2026-05-28</div>', response.text)
 
     def test_sites_page_renders_certificate_fetch_error_message(self) -> None:
@@ -312,7 +312,6 @@ class UISitesTests(unittest.TestCase):
         self.assertIn('class="site-cert__error"', response.text)
         self.assertIn("Certificate check failed", response.text)
         self.assertIn("internal TLS error", response.text)
-        self.assertIn('class="site-cert__primary">Primary domain example.com', response.text)
 
     def test_validate_site_uses_baseline_for_import_snippets(self) -> None:
         app = self._build_app()
@@ -330,17 +329,17 @@ class UISitesTests(unittest.TestCase):
             patch("app.routers.ui.sites.validated_form", new=AsyncMock(return_value=form_data)),
             patch("app.routers.ui.sites.get_baseline_caddyfile", new=AsyncMock(return_value=baseline)),
             patch("app.routers.ui.sites.caddy_service.validate_caddyfile", new=AsyncMock(return_value=(True, "Configuration is valid"))) as validate_mock,
+            patch("app.routers.ui.sites.caddy_service.format_site_directives", new=AsyncMock(return_value="import security_headers\nimport default_log\n\nreverse_proxy 10.30.0.10:8000")),
         ):
             with TestClient(app) as client:
                 response = client.post("/sites/validate")
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["valid"], True)
+        self.assertEqual(response.json()["message"], "Site configuration for 'App' is valid.")
         self.assertEqual(
-            response.json(),
-            {
-                "valid": True,
-                "message": "Site configuration for 'App' is valid.",
-            },
+            response.json()["formatted_caddy_directives"],
+            "import security_headers\nimport default_log\n\nreverse_proxy 10.30.0.10:8000",
         )
 
         validate_mock.assert_awaited_once()
@@ -350,6 +349,20 @@ class UISitesTests(unittest.TestCase):
         self.assertIn("import security_headers", validated_caddyfile)
         self.assertIn("import default_log", validated_caddyfile)
         self.assertIn("example.com {", validated_caddyfile)
+
+    def test_validate_site_rejects_non_admin_user(self) -> None:
+        app = self._build_app()
+        current_user = SimpleNamespace(username="user", role="user")
+
+        with (
+            patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)),
+            patch("app.routers.ui.sites.validated_form", new=AsyncMock(return_value={})),
+        ):
+            with TestClient(app) as client:
+                response = client.post("/sites/validate")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json(), {"detail": "Administrator access is required."})
 
     def test_site_update_requires_deploy_ignores_site_name_only_changes(self) -> None:
         site = SimpleNamespace(
@@ -362,7 +375,6 @@ class UISitesTests(unittest.TestCase):
         self.assertFalse(
             _site_update_requires_deploy(
                 site,
-                site_name="New name",
                 domain="example.com",
                 caddy_directives="reverse_proxy backend:8080",
                 enabled=True,
@@ -371,12 +383,79 @@ class UISitesTests(unittest.TestCase):
         self.assertTrue(
             _site_update_requires_deploy(
                 site,
-                site_name="New name",
                 domain="www.example.com",
                 caddy_directives="reverse_proxy backend:8080",
                 enabled=True,
             )
         )
+
+    def test_renew_certificate_warns_when_no_storage_artifacts_found(self) -> None:
+        app = self._build_app()
+        current_user = SimpleNamespace(username="admin", role="admin")
+        site = SimpleNamespace(
+            id=3,
+            site_name="Mail",
+            domain="mail.example.com",
+            enabled=True,
+            caddy_directives="reverse_proxy backend:8080",
+        )
+
+        with (
+            patch("app.routers.ui.sites.require_admin", new=AsyncMock(return_value=current_user)),
+            patch("app.routers.ui.sites.validated_form", new=AsyncMock(return_value={})),
+            patch("app.routers.ui.sites.site_repository.get_by_id", new=AsyncMock(return_value=site)),
+            patch("app.routers.ui.sites.get_settings", return_value=SimpleNamespace(caddy_certificates_path=Path("/tmp/certs"))),
+            patch("app.routers.ui.sites.caddy_service.purge_certificate_artifacts", new=AsyncMock(return_value=0)) as purge_mock,
+            patch("app.routers.ui.sites.sync_caddy_configuration", new=AsyncMock()) as sync_mock,
+            patch("app.routers.ui.sites.push_flash") as push_flash_mock,
+            patch("app.routers.ui.sites.publish_resource_event", new=AsyncMock()) as event_mock,
+        ):
+            with TestClient(app) as client:
+                response = client.post("/sites/3/renew-certificate", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/sites")
+        purge_mock.assert_awaited_once_with("mail.example.com", Path("/tmp/certs"))
+        sync_mock.assert_not_awaited()
+        push_flash_mock.assert_called_once()
+        self.assertIn("no matching certificate artifacts", push_flash_mock.call_args.args[2])
+        self.assertEqual(event_mock.await_count, 2)
+
+    def test_renew_certificate_purges_artifacts_and_forces_sync(self) -> None:
+        app = self._build_app()
+        current_user = SimpleNamespace(username="admin", role="admin")
+        site = SimpleNamespace(
+            id=3,
+            site_name="Mail",
+            domain="mail.example.com",
+            enabled=True,
+            caddy_directives="reverse_proxy backend:8080",
+        )
+        sync_result = SimpleNamespace(status="synced", error=None)
+
+        with (
+            patch("app.routers.ui.sites.require_admin", new=AsyncMock(return_value=current_user)),
+            patch("app.routers.ui.sites.validated_form", new=AsyncMock(return_value={})),
+            patch("app.routers.ui.sites.site_repository.get_by_id", new=AsyncMock(return_value=site)),
+            patch("app.routers.ui.sites.get_settings", return_value=SimpleNamespace(caddy_certificates_path=Path("/tmp/certs"))),
+            patch("app.routers.ui.sites.caddy_service.purge_certificate_artifacts", new=AsyncMock(return_value=2)) as purge_mock,
+            patch("app.routers.ui.sites.invalidate_certificate_cache", new=AsyncMock()) as invalidate_mock,
+            patch("app.routers.ui.sites.sync_caddy_configuration", new=AsyncMock(return_value=sync_result)) as sync_mock,
+            patch("app.routers.ui.sites.push_flash") as push_flash_mock,
+            patch("app.routers.ui.sites.publish_resource_event", new=AsyncMock()) as event_mock,
+        ):
+            with TestClient(app) as client:
+                response = client.post("/sites/3/renew-certificate", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/sites")
+        purge_mock.assert_awaited_once_with("mail.example.com", Path("/tmp/certs"))
+        invalidate_mock.assert_awaited_once_with("mail.example.com")
+        sync_mock.assert_awaited_once()
+        self.assertEqual(sync_mock.await_args.kwargs, {"force": True})
+        push_flash_mock.assert_called_once()
+        self.assertIn("after removing 2 certificate artifact(s)", push_flash_mock.call_args.args[2])
+        self.assertEqual(event_mock.await_count, 2)
 
 
 if __name__ == "__main__":

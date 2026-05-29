@@ -9,11 +9,15 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import suppress
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config.limiter import limiter
+from app.config.settings import get_settings
 from app.database.session import get_db_session
 from app.dependencies.web import get_session_user
 from app.models.entities import User
@@ -28,10 +32,18 @@ from app.services.caddyfile_manager import get_caddy_runtime_status
 from app.services.dashboard import get_caddy_status, get_dashboard_metrics
 from app.services.events import ResourceEvent, SubscriberLimitReachedError, event_bus
 from app.services.runtime_settings import get_ssllabs_email
+from app.services.ssllabs import (
+    SslLabsClientError,
+    check_email_registration_status,
+    clear_registration_status_cache,
+    register_email_with_ssllabs,
+)
+from app.utils.ssllabs import mask_email
 
 
 router = APIRouter(prefix="/api/v1", tags=["system"])
 _SSE_HEARTBEAT_SECONDS = 25
+logger = logging.getLogger(__name__)
 
 
 async def _require_api_user(
@@ -47,6 +59,14 @@ async def _require_api_user(
 def _format_sse_data(payload: str) -> str:
     lines = payload.splitlines() or [""]
     return "".join(f"data: {line}\n" for line in lines) + "\n"
+
+
+def _registration_status_message(is_registered: bool | None) -> str:
+    if is_registered is True:
+        return "Registered"
+    if is_registered is False:
+        return "Not registered with SSL Labs"
+    return "Could not check SSL Labs registration status."
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -169,15 +189,6 @@ async def subscribe_events(
 # SSL Labs Registration
 # --------------------------------------------------------------------------- #
 
-from pydantic import BaseModel
-from app.services.ssllabs import (
-    check_email_registration_status,
-    register_email_with_ssllabs,
-    clear_registration_status_cache,
-)
-from app.config.settings import get_settings
-from app.utils.ssllabs import mask_email
-
 
 class SslLabsRegistrationStatusResponse(BaseModel):
     email: str | None
@@ -219,23 +230,27 @@ async def ssllabs_registration_status(
             email=email,
             masked_email=masked,
             is_registered=is_registered,
-            message="Registered" if is_registered else "Not registered with SSL Labs",
+            message=_registration_status_message(is_registered),
         )
-    except Exception as exc:
+    except Exception:
+        logger.exception("Could not check SSL Labs registration status")
         return SslLabsRegistrationStatusResponse(
             email=email,
             masked_email=mask_email(email),
             is_registered=None,
-            message=f"Could not check registration status: {exc}",
+            message="Could not check SSL Labs registration status.",
         )
 
 
 @router.post("/ssllabs/register", response_model=SslLabsRegisterResponse)
+@limiter.limit("3/hour")
 async def ssllabs_register(
+    request: Request,
     _current_user: User = Depends(_require_api_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> SslLabsRegisterResponse:
     """Register the configured email with SSL Labs API."""
+    del request
     settings = get_settings()
     email = await get_ssllabs_email(session)
 
@@ -252,7 +267,7 @@ async def ssllabs_register(
             api_base_url=settings.ssllabs_api_base_url,
             use_cache=False,  # Force fresh check
         )
-        if is_registered:
+        if is_registered is True:
             return SslLabsRegisterResponse(
                 success=True,
                 message="Email is already registered with SSL Labs.",
@@ -262,10 +277,17 @@ async def ssllabs_register(
         pass  # Continue to registration attempt
 
     # Try to register
-    success = await register_email_with_ssllabs(
-        email,
-        api_base_url=settings.ssllabs_api_base_url,
-    )
+    try:
+        success = await register_email_with_ssllabs(
+            email,
+            api_base_url=settings.ssllabs_api_base_url,
+        )
+    except SslLabsClientError as exc:
+        logger.warning("SSL Labs registration request failed: %s", exc)
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to register with SSL Labs. Please try again later.",
+        ) from exc
 
     if success:
         return SslLabsRegisterResponse(
@@ -281,11 +303,14 @@ async def ssllabs_register(
 
 
 @router.post("/ssllabs/refresh-status", response_model=SslLabsRegistrationStatusResponse)
+@limiter.limit("10/minute")
 async def ssllabs_refresh_status(
+    request: Request,
     _current_user: User = Depends(_require_api_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> SslLabsRegistrationStatusResponse:
     """Force refresh the SSL Labs registration status (bypasses cache)."""
+    del request
     settings = get_settings()
     email = await get_ssllabs_email(session)
 
@@ -299,15 +324,19 @@ async def ssllabs_refresh_status(
 
     # Clear cache and check fresh
     clear_registration_status_cache(email)
-    is_registered = await check_email_registration_status(
-        email,
-        api_base_url=settings.ssllabs_api_base_url,
-        use_cache=False,
-    )
+    try:
+        is_registered = await check_email_registration_status(
+            email,
+            api_base_url=settings.ssllabs_api_base_url,
+            use_cache=False,
+        )
+    except Exception:
+        logger.exception("Could not refresh SSL Labs registration status")
+        is_registered = None
 
     return SslLabsRegistrationStatusResponse(
         email=email,
         masked_email=mask_email(email),
         is_registered=is_registered,
-        message="Registered" if is_registered else "Not registered with SSL Labs",
+        message=_registration_status_message(is_registered),
     )

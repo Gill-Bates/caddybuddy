@@ -75,7 +75,7 @@ class CaddyApiSiteMutationTests(unittest.IsolatedAsyncioTestCase):
             caddy_directives="reverse_proxy backend.example.test:443",
             enabled=True,
         )
-        session = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
+        session = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock(), flush=AsyncMock())
 
         with (
             patch("app.routers.caddy_api.site_repository.domain_exists", new=AsyncMock(return_value=False)),
@@ -97,8 +97,9 @@ class CaddyApiSiteMutationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(context.exception.detail, "Domain 'example.com' already exists.")
         session.rollback.assert_awaited_once()
         session.commit.assert_not_awaited()
+        session.flush.assert_not_awaited()
 
-    async def test_create_site_sync_failure_returns_accepted_and_publishes_event(self) -> None:
+    async def test_create_site_sync_failure_rolls_back_and_raises_http_error(self) -> None:
         create_site_fn = getattr(create_site, "__wrapped__", create_site)
         payload = SiteCreateRequest(
             site_name="Example Site",
@@ -117,7 +118,7 @@ class CaddyApiSiteMutationTests(unittest.IsolatedAsyncioTestCase):
             created_at=datetime.now(UTC),
             updated_at=datetime.now(UTC),
         )
-        session = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
+        session = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock(), flush=AsyncMock())
         sync_result = SimpleNamespace(
             status="sync_failed",
             synced=False,
@@ -131,21 +132,21 @@ class CaddyApiSiteMutationTests(unittest.IsolatedAsyncioTestCase):
             patch("app.routers.caddy_api.sync_caddy_configuration", new=AsyncMock(return_value=sync_result)),
             patch("app.routers.caddy_api.try_publish_resource_event", new=AsyncMock()) as publish_event,
         ):
-            result = await create_site_fn(
-                payload,
-                request=SimpleNamespace(),
-                response=response,
-                session=session,
-                _current_user=SimpleNamespace(is_admin=True),
-            )
+            with self.assertRaises(HTTPException) as context:
+                await create_site_fn(
+                    payload,
+                    request=SimpleNamespace(),
+                    response=response,
+                    session=session,
+                    _current_user=SimpleNamespace(is_admin=True),
+                )
 
-        self.assertEqual(response.status_code, 202)
-        self.assertEqual(result.status, "created")
-        self.assertEqual(result.sync_status, "sync_failed")
-        self.assertFalse(result.synced)
-        self.assertEqual(result.site.id, 7)
-        self.assertEqual(session.commit.await_count, 2)
-        publish_event.assert_awaited_once_with("site", "created", "7")
+        self.assertEqual(context.exception.status_code, 503)
+        self.assertEqual(context.exception.detail, "Caddy Admin API unavailable.")
+        session.flush.assert_awaited_once()
+        session.rollback.assert_awaited_once()
+        session.commit.assert_not_awaited()
+        publish_event.assert_not_awaited()
 
     async def test_create_site_swallows_event_publish_failure(self) -> None:
         create_site_fn = getattr(create_site, "__wrapped__", create_site)
@@ -166,7 +167,7 @@ class CaddyApiSiteMutationTests(unittest.IsolatedAsyncioTestCase):
             created_at=datetime.now(UTC),
             updated_at=datetime.now(UTC),
         )
-        session = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
+        session = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock(), flush=AsyncMock())
         sync_result = SimpleNamespace(
             status="synced",
             synced=True,
@@ -192,7 +193,9 @@ class CaddyApiSiteMutationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, "created")
         self.assertEqual(result.sync_status, "synced")
         self.assertTrue(result.synced)
-        self.assertEqual(session.commit.await_count, 2)
+        session.flush.assert_awaited_once()
+        session.commit.assert_awaited_once()
+        session.rollback.assert_not_awaited()
 
     async def test_update_site_returns_409_on_duplicate_race(self) -> None:
         update_site_fn = getattr(update_site, "__wrapped__", update_site)
@@ -202,7 +205,7 @@ class CaddyApiSiteMutationTests(unittest.IsolatedAsyncioTestCase):
             caddy_directives="reverse_proxy backend.example.test:443",
             enabled=True,
         )
-        session = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
+        session = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock(), flush=AsyncMock())
         existing_site = SimpleNamespace(id=1, site_name="Old Site", domain="old.example.com")
 
         with (
@@ -227,8 +230,9 @@ class CaddyApiSiteMutationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(context.exception.detail, "Site domain already exists.")
         session.rollback.assert_awaited_once()
         session.commit.assert_not_awaited()
+        session.flush.assert_not_awaited()
 
-    async def test_update_site_sync_failure_returns_accepted_and_publishes_event(self) -> None:
+    async def test_update_site_sync_failure_rolls_back_and_raises_http_error(self) -> None:
         update_site_fn = getattr(update_site, "__wrapped__", update_site)
         payload = SiteUpdateRequest(
             site_name="Example Site",
@@ -247,9 +251,9 @@ class CaddyApiSiteMutationTests(unittest.IsolatedAsyncioTestCase):
             created_at=datetime.now(UTC),
             updated_at=datetime.now(UTC),
         )
-        session = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
+        session = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock(), flush=AsyncMock())
         sync_result = SimpleNamespace(
-            status="admin_api_unavailable",
+            status="sync_failed",
             synced=False,
             config_sha256="def456",
             error="Caddy Admin API unavailable.",
@@ -263,21 +267,22 @@ class CaddyApiSiteMutationTests(unittest.IsolatedAsyncioTestCase):
             patch("app.routers.caddy_api.sync_caddy_configuration", new=AsyncMock(return_value=sync_result)),
             patch("app.routers.caddy_api.try_publish_resource_event", new=AsyncMock()) as publish_event,
         ):
-            result = await update_site_fn(
-                1,
-                payload,
-                request=SimpleNamespace(),
-                response=response,
-                session=session,
-                _current_user=SimpleNamespace(is_admin=True),
-            )
+            with self.assertRaises(HTTPException) as context:
+                await update_site_fn(
+                    1,
+                    payload,
+                    request=SimpleNamespace(),
+                    response=response,
+                    session=session,
+                    _current_user=SimpleNamespace(is_admin=True),
+                )
 
-        self.assertEqual(response.status_code, 202)
-        self.assertEqual(result.status, "updated")
-        self.assertEqual(result.sync_status, "admin_api_unavailable")
-        self.assertFalse(result.synced)
-        self.assertEqual(session.commit.await_count, 2)
-        publish_event.assert_awaited_once_with("site", "updated", "1")
+        self.assertEqual(context.exception.status_code, 503)
+        self.assertEqual(context.exception.detail, "Caddy Admin API unavailable.")
+        session.flush.assert_awaited_once()
+        session.rollback.assert_awaited_once()
+        session.commit.assert_not_awaited()
+        publish_event.assert_not_awaited()
 
 
 if __name__ == "__main__":

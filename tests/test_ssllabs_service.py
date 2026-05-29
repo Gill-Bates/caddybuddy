@@ -243,6 +243,38 @@ class SslLabsRepositoryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(duplicate)
 
+    async def test_create_scan_if_none_active_ignores_stale_active_rows_without_explicit_now(self) -> None:
+        stale_started_at = datetime.now(UTC) - ACTIVE_SCAN_STALE_AFTER - ACTIVE_SCAN_STALE_AFTER
+
+        async with self.session_factory() as session:
+            site = Site(site_name="Example", domain="example.com", upstream_url="https://backend.example.com")
+            session.add(site)
+            await session.flush()
+
+            target = SslLabsTarget(site_id=site.id, host="example.com")
+            session.add(target)
+            await session.flush()
+
+            session.add(
+                SslLabsScan(
+                    target_id=target.id,
+                    site_id=site.id,
+                    host=target.host,
+                    status="rate_limited",
+                    started_at=stale_started_at,
+                    next_poll_at=stale_started_at,
+                )
+            )
+            await session.commit()
+
+        async with self.session_factory() as session:
+            persisted_target = await ssllabs_repository.get_target_by_id(session, target.id)
+            self.assertIsNotNone(persisted_target)
+            created = await ssllabs_repository.create_scan_if_none_active(session, persisted_target)
+            await session.rollback()
+
+        self.assertIsNotNone(created)
+
     async def test_sync_targets_skips_sites_without_https(self) -> None:
         async with self.session_factory() as session:
             https_site = Site(
@@ -273,6 +305,40 @@ class SslLabsRepositoryTests(unittest.IsolatedAsyncioTestCase):
             await session.commit()
 
         self.assertEqual([target.host for target in synced], ["example.com"])
+
+    async def test_sync_targets_keeps_targets_with_active_scans_until_scan_completes(self) -> None:
+        now = datetime.now(UTC)
+
+        async with self.session_factory() as session:
+            site = Site(site_name="Example", domain="example.com", upstream_url="https://backend.example.com")
+            session.add(site)
+            await session.flush()
+
+            target = SslLabsTarget(site_id=site.id, host="example.com")
+            session.add(target)
+            await session.flush()
+
+            session.add(
+                SslLabsScan(
+                    target_id=target.id,
+                    site_id=site.id,
+                    host=target.host,
+                    status="queued",
+                    started_at=now,
+                )
+            )
+            await session.commit()
+
+        async with self.session_factory() as session:
+            synced = await ssllabs_repository.sync_targets(session, [])
+            await session.commit()
+
+        self.assertEqual([target.host for target in synced], ["example.com"])
+
+    async def test_list_due_targets_rejects_invalid_limit(self) -> None:
+        async with self.session_factory() as session:
+            with self.assertRaisesRegex(ValueError, "Limit must be between 1 and 500"):
+                await ssllabs_repository.list_due_targets(session, now=datetime.now(UTC), limit=0)
 
 
 class SslLabsHttpsEligibilityTests(unittest.TestCase):
@@ -403,3 +469,22 @@ class SslLabsServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(scan.status, "failed")
         self.assertEqual(scan.error_code, "SslLabsClientError")
         self.assertIn("not registered", scan.error_message.lower())
+
+    async def test_startup_creates_scheduler_task_even_without_configured_email(self) -> None:
+        class _FakeTask:
+            def cancel(self) -> None:
+                return None
+
+        fake_task = _FakeTask()
+
+        def _create_task(coro, *, name=None):
+            del name
+            coro.close()
+            return fake_task
+
+        with patch("app.services.ssllabs.asyncio.create_task", side_effect=_create_task) as create_task:
+            await self.service.startup()
+
+        self.assertIs(self.service._scheduler_task, fake_task)
+        create_task.assert_called_once()
+        self.service._scheduler_task = None

@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import socket
 import shutil
+from collections.abc import Iterable
 from contextlib import suppress
 from ipaddress import IPv4Address, IPv6Address, ip_address
 from pathlib import Path
@@ -27,7 +29,11 @@ _CADDY_ADAPT_TIMEOUT = 10.0
 _CADDY_KILL_TIMEOUT = 2.0
 _DNS_RESOLUTION_TIMEOUT = 5.0
 _MAX_CADDYFILE_BYTES = 512 * 1024
+_MAX_CERT_PURGE_SCAN_PATHS = 20_000
 type ResolvedIPAddress = IPv4Address | IPv6Address
+
+
+logger = logging.getLogger(__name__)
 
 
 class CaddyServiceError(Exception):
@@ -169,9 +175,17 @@ class CaddyAdminClient:
     async def __aexit__(self, exc_type, exc, tb) -> None:
         await self.aclose()
 
+    @staticmethod
+    def _merge_headers(extra_headers: dict[str, str] | None, host: str, port: int | None) -> dict[str, str]:
+        merged = {"Host": _authority_header(host, port)}
+        if extra_headers:
+            merged.update(extra_headers)
+        return merged
+
     async def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
         parsed = urlsplit(self._base_url)
         host = (parsed.hostname or "").lower()
+        extra_headers = kwargs.pop("headers", None)
 
         try:
             _validate_admin_host(host)
@@ -196,7 +210,7 @@ class CaddyAdminClient:
             response = await self._get_client().request(
                 method,
                 endpoint,
-                headers={"Host": _authority_header(parsed.hostname or host, parsed.port)},
+                headers=self._merge_headers(extra_headers, parsed.hostname or host, parsed.port),
                 **kwargs,
             )
             response.raise_for_status()
@@ -222,9 +236,13 @@ class CaddyAdminClient:
         return True
 
     async def load_config(self, config: dict[str, Any]) -> None:
+        await self.load_config_force(config, force_reload=False)
+
+    async def load_config_force(self, config: dict[str, Any], *, force_reload: bool) -> None:
         if not isinstance(config, dict):
             raise TypeError("config must be a JSON object.")
-        await self._request("POST", "/load", json=config)
+        headers = {"Cache-Control": "must-revalidate"} if force_reload else None
+        await self._request("POST", "/load", json=config, headers=headers)
 
     async def get_config(self) -> dict[str, Any]:
         response = await self._request("GET", "/config/")
@@ -268,6 +286,88 @@ class CaddyService:
         if caddy_path is not None:
             self._caddy_path = caddy_path
         return caddy_path
+
+    @staticmethod
+    def _path_matches_domain(path: Path, domain: str) -> bool:
+        normalized_domain = domain.strip().lower()
+        if not normalized_domain:
+            return False
+
+        for part in path.parts:
+            normalized_part = part.strip().lower()
+            if normalized_part == normalized_domain:
+                return True
+
+        normalized_name = path.name.strip().lower()
+        normalized_stem = path.stem.strip().lower()
+        return (
+            normalized_name == normalized_domain
+            or normalized_stem == normalized_domain
+            or normalized_name.startswith(f"{normalized_domain}.")
+        )
+
+    @staticmethod
+    def _prune_duplicate_paths(paths: Iterable[Path]) -> list[Path]:
+        unique_paths = sorted({path for path in paths}, key=lambda item: (len(item.parts), str(item)))
+        pruned: list[Path] = []
+        for candidate in unique_paths:
+            if any(candidate == parent or candidate.is_relative_to(parent) for parent in pruned):
+                continue
+            pruned.append(candidate)
+        return pruned
+
+    @staticmethod
+    def _remove_paths(paths: Iterable[Path]) -> int:
+        removed = 0
+        for path in paths:
+            if not path.exists():
+                continue
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=False)
+            else:
+                path.unlink(missing_ok=True)
+            removed += 1
+        return removed
+
+    async def purge_certificate_artifacts(self, domain: str, certificates_path: Path | None) -> int:
+        """Delete host-specific certificate artifacts from Caddy's file-system storage."""
+        normalized_domain = domain.strip().lower()
+        if not normalized_domain or certificates_path is None:
+            return 0
+
+        roots: list[Path] = []
+        cert_root = certificates_path.expanduser()
+        roots.append(cert_root)
+        roots.append(cert_root.parent / "acme")
+        roots.append(cert_root.parent / "ocsp")
+
+        def collect_matches() -> list[Path]:
+            matches: list[Path] = []
+            checked = 0
+            for root in roots:
+                try:
+                    if not root.exists():
+                        continue
+                    for path in root.rglob("*"):
+                        checked += 1
+                        if checked > _MAX_CERT_PURGE_SCAN_PATHS:
+                            raise CaddyServiceError("Certificate storage scan limit exceeded.")
+                        if not self._path_matches_domain(path, normalized_domain):
+                            continue
+                        if path.is_dir():
+                            matches.append(path)
+                        elif path.parent.name.strip().lower() == normalized_domain:
+                            matches.append(path.parent)
+                        else:
+                            matches.append(path)
+                except PermissionError:
+                    logger.warning("Skipping inaccessible Caddy certificate storage root: %s", root)
+            return self._prune_duplicate_paths(matches)
+
+        matched_paths = await asyncio.to_thread(collect_matches)
+        if not matched_paths:
+            return 0
+        return await asyncio.to_thread(self._remove_paths, matched_paths)
 
     @staticmethod
     async def _kill_process(process: asyncio.subprocess.Process) -> None:
@@ -494,6 +594,70 @@ class CaddyService:
             return True, "Configuration is valid"
         except CaddyServiceError as exc:
             return False, str(exc)
+
+    async def format_caddyfile(self, caddyfile: str) -> str:
+        """Format a Caddyfile using Caddy's built-in formatter.
+
+        Returns:
+            Formatted Caddyfile content with proper indentation.
+
+        Raises:
+            CaddyServiceError: If formatting fails.
+        """
+        _validate_caddyfile_size(caddyfile)
+        tmp_path = await asyncio.to_thread(self._write_temp_caddyfile, caddyfile)
+
+        try:
+            return_code, stdout, stderr = await self._run_caddy_command(
+                ["fmt", str(tmp_path)],
+            )
+        finally:
+            await asyncio.to_thread(tmp_path.unlink, missing_ok=True)
+
+        if return_code != 0:
+            error_text = "\n".join(self._parse_caddy_errors(stderr)) or "Failed to format Caddyfile."
+            raise CaddyServiceError(error_text)
+
+        return stdout
+
+    async def format_site_directives(self, directives: str) -> str:
+        """Format Caddy directives (site block content) using Caddy's formatter.
+
+        Wraps directives in a dummy site block, formats, and extracts the result.
+
+        Returns:
+            Formatted directives with proper indentation stripped.
+
+        Raises:
+            CaddyServiceError: If formatting fails.
+        """
+        trimmed = directives.strip()
+        if not trimmed:
+            return ""
+
+        # Wrap in a dummy site block for formatting
+        wrapper = f"format.example {{\n{trimmed}\n}}"
+        formatted_full = await self.format_caddyfile(wrapper)
+
+        # Extract content between first { and last }
+        lines = formatted_full.strip().splitlines()
+        if len(lines) < 2:
+            return trimmed
+
+        # Skip first line (site label + {) and last line (})
+        inner_lines = lines[1:-1] if lines[-1].strip() == "}" else lines[1:]
+
+        # Remove one level of indentation (Caddy uses tabs)
+        result_lines: list[str] = []
+        for line in inner_lines:
+            if line.startswith("\t"):
+                result_lines.append(line[1:])
+            elif line.startswith("    "):
+                result_lines.append(line[4:])
+            else:
+                result_lines.append(line)
+
+        return "\n".join(result_lines).strip()
 
 
 caddy_service = CaddyService()

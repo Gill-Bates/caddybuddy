@@ -54,6 +54,16 @@ def _sync_succeeded(sync_status: str) -> bool:
 async def _run_sync_followup(session: AsyncSession) -> CaddySyncResult:
     try:
         sync_result = await sync_caddy_configuration(session)
+    except Exception:
+        await session.rollback()
+        raise
+    if not _sync_succeeded(sync_result.status):
+        await session.rollback()
+        raise HTTPException(
+            status_code=_sync_error_status(sync_result.error_code),
+            detail=sync_result.error or "Caddy synchronization failed.",
+        )
+    try:
         await session.commit()
     except Exception:
         await session.rollback()
@@ -184,20 +194,19 @@ async def create_site(
     except DuplicateSiteError as exc:
         await session.rollback()
         raise HTTPException(status_code=409, detail=f"Domain '{payload.domain}' already exists.") from exc
-    await session.commit()
+    await session.flush()
+    site_response = SiteResponse.model_validate(site)
 
     sync_result = await _run_sync_followup(session)
     response_payload = SiteMutationResponse(
         status="created",
-        site=SiteResponse.model_validate(site),
+        site=site_response,
         sync_status=sync_result.status,
         synced=sync_result.synced,
         config_sha256=sync_result.config_sha256,
         sync_error=sync_result.error,
     )
     await _publish_site_event("created", site.id)
-    if not _sync_succeeded(sync_result.status):
-        response.status_code = status.HTTP_202_ACCEPTED
     return response_payload
 
 
@@ -233,20 +242,19 @@ async def update_site(
     except DuplicateSiteError as exc:
         await session.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    await session.commit()
+    await session.flush()
+    site_response = SiteResponse.model_validate(site)
 
     sync_result = await _run_sync_followup(session)
     response_payload = SiteMutationResponse(
         status="updated",
-        site=SiteResponse.model_validate(site),
+        site=site_response,
         sync_status=sync_result.status,
         synced=sync_result.synced,
         config_sha256=sync_result.config_sha256,
         sync_error=sync_result.error,
     )
     await _publish_site_event("updated", site.id)
-    if not _sync_succeeded(sync_result.status):
-        response.status_code = status.HTTP_202_ACCEPTED
     return response_payload
 
 
@@ -266,7 +274,7 @@ async def delete_site(
         raise HTTPException(status_code=404, detail="Site not found.")
 
     await site_repository.delete(session, site)
-    await session.commit()
+    await session.flush()
 
     sync_result = await _run_sync_followup(session)
     response_payload = SiteDeleteResponse(
@@ -276,6 +284,4 @@ async def delete_site(
         sync_error=sync_result.error,
     )
     await _publish_site_event("deleted", site_id)
-    if not _sync_succeeded(sync_result.status):
-        response.status_code = status.HTTP_202_ACCEPTED
     return response_payload

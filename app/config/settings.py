@@ -34,6 +34,8 @@ _INSECURE_ADMIN_PASSWORD_VALUES = frozenset(
     }
 )
 _SIMPLE_EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+_SESSION_COOKIE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 _BASE_DIR = Path(__file__).resolve().parents[2]
 _DATA_DIR = _BASE_DIR / "data"
@@ -268,6 +270,21 @@ class Settings(BaseSettings):
             raise ValueError("Default admin email must be a valid email address.")
         return normalized
 
+    @field_validator("session_cookie_name", mode="before")
+    @classmethod
+    def _validate_session_cookie_name(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("session_cookie_name must not be empty.")
+        if _SESSION_COOKIE_NAME_PATTERN.fullmatch(normalized) is None:
+            raise ValueError(
+                "session_cookie_name may contain only letters, numbers, dots, underscores, and hyphens."
+            )
+        return normalized
+
     @field_validator("caddy_api_url", "caddy_admin_url", mode="before")
     @classmethod
     def _normalize_caddy_http_url(cls, value: object, info) -> object:
@@ -331,6 +348,9 @@ class Settings(BaseSettings):
         host = parsed.hostname
         if host is None:
             raise ValueError("ssllabs_api_base_url must include a host.")
+        normalized_host = host.lower()
+        if parsed.scheme == "http" and normalized_host not in _LOOPBACK_HOSTS:
+            raise ValueError("ssllabs_api_base_url must use https unless it targets localhost.")
         if ":" in host:
             host = f"[{host}]"
 
@@ -388,6 +408,9 @@ class Settings(BaseSettings):
                 "Set CB_ADMIN_PASSWORD, CADDYBUDDY_ADMIN_PASSWORD, or ADMIN_PASSWORD to a non-default value "
                 "before first startup."
             )
+
+        if self.session_cookie_samesite == "none" and not self.session_https_only:
+            raise ValueError("session_cookie_samesite='none' requires session_https_only=true.")
 
         return self
 

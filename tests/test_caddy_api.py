@@ -119,7 +119,7 @@ class CaddyApiTests(unittest.TestCase):
         self.assertEqual(response.json()["detail"], "Caddy Admin API unavailable.")
 
     def test_create_site_endpoint_returns_sync_metadata(self) -> None:
-        session = SimpleNamespace(commit=AsyncMock())
+        session = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock(), flush=AsyncMock())
         app = _build_app(session)
         now = datetime.now(UTC)
         site = SimpleNamespace(
@@ -163,6 +163,8 @@ class CaddyApiTests(unittest.TestCase):
         self.assertEqual(response.json()["sync_status"], "synced")
         self.assertTrue(response.json()["synced"])
         self.assertEqual(response.json()["config_sha256"], "deadbeef")
+        session.flush.assert_awaited_once()
+        session.commit.assert_awaited_once()
 
 
 if __name__ == "__main__":

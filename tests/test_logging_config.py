@@ -23,7 +23,7 @@ class LoggingConfigTests(unittest.TestCase):
     def test_redact_sensitive_query_params_handles_delimiters_and_common_secret_names(self) -> None:
         value = (
             "GET /callback?foo=bar&token=abc&client_secret=def;refresh_token=ghi "
-            "jwt=jkl api-key=mno nested_token=keep"
+            "jwt=jkl api-key=mno authorization_code=oauth otp=123456 nested_token=keep"
         )
 
         redacted = _redact_sensitive_query_params(value)
@@ -33,6 +33,8 @@ class LoggingConfigTests(unittest.TestCase):
         self.assertIn("refresh_token=***REDACTED***", redacted)
         self.assertIn("jwt=***REDACTED***", redacted)
         self.assertIn("api-key=***REDACTED***", redacted)
+        self.assertIn("authorization_code=***REDACTED***", redacted)
+        self.assertIn("otp=***REDACTED***", redacted)
         self.assertIn("nested_token=keep", redacted)
 
     def test_default_formatter_redacts_message_and_color_message_and_uses_utc_timestamp(self) -> None:

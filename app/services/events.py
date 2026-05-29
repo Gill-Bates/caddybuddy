@@ -28,7 +28,7 @@ type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | dict[str, JsonValue] | list[JsonValue]
 type EventDetails = dict[str, JsonValue]
 
-ResourceType = Literal["site", "caddyfile", "ssllabs_scan"]
+ResourceType = Literal["site", "caddyfile", "ssllabs_scan", "certificate"]
 EventAction = Literal[
     "created",
     "updated",
@@ -42,6 +42,9 @@ EventAction = Literal[
     "scan_updated",
     "scan_completed",
     "scan_failed",
+    "renewing",
+    "renewed",
+    "renewal_failed",
 ]
 
 _MAX_SUBSCRIBER_QUEUE_SIZE = 64

@@ -18,7 +18,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.models.base import Base
-from app.repositories.users import UserRepository
+from app.repositories.users import DuplicateUserError, UserRepository
+
+
+VALID_BCRYPT_HASH = "$2b$12$" + "a" * 53
+SECOND_BCRYPT_HASH = "$2b$12$" + "b" * 53
 
 
 class UserRepositoryTests(unittest.IsolatedAsyncioTestCase):
@@ -30,7 +34,7 @@ class UserRepositoryTests(unittest.IsolatedAsyncioTestCase):
             session,
             username="  Admin  ",
             email="  USER@Example.COM  ",
-            password_hash="hash",
+            password_hash=VALID_BCRYPT_HASH,
             role="admin",
         )
 
@@ -47,7 +51,7 @@ class UserRepositoryTests(unittest.IsolatedAsyncioTestCase):
                 session,
                 username="   ",
                 email=None,
-                password_hash="hash",
+                password_hash=VALID_BCRYPT_HASH,
             )
 
         session.flush.assert_not_awaited()
@@ -69,6 +73,31 @@ class UserRepositoryTests(unittest.IsolatedAsyncioTestCase):
         repository = UserRepository()
 
         self.assertTrue(await repository.exists_any(session))
+
+    async def test_create_rejects_non_bcrypt_password_hash(self) -> None:
+        session = SimpleNamespace(add=lambda user: None, flush=AsyncMock())
+        repository = UserRepository()
+
+        with self.assertRaisesRegex(ValueError, "password_hash must be a bcrypt hash"):
+            await repository.create(
+                session,
+                username="Admin",
+                email="admin@example.com",
+                password_hash="not-a-bcrypt-hash",
+            )
+
+        session.flush.assert_not_awaited()
+
+    async def test_update_password_requires_bcrypt_hash(self) -> None:
+        session = SimpleNamespace(flush=AsyncMock())
+        repository = UserRepository()
+        user = SimpleNamespace(password_hash=VALID_BCRYPT_HASH)
+
+        with self.assertRaisesRegex(ValueError, "password_hash must be a bcrypt hash"):
+            await repository.update_password(session, user, "broken-hash")
+
+        self.assertEqual(user.password_hash, VALID_BCRYPT_HASH)
+        session.flush.assert_not_awaited()
 
 
 class AuthBootstrapTests(unittest.IsolatedAsyncioTestCase):
@@ -128,18 +157,18 @@ class UserRepositoryIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 session,
                 username="Admin",
                 email="admin@example.com",
-                password_hash="hash-1",
+                password_hash=VALID_BCRYPT_HASH,
             )
             await session.commit()
 
-            with self.assertRaises(IntegrityError):
+            with self.assertRaises(DuplicateUserError):
                 await repository.create(
                     session,
                     username="admin",
                     email="other@example.com",
-                    password_hash="hash-2",
+                    password_hash=SECOND_BCRYPT_HASH,
                 )
-                await session.commit()
+            await session.rollback()
 
     async def test_get_by_username_finds_user_case_insensitively(self) -> None:
         repository = UserRepository()
@@ -149,7 +178,7 @@ class UserRepositoryIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 session,
                 username="Admin",
                 email="admin@example.com",
-                password_hash="hash",
+                password_hash=VALID_BCRYPT_HASH,
             )
             await session.commit()
 

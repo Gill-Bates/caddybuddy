@@ -6,11 +6,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 import re
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.models.entities import Site, SslLabsScan, SslLabsTarget
 from app.schemas.ssllabs import SslLabsScanStatus
@@ -20,11 +21,19 @@ from app.utils.domains import split_domain_names
 ACTIVE_SCAN_STATUSES = frozenset({"queued", "starting", "dns", "in_progress", "rate_limited"})
 TERMINAL_SCAN_STATUSES = frozenset({"ready", "error", "failed"})
 ACTIVE_SCAN_STALE_AFTER = timedelta(hours=2)
+_MAX_DUE_TARGET_LIMIT = 500
 _TLS_OFF_RE = re.compile(r"(?im)^\s*tls\s+off\s*$")
 _AUTO_HTTPS_OFF_RE = re.compile(r"(?im)^\s*auto_https\s+off\s*$")
 
 
+def _require_aware_datetime(value: datetime, *, name: str) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(f"{name} must be timezone-aware.")
+    return value
+
+
 def active_scan_cutoff(now: datetime) -> datetime:
+    now = _require_aware_datetime(now, name="now")
     return now - ACTIVE_SCAN_STALE_AFTER
 
 
@@ -40,7 +49,17 @@ def site_uses_https(site: Site) -> bool:
 
 
 class SslLabsRepository:
+    async def _has_active_scan(
+        self,
+        session: AsyncSession,
+        target_id: int,
+        *,
+        now: datetime,
+    ) -> bool:
+        return await self.get_active_scan_for_target(session, target_id, now=now) is not None
+
     async def sync_targets(self, session: AsyncSession, sites: list[Site]) -> list[SslLabsTarget]:
+        now = datetime.now(UTC)
         desired_keys: dict[tuple[int, str], Site] = {}
         for site in sites:
             site_id = getattr(site, "id", None)
@@ -64,6 +83,8 @@ class SslLabsRepository:
         for key, target in existing_by_key.items():
             if key in desired_keys:
                 continue
+            if await self._has_active_scan(session, target.id, now=now):
+                continue
             await session.delete(target)
 
         await session.flush()
@@ -75,26 +96,32 @@ class SslLabsRepository:
         self,
         session: AsyncSession,
     ) -> list[tuple[SslLabsTarget, Site, SslLabsScan | None]]:
+        ranked_scans = (
+            select(
+                SslLabsScan.id.label("scan_id"),
+                SslLabsScan.target_id.label("target_id"),
+                func.row_number()
+                .over(
+                    partition_by=SslLabsScan.target_id,
+                    order_by=(SslLabsScan.started_at.desc(), SslLabsScan.id.desc()),
+                )
+                .label("scan_rank"),
+            )
+            .subquery()
+        )
+        latest_scan = aliased(SslLabsScan)
+
         result = await session.execute(
-            select(SslLabsTarget, Site)
+            select(SslLabsTarget, Site, latest_scan)
             .join(Site, Site.id == SslLabsTarget.site_id)
+            .outerjoin(
+                ranked_scans,
+                (ranked_scans.c.target_id == SslLabsTarget.id) & (ranked_scans.c.scan_rank == 1),
+            )
+            .outerjoin(latest_scan, latest_scan.id == ranked_scans.c.scan_id)
             .order_by(SslLabsTarget.host.asc(), Site.domain.asc())
         )
-        rows = list(result.all())
-        if not rows:
-            return []
-
-        target_ids = [target.id for target, _site in rows]
-        scan_result = await session.execute(
-            select(SslLabsScan)
-            .where(SslLabsScan.target_id.in_(target_ids))
-            .order_by(SslLabsScan.target_id.asc(), SslLabsScan.started_at.desc(), SslLabsScan.id.desc())
-        )
-        latest_by_target: dict[int, SslLabsScan] = {}
-        for scan in scan_result.scalars().all():
-            latest_by_target.setdefault(scan.target_id, scan)
-
-        return [(target, site, latest_by_target.get(target.id)) for target, site in rows]
+        return [(target, site, scan) for target, site, scan in result.all()]
 
     async def get_target_with_site(
         self,
@@ -161,7 +188,8 @@ class SslLabsRepository:
         status: SslLabsScanStatus = "queued",
         now: datetime | None = None,
     ) -> SslLabsScan | None:
-        active_scan = await self.get_active_scan_for_target(session, target.id, now=now)
+        effective_now = datetime.now(UTC) if now is None else _require_aware_datetime(now, name="now")
+        active_scan = await self.get_active_scan_for_target(session, target.id, now=effective_now)
         if active_scan is not None:
             return None
 
@@ -182,6 +210,10 @@ class SslLabsRepository:
         now: datetime,
         limit: int = 25,
     ) -> list[SslLabsTarget]:
+        _require_aware_datetime(now, name="now")
+        if limit < 1 or limit > _MAX_DUE_TARGET_LIMIT:
+            raise ValueError(f"Limit must be between 1 and {_MAX_DUE_TARGET_LIMIT}.")
+
         result = await session.execute(
             select(SslLabsTarget)
             .where(

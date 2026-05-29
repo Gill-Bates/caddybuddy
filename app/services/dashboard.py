@@ -34,12 +34,29 @@ logger = logging.getLogger(__name__)
 _CERT_FETCH_TIMEOUT = 5.0
 _CERT_FETCH_CONCURRENCY = 10
 _CERT_CACHE_TTL_SECONDS = 600  # 10 minutes
+_MAX_CERT_CACHE_ENTRIES = 1000
 _EXPIRING_SOON_DAYS = 7
 type ResolvedIPAddress = IPv4Address | IPv6Address
 
 # Simple in-memory cache for certificate info
 _cert_cache: dict[str, tuple[datetime, CertificateInfo]] = {}
 _cert_cache_lock = asyncio.Lock()
+
+
+async def invalidate_certificate_cache(domain: str) -> None:
+    """Remove a domain from the certificate cache."""
+    normalized = domain.lower().strip()
+    async with _cert_cache_lock:
+        _cert_cache.pop(normalized, None)
+
+
+def _prune_cert_cache() -> None:
+    if len(_cert_cache) <= _MAX_CERT_CACHE_ENTRIES:
+        return
+
+    overflow = len(_cert_cache) - _MAX_CERT_CACHE_ENTRIES
+    for domain, _value in sorted(_cert_cache.items(), key=lambda item: item[1][0])[:overflow]:
+        _cert_cache.pop(domain, None)
 
 
 @dataclass(slots=True, frozen=True)
@@ -149,29 +166,30 @@ def _is_public_certificate_ip(target_ip: ResolvedIPAddress) -> bool:
     )
 
 
-def _validate_public_certificate_target(domain: str) -> str:
+def _validate_public_certificate_target(domain: str) -> tuple[str, str]:
     normalized_domain = validate_ssllabs_host(domain)
 
-    try:
-        address_info = socket.getaddrinfo(
-            normalized_domain,
-            443,
-            family=socket.AF_UNSPEC,
-            type=socket.SOCK_STREAM,
-            proto=socket.IPPROTO_TCP,
-        )
-    except socket.gaierror:
-        # Allow the actual fetch path to surface DNS failures as a user-facing error.
-        return normalized_domain
+    address_info = socket.getaddrinfo(
+        normalized_domain,
+        443,
+        family=socket.AF_UNSPEC,
+        type=socket.SOCK_STREAM,
+        proto=socket.IPPROTO_TCP,
+    )
 
+    pinned_ip: str | None = None
     for *_prefix, sockaddr in address_info:
         if not sockaddr or not sockaddr[0]:
             continue
         target_ip = ip_address(sockaddr[0])
         if not _is_public_certificate_ip(target_ip):
             raise ValueError("Certificate checks require a public hostname.")
+        if pinned_ip is None:
+            pinned_ip = sockaddr[0]
 
-    return normalized_domain
+    if pinned_ip is None:
+        raise ValueError("Certificate target did not resolve.")
+    return normalized_domain, pinned_ip
 
 
 def _load_x509_certificate_bytes(certificate_bytes: bytes) -> x509.Certificate | None:
@@ -199,17 +217,19 @@ def _fetch_remote_certificate_sync(domain: str) -> CertificateInfo:
     Validity is determined by notAfter date, not TLS verification.
     """
     try:
-        validated_domain = _validate_public_certificate_target(domain)
+        validated_domain, pinned_ip = _validate_public_certificate_target(domain)
     except ValueError as exc:
         logger.warning("Blocked certificate check for %s: %s", domain, exc)
         return CertificateInfo(exists=False, error_message=str(exc))
+    except socket.gaierror as exc:
+        return CertificateInfo(exists=False, error_message=_build_certificate_fetch_error_message(exc))
 
     try:
         # Disable verification to read expired/self-signed certs
         context = ssl.create_default_context()
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
-        with socket.create_connection((validated_domain, 443), timeout=_CERT_FETCH_TIMEOUT) as sock:
+        with socket.create_connection((pinned_ip, 443), timeout=_CERT_FETCH_TIMEOUT) as sock:
             with context.wrap_socket(sock, server_hostname=validated_domain) as ssock:
                 cert = ssock.getpeercert(binary_form=True)
                 if not cert:
@@ -303,6 +323,7 @@ async def get_certificate_info_for_domains_remote(
             
             cert_info[domain] = info
             _cert_cache[domain] = (now, info)
+            _prune_cert_cache()
 
     return cert_info
 

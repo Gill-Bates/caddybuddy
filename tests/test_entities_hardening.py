@@ -72,6 +72,14 @@ class EntityHardeningTests(unittest.TestCase):
         self.assertEqual(user.email, "admin@example.com")
         self.assertTrue(user.is_admin)
 
+    def test_user_rejects_invalid_username(self) -> None:
+        with self.assertRaisesRegex(ValueError, "invalid username"):
+            User(username=" bad user ", email=None, password_hash="hash", role="user", is_active=True)
+
+    def test_user_rejects_invalid_email(self) -> None:
+        with self.assertRaisesRegex(ValueError, "invalid email address"):
+            User(username="admin", email="not-an-email", password_hash="hash", role="user", is_active=True)
+
     def test_user_rejects_invalid_role(self) -> None:
         with self.assertRaisesRegex(ValueError, "invalid user role"):
             User(username="admin", email=None, password_hash="hash", role="root", is_active=True)
@@ -83,6 +91,15 @@ class EntityHardeningTests(unittest.TestCase):
     def test_ssllabs_scan_rejects_negative_endpoint_count(self) -> None:
         with self.assertRaisesRegex(ValueError, "endpoint_count must be non-negative"):
             SslLabsScan(target_id=1, site_id=1, host="example.com", endpoint_count=-1)
+
+    def test_ssllabs_scan_accepts_known_grade_values(self) -> None:
+        scan = SslLabsScan(target_id=1, site_id=1, host="example.com", grade="A+")
+
+        self.assertEqual(scan.grade, "A+")
+
+    def test_ssllabs_scan_rejects_unknown_grade_values(self) -> None:
+        with self.assertRaisesRegex(ValueError, "invalid ssllabs grade"):
+            SslLabsScan(target_id=1, site_id=1, host="example.com", grade="Excellent")
 
     def test_snapshot_rejects_invalid_sha256(self) -> None:
         with self.assertRaisesRegex(ValueError, "invalid sha256"):
