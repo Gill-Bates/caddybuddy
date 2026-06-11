@@ -281,6 +281,7 @@
         const toggle = document.getElementById("mobileMenuToggle");
         const sidebar = document.getElementById("appSidebar");
         const backdrop = document.getElementById("sidebarBackdrop");
+        const appContent = document.querySelector(".app-content");
         if (
             !(toggle instanceof HTMLButtonElement) ||
             !(sidebar instanceof HTMLElement) ||
@@ -291,13 +292,30 @@
         }
         toggle.dataset.mobileMenuInitialized = "true";
 
+        const getFocusableSidebarElements = () => Array.from(
+            sidebar.querySelectorAll("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")
+        ).filter((element) => element instanceof HTMLElement && element.getClientRects().length > 0);
+
+        const setPageInert = (enabled) => {
+            if (appContent instanceof HTMLElement) {
+                appContent.inert = enabled;
+                if (enabled) {
+                    appContent.setAttribute("aria-hidden", "true");
+                } else {
+                    appContent.removeAttribute("aria-hidden");
+                }
+            }
+        };
+
         const closeMenu = (restoreFocus = false) => {
             sidebar.classList.remove("is-open");
             backdrop.classList.remove("is-visible");
+            backdrop.setAttribute("aria-hidden", "true");
             toggle.classList.remove("is-active");
             toggle.setAttribute("aria-expanded", "false");
             toggle.setAttribute("aria-label", "Open menu");
             document.body.classList.remove("app-body--menu-open");
+            setPageInert(false);
             if (restoreFocus) {
                 toggle.focus();
             }
@@ -306,14 +324,16 @@
         const openMenu = () => {
             sidebar.classList.add("is-open");
             backdrop.classList.add("is-visible");
+            backdrop.setAttribute("aria-hidden", "false");
             toggle.classList.add("is-active");
             toggle.setAttribute("aria-expanded", "true");
             toggle.setAttribute("aria-label", "Close menu");
             document.body.classList.add("app-body--menu-open");
+            setPageInert(true);
 
-            const firstLink = sidebar.querySelector("a.app-nav__link");
-            if (firstLink instanceof HTMLElement) {
-                firstLink.focus();
+            const firstFocusable = getFocusableSidebarElements()[0];
+            if (firstFocusable instanceof HTMLElement) {
+                firstFocusable.focus();
             }
         };
 
@@ -334,8 +354,44 @@
             }
         });
         document.addEventListener("keydown", (event) => {
-            if (event.key === "Escape" && sidebar.classList.contains("is-open")) {
+            if (!sidebar.classList.contains("is-open")) {
+                return;
+            }
+
+            if (event.key === "Escape") {
                 closeMenu(true);
+                return;
+            }
+
+            if (event.key !== "Tab") {
+                return;
+            }
+
+            const focusable = getFocusableSidebarElements();
+            if (focusable.length === 0) {
+                event.preventDefault();
+                toggle.focus();
+                return;
+            }
+
+            const first = focusable[0];
+            const last = focusable.at(-1);
+            if (!(first instanceof HTMLElement) || !(last instanceof HTMLElement)) {
+                return;
+            }
+
+            if (!sidebar.contains(document.activeElement)) {
+                event.preventDefault();
+                first.focus();
+                return;
+            }
+
+            if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
             }
         });
 
@@ -350,6 +406,29 @@
             desktopMediaQuery.addEventListener("change", handleDesktopChange);
         } else if (typeof desktopMediaQuery.addListener === "function") {
             desktopMediaQuery.addListener(handleDesktopChange);
+        }
+    };
+
+    App.initializeResponsiveCodeTextareas = () => {
+        const textareas = Array.from(document.querySelectorAll("textarea[data-responsive-code-textarea]"))
+            .filter((textarea) => textarea instanceof HTMLTextAreaElement);
+        if (textareas.length === 0 || document.body.dataset.responsiveCodeTextareasInitialized === "true") {
+            return;
+        }
+        document.body.dataset.responsiveCodeTextareasInitialized = "true";
+
+        const mobileMediaQuery = window.matchMedia("(max-width: 767.98px)");
+        const applyTextareaWrapMode = () => {
+            for (const textarea of textareas) {
+                textarea.setAttribute("wrap", mobileMediaQuery.matches ? "soft" : "off");
+            }
+        };
+
+        applyTextareaWrapMode();
+        if (typeof mobileMediaQuery.addEventListener === "function") {
+            mobileMediaQuery.addEventListener("change", applyTextareaWrapMode);
+        } else if (typeof mobileMediaQuery.addListener === "function") {
+            mobileMediaQuery.addListener(applyTextareaWrapMode);
         }
     };
 
@@ -455,14 +534,15 @@
         }
 
         const safeCategory = App.allowedFlashCategories.has(category) ? category : "info";
+        const isAlertFlash = safeCategory === "danger" || safeCategory === "warning";
 
         const toastElement = document.createElement("div");
         toastElement.className = `toast align-items-center text-bg-${safeCategory} border-0 shadow-sm`;
-        toastElement.setAttribute("role", "status");
-        toastElement.setAttribute("aria-live", "polite");
+        toastElement.setAttribute("role", isAlertFlash ? "alert" : "status");
+        toastElement.setAttribute("aria-live", isAlertFlash ? "assertive" : "polite");
         toastElement.setAttribute("aria-atomic", "true");
         toastElement.setAttribute("data-auto-dismiss-toast", "");
-        toastElement.setAttribute("data-auto-dismiss-delay", "5000");
+        toastElement.setAttribute("data-auto-dismiss-delay", isAlertFlash ? "12000" : "5000");
 
         const content = document.createElement("div");
         content.className = "d-flex";
@@ -517,6 +597,7 @@
             confirmModalMessageElement.textContent = "Continue?";
         }
         if (confirmModalAcceptButton instanceof HTMLButtonElement) {
+            confirmModalAcceptButton.disabled = false;
             confirmModalAcceptButton.textContent = "Continue";
             confirmModalAcceptButton.className = defaultConfirmAcceptClass;
         }
@@ -546,26 +627,38 @@
     };
 
     const submitConfirmedElement = () => {
-        if (!(pendingConfirmElement instanceof HTMLElement)) {
-            return;
-        }
         const target = pendingConfirmElement;
-        resetPendingConfirm();
-
-        if (target instanceof HTMLAnchorElement && target.href) {
-            window.location.assign(target.href);
+        if (!(target instanceof HTMLElement)) {
             return;
         }
 
-        const form = target.closest("form");
-        if (!(form instanceof HTMLFormElement)) {
-            return;
+        if (confirmModalAcceptButton instanceof HTMLButtonElement) {
+            confirmModalAcceptButton.disabled = true;
         }
-        if (isSubmitControl(target)) {
-            form.requestSubmit(target);
-            return;
+
+        try {
+            if (target instanceof HTMLAnchorElement && target.href) {
+                window.location.assign(target.href);
+                return;
+            }
+
+            const form = target.closest("form");
+            if (!(form instanceof HTMLFormElement)) {
+                return;
+            }
+
+            if (isSubmitControl(target)) {
+                form.requestSubmit(target);
+                return;
+            }
+
+            form.requestSubmit();
+        } finally {
+            pendingConfirmElement = null;
+            if (confirmModalAcceptButton instanceof HTMLButtonElement) {
+                confirmModalAcceptButton.disabled = false;
+            }
         }
-        form.requestSubmit();
     };
 
     if (confirmModalElement instanceof HTMLElement) {

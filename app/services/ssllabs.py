@@ -33,6 +33,7 @@ _SCHEDULER_POLL_SECONDS = 60
 _MIN_SECONDS_BETWEEN_NEW_SCANS = 300
 _MAX_RETRY_AFTER_SECONDS = 60 * 60
 _SCHEDULE_JITTER = timedelta(minutes=15)
+_MAX_SCAN_DURATION_SECONDS = 2 * 60 * 60
 
 
 @dataclass(slots=True, frozen=True)
@@ -214,9 +215,6 @@ async def check_email_registration_status(
     except httpx.HTTPError as exc:
         logger.warning("Failed to check SSL Labs registration status: %s", exc)
         return None
-    except Exception as exc:
-        logger.warning("Failed to check SSL Labs registration status: %s", exc)
-        return None
 
 
 def clear_registration_status_cache(email: str | None = None) -> None:
@@ -238,16 +236,9 @@ async def register_email_with_ssllabs(
 
     Returns True if registration succeeded, False otherwise.
     """
-    # Extract name parts from email (before @)
-    local_part = email.split("@")[0] if "@" in email else "User"
-    # Simple heuristic: split on . or _ or treat as single name
-    name_parts = local_part.replace("_", ".").split(".")
-    first_name = name_parts[0].title() if name_parts else "User"
-    last_name = name_parts[1].title() if len(name_parts) > 1 else "User"
-
     payload = {
-        "firstName": first_name,
-        "lastName": last_name,
+        "firstName": "CaddyBuddy",
+        "lastName": "User",
         "email": email,
         "organization": organization,
     }
@@ -641,10 +632,13 @@ class SslLabsService:
         try:
             await self._mark_scan_state(target_id=target_id, scan_id=scan_id, payload={"host": host}, status="queued")
 
+            scan_started_at = datetime.now(UTC)
             start_new = force_new
             from_cache = not force_new
             max_age_hours = settings.ssllabs_cache_max_age_hours if from_cache else None
             while True:
+                if (datetime.now(UTC) - scan_started_at).total_seconds() > _MAX_SCAN_DURATION_SECONDS:
+                    raise SslLabsServiceError("SSL Labs scan exceeded maximum duration.")
                 try:
                     payload = await client.analyze(
                         host=host,

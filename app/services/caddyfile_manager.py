@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import hashlib
 import logging
 import os
@@ -169,6 +170,8 @@ def _error_message(error_code: str) -> str:
         "caddyfile_not_writable": "Caddyfile is not writable. Check Docker Compose volume permissions.",
         "caddyfile_too_large": "Caddyfile exceeds the supported size limit.",
         "caddyfile_replace_failed": "Failed to replace Caddyfile with managed marker.",
+        "caddyfile_persistence_failed": "Caddy was configured, but the managed Caddyfile could not be persisted to disk.",
+        "caddyfile_write_failed": "Caddy runtime was updated, but the Caddyfile could not be persisted.",
         "caddy_admin_unavailable": "Caddy Admin API unavailable.",
         "caddy_config_invalid": "Rendered Caddy configuration is invalid.",
         "onboarding_required": "Caddy onboarding is required before synchronization.",
@@ -300,29 +303,50 @@ def _record_sync_event(
     )
 
 
-def replace_caddyfile_with_marker(path: Path) -> None:
-    marker = _marker_text()
+# errno values returned when renaming over a destination that is a separate
+# mount point (e.g. a single-file Docker bind mount): the atomic temp-file +
+# rename strategy cannot be used and we must write the file in place instead.
+_BIND_MOUNT_RENAME_ERRNOS = frozenset({errno.EBUSY, errno.EXDEV, errno.EINVAL})
+
+
+def _write_caddyfile_sync(path: Path, content: str) -> None:
+    """Persist content to a Caddyfile path on disk.
+
+    Prefer an atomic temp-file + rename. When the destination is a single-file
+    bind mount (common in containers), renaming over the mount point fails with
+    EBUSY/EXDEV; fall back to an in-place write through the bind-mounted inode so
+    restart-resilience is preserved. Writes are serialized by the operation guard.
+    """
     tmp_path = path.with_name(f".{path.name}.caddybuddy.tmp")
     file_mode = path.stat().st_mode & 0o777
 
     try:
         with tmp_path.open("w", encoding="utf-8") as handle:
-            handle.write(marker)
+            handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
-
         os.chmod(tmp_path, file_mode)
         tmp_path.replace(path)
-
-        dir_fd = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
-    except OSError:
+    except OSError as exc:
         with suppress(OSError):
             tmp_path.unlink()
-        raise
+        if exc.errno not in _BIND_MOUNT_RENAME_ERRNOS:
+            raise
+        with path.open("w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        return
+
+    dir_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
+def replace_caddyfile_with_marker(path: Path) -> None:
+    _write_caddyfile_sync(path, _marker_text())
 
 
 async def get_baseline_caddyfile(session: AsyncSession) -> str:
@@ -332,7 +356,10 @@ async def get_baseline_caddyfile(session: AsyncSession) -> str:
 
     snapshot_sha256 = await _get_state_value(session, _STATE_KEY_SNAPSHOT_SHA256)
     if snapshot_sha256:
-        snapshot = await session.get(CaddyfileSnapshot, snapshot_sha256)
+        result = await session.execute(
+            select(CaddyfileSnapshot).where(CaddyfileSnapshot.sha256 == snapshot_sha256)
+        )
+        snapshot = result.scalar_one_or_none()
         if snapshot is not None and snapshot.content:
             return parse_caddyfile(snapshot.content).global_block.strip()
 
@@ -404,6 +431,35 @@ async def build_full_caddyfile(session: AsyncSession) -> str:
     return "\n\n".join(parts)
 
 
+async def validate_rendered_caddy_configuration(session: AsyncSession) -> CaddySyncResult:
+    rendered_config = await build_full_caddyfile(session)
+    rendered_config_sha256 = _sha256_text(rendered_config)
+
+    if not rendered_config.strip():
+        return CaddySyncResult(
+            status="no_change",
+            config_sha256=rendered_config_sha256,
+            synced=False,
+        )
+
+    try:
+        await caddy_service.adapt_caddyfile_to_json(rendered_config)
+    except CaddyServiceError as exc:
+        return CaddySyncResult(
+            status="validation_failed",
+            config_sha256=rendered_config_sha256,
+            synced=False,
+            error=str(exc),
+            error_code="caddy_config_invalid",
+        )
+
+    return CaddySyncResult(
+        status="validated",
+        config_sha256=rendered_config_sha256,
+        synced=False,
+    )
+
+
 async def _sync_caddy_configuration_locked(
     session: AsyncSession,
     *,
@@ -461,7 +517,7 @@ async def _sync_caddy_configuration_locked(
                 error_code="caddy_config_invalid",
             )
     else:
-            config_payload = _empty_caddy_config()
+        config_payload = _empty_caddy_config()
 
     config = await get_caddy_config(session)
     settings = get_settings()
@@ -485,6 +541,34 @@ async def _sync_caddy_configuration_locked(
             error=str(exc),
             error_code="caddy_admin_unavailable",
         )
+
+    # Persist the full rendered config to the Caddyfile so Caddy can reload
+    # it correctly on restart (preserving admin address and all site blocks).
+    # A persistence failure must fail the sync: otherwise runtime, database and
+    # filesystem state diverge and a restart can load a stale configuration.
+    if config.caddyfile_path is not None:
+        caddyfile_content = _marker_text() + rendered_config
+        try:
+            await asyncio.to_thread(_write_caddyfile_sync, config.caddyfile_path, caddyfile_content)
+        except OSError as exc:
+            logger.error(
+                "Config pushed to Caddy but Caddyfile could not be persisted "
+                "(restart-resilience lost): %s",
+                exc,
+            )
+            await _set_state_value(session, _STATE_KEY_LAST_ERROR, "caddyfile_write_failed")
+            _record_sync_event(
+                session,
+                status="sync_failed",
+                config_sha256=rendered_config_sha256,
+                error=str(exc),
+            )
+            return CaddySyncResult(
+                status="sync_failed",
+                config_sha256=rendered_config_sha256,
+                error="Caddy runtime was updated, but the Caddyfile could not be persisted.",
+                error_code="caddyfile_write_failed",
+            )
 
     version.synced_at = datetime.now(UTC)
     await _set_state_value(session, _STATE_KEY_LAST_SYNCED_CONFIG_SHA256, rendered_config_sha256)
@@ -615,21 +699,25 @@ async def onboard_caddy(session: AsyncSession) -> CaddyOnboardingResult:
                 error_code=sync_result.error_code,
             )
 
-        try:
-            await asyncio.to_thread(replace_caddyfile_with_marker, path)
-        except OSError:
-            await _set_state_value(session, _STATE_KEY_LAST_ERROR, "caddyfile_replace_failed")
+        # The sync above already persisted the marker-prefixed full config to
+        # disk. Verify it is present instead of overwriting the file with a
+        # marker-only stub, which would drop every site block and leave Caddy
+        # with an empty configuration after a restart.
+        file_error, _content, marker_present = await _inspect_caddyfile(session)
+        if file_error is not None or not marker_present:
+            persistence_error = file_error or "caddyfile_persistence_failed"
+            await _set_state_value(session, _STATE_KEY_LAST_ERROR, persistence_error)
             await _set_state_value(session, _STATE_KEY_ONBOARDING_STATUS, _STATUS_ONBOARDING_FAILED)
             _record_sync_event(
                 session,
                 status=_STATUS_ONBOARDING_FAILED,
-                error=_error_message("caddyfile_replace_failed"),
+                error=_error_message(persistence_error),
             )
             return CaddyOnboardingResult(
                 status="error",
                 snapshot_sha256=snapshot_sha256,
-                error=_error_message("caddyfile_replace_failed"),
-                error_code="caddyfile_replace_failed",
+                error=_error_message(persistence_error),
+                error_code=persistence_error,
             )
 
         await _set_state_value(session, _STATE_KEY_ONBOARDING_STATUS, _STATUS_MANAGED)

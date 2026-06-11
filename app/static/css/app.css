@@ -375,6 +375,8 @@ body.app-body--menu-open .app-sidebar {
     z-index: 1095;
     display: grid;
     gap: 0.75rem;
+    top: max(1rem, env(safe-area-inset-top)) !important;
+    right: max(1rem, env(safe-area-inset-right)) !important;
     max-width: min(100vw - 1.5rem, 24rem);
 }
 
@@ -422,9 +424,10 @@ body.app-body--menu-open .app-sidebar {
 
 @media (max-width: 575.98px) {
     .app-toast-stack {
-        left: auto;
-        right: 0;
-        max-width: min(100vw - 1rem, 24rem);
+        top: calc(var(--cb-mobile-topbar-height) + env(safe-area-inset-top) + 0.75rem) !important;
+        left: max(0.75rem, env(safe-area-inset-left)) !important;
+        right: max(0.75rem, env(safe-area-inset-right)) !important;
+        max-width: none;
     }
 }
 
@@ -1232,7 +1235,7 @@ body.app-body--menu-open .app-sidebar {
 .ssllabs-filterbar {
     flex: 0 0 auto;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(10rem, 14rem);
+    grid-template-columns: minmax(0, 1fr) minmax(10rem, 14rem) auto;
     gap: 0.75rem;
     align-items: center;
     padding: 0.7rem 1.05rem 0.85rem;
@@ -1726,19 +1729,42 @@ body.app-body--menu-open .app-sidebar {
 }
 
 @media (max-width: 767.98px) {
-    .sites-list-panel {
-        height: clamp(22rem, 48dvh, 34rem);
+
+    /* Flatten the list panel so the site cards aren't nested inside a second
+       card, and let it grow with its content (the page scrolls naturally
+       instead of a short, fixed-height inner scroll box).
+       Scoped under .app-page--sites to outrank the generic .panel-card
+       padding overrides in the wider mobile breakpoints below. */
+    .app-page--sites .sites-list-panel {
+        height: auto;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        box-shadow: none;
+        backdrop-filter: none;
+        overflow: visible;
     }
 
-    .sites-list-scroll {
-        padding: 0 0.75rem 0.75rem;
+    .app-page--sites .sites-list-panel .panel-card__header {
+        padding-inline: 0.25rem;
+        margin-bottom: 0.75rem;
+    }
+
+    .app-page--sites .sites-list-scroll {
+        padding: 0;
+        overflow: visible;
+    }
+
+    .app-page--sites .sites-list-scroll .table-responsive {
+        padding: 0;
     }
 
     .sites-list-scroll .sites-table {
         min-width: 0;
     }
 
-    .sites-list-scroll .sites-table colgroup {
+    .sites-list-scroll .sites-table colgroup,
+    .sites-list-scroll .table thead {
         display: none;
     }
 
@@ -1750,37 +1776,48 @@ body.app-body--menu-open .app-sidebar {
         width: 100%;
     }
 
-    .sites-list-scroll .table thead {
-        display: none;
-    }
-
+    /* Each site renders as a self-contained card / tile */
     .sites-list-scroll .table tr {
-        padding: 0.9rem 0;
-        border-top: 1px solid rgba(21, 34, 46, 0.08);
+        padding: 1rem 1.05rem;
+        margin-bottom: 0.85rem;
+        border: 1px solid var(--cb-border);
+        border-radius: 1.1rem;
+        background: var(--cb-surface);
+        box-shadow: 0 6px 16px -10px rgba(5, 23, 49, 0.25), 0 2px 6px rgba(5, 23, 49, 0.05);
     }
 
-    .sites-list-scroll .table tr:first-child {
-        border-top: 0;
+    .sites-list-scroll .table tr:last-child {
+        margin-bottom: 0;
     }
 
     .sites-list-scroll .table tr.table-active {
-        margin-inline: -0.25rem;
-        padding-inline: 0.75rem;
-        border-radius: 1rem;
-        background: rgba(15, 118, 110, 0.06);
+        border-color: var(--cb-accent);
+        background: rgba(15, 118, 110, 0.05);
+        box-shadow: 0 0 0 1px var(--cb-accent), 0 8px 20px -10px rgba(15, 118, 110, 0.3);
     }
 
     .sites-list-scroll .table td {
-        display: grid;
-        grid-template-columns: minmax(5.75rem, 32%) minmax(0, 1fr);
-        align-items: start;
-        gap: 0.75rem;
-        padding: 0.42rem 0;
+        padding: 0;
         border-bottom: 0;
     }
 
-    .sites-list-scroll .table td::before {
+    /* Divider + spacing between fields inside the card */
+    .sites-list-scroll .table td+td {
+        margin-top: 0.7rem;
+        padding-top: 0.7rem;
+        border-top: 1px solid var(--cb-border);
+    }
+
+    .sites-list-scroll .table td>* {
+        min-width: 0;
+    }
+
+    /* Field labels sit above their value, not beside it */
+    .sites-list-scroll .table td[data-label="Domain"]::before,
+    .sites-list-scroll .table td[data-label="Certificate"]::before {
         content: attr(data-label);
+        display: block;
+        margin-bottom: 0.45rem;
         color: var(--cb-muted);
         font-size: 0.68rem;
         font-weight: 700;
@@ -1788,14 +1825,25 @@ body.app-body--menu-open .app-sidebar {
         text-transform: uppercase;
     }
 
-    .sites-list-scroll .table td>* {
-        min-width: 0;
+    /* Site name is the card heading; actions need no label */
+    .sites-list-scroll .table td[data-label="Site"]::before,
+    .sites-list-scroll .table td[data-label="Actions"]::before {
+        display: none;
+    }
+
+    .sites-list-scroll .table td[data-label="Site"] .site-row-title .fw-semibold {
+        font-size: 1rem;
     }
 
     .sites-list-scroll .table .cell-actions {
         flex-wrap: wrap;
-        justify-content: flex-start;
+        justify-content: flex-end;
         min-width: 0;
+    }
+
+    /* Empty-state row keeps a plain look, not a tile */
+    .sites-list-scroll .table tr td[colspan] {
+        text-align: center;
     }
 
     .site-cert__summary {
@@ -1805,6 +1853,82 @@ body.app-body--menu-open .app-sidebar {
 
     .site-cert__meta {
         max-width: 100%;
+    }
+}
+
+/* "Add site" trigger — only meaningful once JS has wired up the mobile modal */
+.sites-add-btn {
+    display: none;
+    align-items: center;
+    gap: 0.4rem;
+    white-space: nowrap;
+}
+
+/* Site form modal: the relocated panel should blend into the modal chrome */
+.sites-form-modal .modal-body {
+    padding: 1rem 1.1rem 1.25rem;
+}
+
+.sites-form-modal .sites-form-panel {
+    height: auto;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+}
+
+.sites-form-modal .sites-form-panel .panel-card__header {
+    display: none;
+}
+
+@media (max-width: 767.98px) {
+
+    /* When the modal is active, the inline form column is empty — hide it
+       and surface the "Add site" button instead. */
+    .sites-modal-enabled .sites-form-column {
+        display: none;
+    }
+
+    .sites-modal-enabled .sites-list-panel__header {
+        flex-wrap: wrap;
+    }
+
+    .sites-modal-enabled .sites-add-btn {
+        display: inline-flex;
+        flex: 1 1 100%;
+        justify-content: center;
+        order: 3;
+        min-height: 2.5rem;
+    }
+
+    .sites-modal-enabled .sites-add-btn,
+    .sites-list-scroll .table .cell-actions .btn,
+    .sites-list-scroll .sites-table .btn-sm.btn--icon-only,
+    .ssllabs-domain-card .btn,
+    .ssllabs-domain-card button {
+        min-block-size: 2.75rem;
+        min-inline-size: 2.75rem;
+    }
+
+    .sites-form-modal .modal-dialog {
+        align-items: stretch;
+        max-width: none;
+        width: 100%;
+        height: 100dvh;
+        margin: 0;
+    }
+
+    .sites-form-modal .modal-content {
+        min-height: 100dvh;
+        border-radius: 0;
+    }
+
+    .sites-form-modal .modal-body {
+        overflow-y: auto;
+        padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
+        -webkit-overflow-scrolling: touch;
     }
 }
 
@@ -2194,6 +2318,10 @@ body.app-body--menu-open .app-sidebar {
         grid-template-columns: minmax(0, 1fr);
     }
 
+    [data-ssllabs-clear-filters] {
+        min-block-size: 2.75rem;
+    }
+
     .ssllabs-table-wrap {
         overflow: visible;
         padding: 0 0.75rem 0.75rem;
@@ -2245,6 +2373,26 @@ body.app-body--menu-open .app-sidebar {
         content: none;
     }
 
+
+@media (min-width: 768px) {
+
+    .caddyfile-editor-panel__textarea,
+    #site-caddy-directives {
+        white-space: pre;
+        overflow-wrap: normal;
+        overflow-x: auto;
+    }
+}
+
+@media (max-width: 767.98px) {
+
+    .caddyfile-editor-panel__textarea,
+    #site-caddy-directives {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        min-height: 18rem;
+    }
+}
     .ssllabs-schedule-form {
         width: 100%;
         flex-wrap: wrap;
@@ -2625,6 +2773,23 @@ body.app-body--menu-open .app-sidebar {
     display: block;
 }
 
+/* Persistent mobile header with the brand logo (hidden on desktop, where the
+   logo lives in the sidebar instead). */
+.mobile-topbar {
+    display: none;
+}
+
+.mobile-topbar__brand {
+    display: inline-flex;
+    align-items: center;
+}
+
+.mobile-topbar__logo {
+    display: block;
+    height: 1.7rem;
+    width: auto;
+}
+
 /* Mobile sidebar backdrop */
 .sidebar-backdrop {
     position: fixed;
@@ -2657,6 +2822,28 @@ body.app-body--menu-open .app-sidebar {
         width: 2.75rem;
         height: 2.75rem;
         border-radius: 0.9rem;
+    }
+
+    .mobile-topbar {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: calc(var(--cb-z-backdrop) - 1);
+        height: calc(var(--cb-mobile-topbar-height) + env(safe-area-inset-top));
+        padding-top: env(safe-area-inset-top);
+        padding-inline: var(--cb-mobile-gutter);
+        background: color-mix(in srgb, var(--cb-bg) 86%, transparent);
+        backdrop-filter: blur(10px);
+        border-bottom: 1px solid var(--cb-border);
+    }
+
+    /* The logo now lives in the persistent top bar, so drop it from the flyout. */
+    .app-sidebar .brand-mark {
+        display: none;
     }
 
     .app-shell {

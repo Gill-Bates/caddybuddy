@@ -132,6 +132,8 @@
                             <form action="{{ request.app.url_path_for('change_password') }}" method="post"
                                 data-loading-submit-form id="password-form">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <input type="text" name="username" value="{{ current_user.username }}"
+                                    autocomplete="username" hidden aria-hidden="true">
 
                                 <div class="mb-3">
                                     <label for="current_password" class="form-label">Current Password</label>

@@ -15,8 +15,8 @@ from app.config.settings import get_settings
 
 
 _ENV_OVERRIDES = {
-    "CB_SECRET_KEY": "unit-test-secret-key",
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key",
+    "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
+    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
     "CB_ADMIN_PASSWORD": "UnitTestPassword-123A",
     "CADDYBUDDY_ADMIN_PASSWORD": "UnitTestPassword-123A",
 }
@@ -96,7 +96,7 @@ class CSRFMiddlewareTests(_SecurityTestEnvMixin, unittest.TestCase):
     def _build_app(self) -> FastAPI:
         app = FastAPI()
         app.add_middleware(self._csrf_module.CSRFMiddleware)
-        app.add_middleware(SessionMiddleware, secret_key="unit-test-secret-key")
+        app.add_middleware(SessionMiddleware, secret_key="unit-test-secret-key-for-testing")
 
         @app.get("/login")
         async def login_page(request: Request) -> PlainTextResponse:

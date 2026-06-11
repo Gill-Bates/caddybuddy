@@ -256,3 +256,5 @@ full_codebase*.txt
 *.db-*
 *.sqlite
 *.sqlite-*
+
+BUILD_INFO

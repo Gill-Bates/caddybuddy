@@ -56,6 +56,18 @@ async def _require_api_user(
     return current_user
 
 
+async def _require_admin_api_user(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+) -> User:
+    current_user = await get_session_user(request, session)
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Administrator access is required.")
+    return current_user
+
+
 def _format_sse_data(payload: str) -> str:
     lines = payload.splitlines() or [""]
     return "".join(f"data: {line}\n" for line in lines) + "\n"
@@ -82,9 +94,10 @@ async def readiness(
     build_info = get_build_info()
     runtime_status = await get_caddy_runtime_status(session)
     if runtime_status.error:
+        logger.warning("Readiness check failed: %s", runtime_status.error)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=runtime_status.error,
+            detail="Service is not ready.",
         )
     if runtime_status.onboarding_required:
         raise HTTPException(
@@ -120,10 +133,13 @@ async def caddy_status(
 
 
 @router.get("/dashboard/metrics", response_model=DashboardMetricsResponse)
+@limiter.limit("10/minute")
 async def dashboard_metrics(
+    request: Request,
     _current_user: User = Depends(_require_api_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> DashboardMetricsResponse:
+    del request
     metrics = await get_dashboard_metrics(session)
     return DashboardMetricsResponse(
         domain_count=metrics.domain_count,
@@ -161,7 +177,9 @@ async def _event_stream(events: AsyncIterator[ResourceEvent]) -> AsyncIterator[s
 
 
 @router.get("/events", response_class=StreamingResponse)
+@limiter.limit("20/minute")
 async def subscribe_events(
+    request: Request,
     _current_user: User = Depends(_require_api_user),
 ) -> StreamingResponse:
     """
@@ -171,6 +189,7 @@ async def subscribe_events(
     sites or other resources change.
     """
     try:
+        del request
         events = event_bus.subscribe()
     except SubscriberLimitReachedError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
@@ -191,7 +210,6 @@ async def subscribe_events(
 
 
 class SslLabsRegistrationStatusResponse(BaseModel):
-    email: str | None
     masked_email: str | None
     is_registered: bool | None
     message: str
@@ -204,17 +222,19 @@ class SslLabsRegisterResponse(BaseModel):
 
 
 @router.get("/ssllabs/registration-status", response_model=SslLabsRegistrationStatusResponse)
+@limiter.limit("30/minute")
 async def ssllabs_registration_status(
-    _current_user: User = Depends(_require_api_user),
+    request: Request,
+    _current_user: User = Depends(_require_admin_api_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> SslLabsRegistrationStatusResponse:
+    del request
     """Check the SSL Labs email registration status."""
     settings = get_settings()
     email = await get_ssllabs_email(session)
 
     if not email:
         return SslLabsRegistrationStatusResponse(
-            email=None,
             masked_email=None,
             is_registered=None,
             message="No SSL Labs email configured.",
@@ -225,17 +245,14 @@ async def ssllabs_registration_status(
             email,
             api_base_url=settings.ssllabs_api_base_url,
         )
-        masked = mask_email(email)
         return SslLabsRegistrationStatusResponse(
-            email=email,
-            masked_email=masked,
+            masked_email=mask_email(email),
             is_registered=is_registered,
             message=_registration_status_message(is_registered),
         )
     except Exception:
         logger.exception("Could not check SSL Labs registration status")
         return SslLabsRegistrationStatusResponse(
-            email=email,
             masked_email=mask_email(email),
             is_registered=None,
             message="Could not check SSL Labs registration status.",
@@ -246,7 +263,7 @@ async def ssllabs_registration_status(
 @limiter.limit("3/hour")
 async def ssllabs_register(
     request: Request,
-    _current_user: User = Depends(_require_api_user),
+    _current_user: User = Depends(_require_admin_api_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> SslLabsRegisterResponse:
     """Register the configured email with SSL Labs API."""
@@ -273,8 +290,12 @@ async def ssllabs_register(
                 message="Email is already registered with SSL Labs.",
                 masked_email=mask_email(email),
             )
-    except Exception:
-        pass  # Continue to registration attempt
+    except SslLabsClientError as exc:
+        logger.warning("SSL Labs registration status check failed: %s", exc)
+        raise HTTPException(
+            status_code=502,
+            detail="Could not verify SSL Labs registration status. Please try again later.",
+        ) from exc
 
     # Try to register
     try:
@@ -306,7 +327,7 @@ async def ssllabs_register(
 @limiter.limit("10/minute")
 async def ssllabs_refresh_status(
     request: Request,
-    _current_user: User = Depends(_require_api_user),
+    _current_user: User = Depends(_require_admin_api_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> SslLabsRegistrationStatusResponse:
     """Force refresh the SSL Labs registration status (bypasses cache)."""
@@ -316,7 +337,6 @@ async def ssllabs_refresh_status(
 
     if not email:
         return SslLabsRegistrationStatusResponse(
-            email=None,
             masked_email=None,
             is_registered=None,
             message="No SSL Labs email configured.",
@@ -335,7 +355,6 @@ async def ssllabs_refresh_status(
         is_registered = None
 
     return SslLabsRegistrationStatusResponse(
-        email=email,
         masked_email=mask_email(email),
         is_registered=is_registered,
         message=_registration_status_message(is_registered),

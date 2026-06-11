@@ -40,7 +40,9 @@ Then start CaddyBuddy with the example Compose file from the repository:
 docker compose -f docker/docker-compose.yml.example up -d
 ```
 
-The container expects access to your Caddy Admin API and a persistent data directory.
+The container expects access to your Caddy Admin API, a persistent data directory,
+and Caddy's certificate storage mounted at `/var/lib/caddy/.local/share/caddy`
+when you want the UI to trigger certificate renewals.
 
 ## Documentation
 

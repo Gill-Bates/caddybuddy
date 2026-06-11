@@ -15,8 +15,8 @@ from app.config.settings import get_settings
 
 
 _ENV_OVERRIDES = {
-    "CB_SECRET_KEY": "unit-test-secret-key",
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key",
+    "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
+    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
     "CB_ADMIN_PASSWORD": "UnitTestPassword-123A",
     "CADDYBUDDY_ADMIN_PASSWORD": "UnitTestPassword-123A",
 }
@@ -123,21 +123,34 @@ class LifespanTests(unittest.IsolatedAsyncioTestCase):
             default_admin_password=SimpleNamespace(get_secret_value=lambda: "UnitTestPassword-123A"),
             default_admin_email="admin@example.com",
             auto_onboard=True,
+            caddy_startup_reconcile_timeout_seconds=5.0,
         )
 
-        session_one = SimpleNamespace(
-            begin=lambda: _AsyncContextManager(),
+        session_one = SimpleNamespace(begin=lambda: _AsyncContextManager())
+        session_two = SimpleNamespace(begin=lambda: _AsyncContextManager())
+        session_three = SimpleNamespace(begin=lambda: _AsyncContextManager())
+        session_four = SimpleNamespace(begin=lambda: _AsyncContextManager())
+        session_five = SimpleNamespace(begin=lambda: _AsyncContextManager())
+        session_factory = _SessionFactory(
+            session_one, session_two, session_three, session_four, session_five
         )
-        session_two = SimpleNamespace(
-            begin=lambda: _AsyncContextManager(),
-        )
-        session_three = SimpleNamespace(
-            begin=lambda: _AsyncContextManager(),
-        )
-        session_four = SimpleNamespace()
-        session_factory = _SessionFactory(session_one, session_two, session_three, session_four)
 
         dispose_engine = AsyncMock()
+
+        onboarding_status = SimpleNamespace(
+            onboarding_required=True,
+            admin_api_reachable=True,
+            managed=False,
+            caddyfile_path="/app/Caddyfile",
+            error=None,
+        )
+        managed_status = SimpleNamespace(
+            onboarding_required=False,
+            admin_api_reachable=True,
+            managed=True,
+            caddyfile_path="/app/Caddyfile",
+            error=None,
+        )
 
         with (
             patch.object(main_module, "get_settings", return_value=settings),
@@ -150,12 +163,9 @@ class LifespanTests(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 main_module,
                 "get_caddy_runtime_status",
-                new=AsyncMock(side_effect=[
-                    SimpleNamespace(onboarding_required=True, caddyfile_path="/app/Caddyfile", error=None),
-                    SimpleNamespace(onboarding_required=False, caddyfile_path="/app/Caddyfile", error=None),
-                ]),
+                new=AsyncMock(side_effect=[onboarding_status, onboarding_status, managed_status]),
             ) as get_status,
-            patch.object(main_module, "onboard_caddy", new=AsyncMock(return_value=SimpleNamespace(status="onboarded", error=None))),
+            patch.object(main_module, "onboard_caddy", new=AsyncMock(return_value=SimpleNamespace(status="onboarded", error=None))) as onboard,
             patch.object(main_module.ssllabs_service, "startup", new=AsyncMock()),
             patch.object(main_module.ssllabs_service, "shutdown", new=AsyncMock()),
             patch.object(main_module.event_bus, "shutdown", new=AsyncMock()),
@@ -163,7 +173,9 @@ class LifespanTests(unittest.IsolatedAsyncioTestCase):
         ):
             application = FastAPI()
             async with main_module.lifespan(application):
-                pass
+                # Reconciliation runs as a background task; await it so the
+                # onboarding path completes before assertions.
+                await application.state.caddy_reconcile_task
 
         ensure_admin.assert_awaited_once_with(
             session_one,
@@ -171,8 +183,14 @@ class LifespanTests(unittest.IsolatedAsyncioTestCase):
             password="UnitTestPassword-123A",
             email="admin@example.com",
         )
+        # The inline startup status check and the background reconcile each use
+        # their own session rather than sharing one.
+        onboard.assert_awaited_once()
+        self.assertEqual(get_status.await_count, 3)
         self.assertEqual(get_status.await_args_list[0].args[0], session_two)
-        self.assertEqual(get_status.await_args_list[1].args[0], session_four)
+        self.assertEqual(get_status.await_args_list[1].args[0], session_three)
+        self.assertEqual(get_status.await_args_list[2].args[0], session_five)
+        self.assertEqual(onboard.await_args_list[0].args[0], session_four)
         dispose_engine.assert_awaited_once()
 
 

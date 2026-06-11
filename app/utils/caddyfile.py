@@ -594,7 +594,8 @@ class ParsedCaddyfile:
 
 _SNIPPET_HEADER_RE = re.compile(r"^\(([a-zA-Z0-9_-]+)\)\s*\{?\s*$")
 _SITE_LABEL_PATTERN = re.compile(
-    r"^(?:https?://)?(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}(?::\d+)?(?:\s*,\s*(?:https?://)?(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}(?::\d+)?)*\s*$",
+    r"^(?:https?://)?(?:\*\.)?(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}(?::\d+)?"
+    r"(?:\s*,\s*(?:https?://)?(?:\*\.)?(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}(?::\d+)?)*\s*$",
     re.ASCII | re.IGNORECASE,
 )
 
@@ -717,46 +718,7 @@ def parse_caddyfile(content: str) -> ParsedCaddyfile:
             global_parts.append(line)
             i += 1
 
-    # Build the global block string, excluding site blocks
-    # We need to rebuild it without the sites
-    result_global_lines: list[str] = []
-    i = 0
-    parsed_lines = content.splitlines()
-    while i < len(parsed_lines):
-        line = parsed_lines[i]
-        stripped = line.strip()
-
-        if not stripped or stripped.startswith("#"):
-            result_global_lines.append(line)
-            i += 1
-            continue
-
-        if "{" in stripped:
-            header_end = stripped.find("{")
-            header = stripped[:header_end].strip()
-
-            # Collect the full block to check what type it is
-            block_start = i
-            block_lines = [line]
-            depth = stripped.count("{") - stripped.count("}")
-
-            if depth > 0:
-                i += 1
-                while i < len(parsed_lines) and depth > 0:
-                    block_lines.append(parsed_lines[i])
-                    depth += parsed_lines[i].count("{") - parsed_lines[i].count("}")
-                    i += 1
-            else:
-                i += 1
-
-            # Only include non-site blocks in global
-            if not _is_site_label(header):
-                result_global_lines.extend(block_lines)
-        else:
-            result_global_lines.append(line)
-            i += 1
-
-    global_block = "\n".join(result_global_lines).strip()
+    global_block = "\n".join(global_parts).strip()
 
     return ParsedCaddyfile(
         global_block=global_block,

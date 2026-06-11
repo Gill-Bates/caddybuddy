@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 import app.services.caddyfile_manager as caddyfile_manager
 from app.models.base import Base
-from app.models.entities import CaddyfileSnapshot, Site
+from app.models.entities import CaddyBuddyState, CaddyfileSnapshot, Site
 from app.services.caddy import CaddyServiceError
 
 
@@ -152,6 +152,35 @@ example.com {
         self.assertIn("admin 127.0.0.1:2019", baseline)
         self.assertIn("(security_headers)", baseline)
         self.assertNotIn("example.com {", baseline)
+
+    async def test_get_baseline_caddyfile_reads_snapshot_by_sha256(self) -> None:
+        caddyfile_path = self.temp_path / "Caddyfile"
+        self.current_caddyfile_path = caddyfile_path
+        caddyfile_path.write_text(caddyfile_manager.MANAGED_CADDYFILE_MARKER + "\n", encoding="utf-8")
+
+        snapshot_content = """{
+    admin 127.0.0.1:2019
+}
+
+(security_headers) {
+    header X-Frame-Options DENY
+}
+"""
+
+        async with self.session_factory() as session:
+            snapshot = CaddyfileSnapshot(
+                content=snapshot_content,
+                sha256="a" * 64,
+                source_path=str(caddyfile_path),
+            )
+            session.add(snapshot)
+            session.add(CaddyBuddyState(key="snapshot_sha256", value=snapshot.sha256))
+            await session.commit()
+
+            baseline = await caddyfile_manager.get_baseline_caddyfile(session)
+
+        self.assertIn("admin 127.0.0.1:2019", baseline)
+        self.assertIn("(security_headers)", baseline)
 
     async def test_onboard_imports_snapshot_replaces_marker_and_syncs(self) -> None:
         caddyfile_path = self.temp_path / "Caddyfile"

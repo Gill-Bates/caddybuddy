@@ -10,7 +10,7 @@ from datetime import datetime
 import re
 from urllib.parse import urlsplit
 
-from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, validates
 
 from app.models.base import Base, TimestampMixin, UTCDateTime, utc_now
@@ -336,6 +336,12 @@ class SslLabsScan(Base):
         CheckConstraint(
             "endpoint_count >= 0",
             name="ck_ssllabs_scans_endpoint_count_non_negative",
+        ),
+        Index(
+            "uq_ssllabs_scans_one_active_per_target",
+            "target_id",
+            unique=True,
+            sqlite_where=text("status IN ('queued', 'starting', 'dns', 'in_progress')"),
         ),
     )
 

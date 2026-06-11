@@ -147,6 +147,11 @@ async def get_session_user(request: Request, session: AsyncSession) -> User | No
     - Each request extends the inactivity window by 60 min.
     - Fingerprint mismatch: Session is rejected when the user's password hash
       no longer matches (e.g. after a database reset or password change).
+
+    Note: timeouts are enforced from timestamps stored inside the signed cookie.
+    There is no server-side session store, so a captured cookie is replayable
+    within its embedded absolute-timeout window. Revocation is only possible
+    via password change (fingerprint rotation) or SECRET_KEY rotation.
     """
     user_id = request.session.get("user_id")
     if not user_id:
@@ -173,7 +178,7 @@ async def get_session_user(request: Request, session: AsyncSession) -> User | No
         return None
 
     user = await user_repository.get_by_id(session, parsed_user_id)
-    if user is None:
+    if user is None or not user.is_active:
         request.session.clear()
         return None
 

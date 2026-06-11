@@ -29,10 +29,13 @@ _INSECURE_SECRET_VALUES = frozenset(
 _INSECURE_ADMIN_PASSWORD_VALUES = frozenset(
     {
         "",
+        "admin",
         "change-me",
         "change-me-before-production",
     }
 )
+_MIN_SECRET_LENGTH = 32
+_MIN_ADMIN_PASSWORD_LENGTH = 12
 _SIMPLE_EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 _SESSION_COOKIE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
@@ -74,7 +77,10 @@ class Settings(BaseSettings):
         ),
     )
     timezone: str = Field(default="UTC", validation_alias=AliasChoices("TZ", "timezone"))
-    host: str = "0.0.0.0"
+    host: str = Field(
+        default="0.0.0.0",
+        validation_alias=AliasChoices("CADDYBUDDY_HOST", "HOST", "host"),
+    )
     port: int = Field(
         default=8000,
         ge=1,
@@ -153,7 +159,10 @@ class Settings(BaseSettings):
     default_admin_email: str = Field(default="admin@example.com")
 
     # Single Caddy server configuration
-    caddy_api_url: str = Field(default=DEFAULT_CADDY_ADMIN_URL)
+    caddy_api_url: str = Field(
+        default=DEFAULT_CADDY_ADMIN_URL,
+        validation_alias="CB_CADDY_API_URL",
+    )
     caddy_api_port: int = Field(
         default=2019,
         ge=1,
@@ -181,6 +190,16 @@ class Settings(BaseSettings):
             "CADDYBUDDY_CADDY_ADMIN_TIMEOUT_SECONDS",
             "CADDY_ADMIN_TIMEOUT_SECONDS",
             "caddy_admin_timeout_seconds",
+        ),
+    )
+    caddy_startup_reconcile_timeout_seconds: float = Field(
+        default=120.0,
+        gt=0,
+        le=900.0,
+        validation_alias=AliasChoices(
+            "CADDYBUDDY_CADDY_STARTUP_RECONCILE_TIMEOUT_SECONDS",
+            "CADDY_STARTUP_RECONCILE_TIMEOUT_SECONDS",
+            "caddy_startup_reconcile_timeout_seconds",
         ),
     )
     auto_onboard: bool = Field(
@@ -385,28 +404,57 @@ class Settings(BaseSettings):
             return Path(normalized)
         return value
 
+    @field_validator("mounted_caddyfile_path")
+    @classmethod
+    def _validate_mounted_caddyfile_path(cls, value: Path | None) -> Path | None:
+        if value is None:
+            return None
+        if not value.is_absolute():
+            raise ValueError("mounted_caddyfile_path must be absolute.")
+        if value.name != "Caddyfile":
+            raise ValueError("mounted_caddyfile_path must point to a file named 'Caddyfile'.")
+        return value
+
+    @field_validator("forwarded_allow_ips", mode="before")
+    @classmethod
+    def _validate_forwarded_allow_ips(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        entries = [part.strip() for part in value.split(",") if part.strip()]
+        if not entries:
+            raise ValueError("forwarded_allow_ips must not be empty.")
+        if "*" in entries:
+            raise ValueError(
+                "forwarded_allow_ips must list explicit trusted proxy IPs, not '*'. "
+                "Wildcard trust allows clients to spoof forwarded IP headers."
+            )
+        return ",".join(entries)
+
     @model_validator(mode="after")
     def _validate_non_development_secrets(self) -> Self:
         secret_key = self.secret_key.get_secret_value().strip()
-        if secret_key in _INSECURE_SECRET_VALUES:
+        if secret_key in _INSECURE_SECRET_VALUES or len(secret_key) < _MIN_SECRET_LENGTH:
             raise ValueError(
-                "Set a strong secret key via "
+                f"Set a strong secret key of at least {_MIN_SECRET_LENGTH} characters via "
                 "CB_SECRET_KEY, CADDYBUDDY_SECRET_KEY, or SECRET_KEY."
             )
 
         if self.password_pepper is not None:
             password_pepper = self.password_pepper.get_secret_value().strip()
-            if password_pepper in _INSECURE_SECRET_VALUES:
+            if password_pepper in _INSECURE_SECRET_VALUES or len(password_pepper) < _MIN_SECRET_LENGTH:
                 raise ValueError(
-                    "Set a strong password pepper via "
+                    f"Set a strong password pepper of at least {_MIN_SECRET_LENGTH} characters via "
                     "CADDYBUDDY_PASSWORD_PEPPER or PASSWORD_PEPPER."
                 )
 
         admin_password = self.default_admin_password.get_secret_value().strip()
-        if admin_password in _INSECURE_ADMIN_PASSWORD_VALUES:
+        if (
+            admin_password in _INSECURE_ADMIN_PASSWORD_VALUES
+            or len(admin_password) < _MIN_ADMIN_PASSWORD_LENGTH
+        ):
             raise ValueError(
                 "Set CB_ADMIN_PASSWORD, CADDYBUDDY_ADMIN_PASSWORD, or ADMIN_PASSWORD to a non-default value "
-                "before first startup."
+                f"of at least {_MIN_ADMIN_PASSWORD_LENGTH} characters before first startup."
             )
 
         if self.session_cookie_samesite == "none" and not self.session_https_only:

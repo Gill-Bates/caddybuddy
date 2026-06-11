@@ -122,7 +122,10 @@ async def caddy_onboard(
     # SlowAPI requires the Request parameter in the endpoint signature.
     del request
     result = await onboard_caddy(session)
-    await session.commit()
+    if result.status in {"onboarded", "already_managed", "synced", "no_change"}:
+        await session.commit()
+    else:
+        await session.rollback()
 
     response_payload = CaddyOnboardResponse(
         status=result.status,
@@ -146,7 +149,10 @@ async def caddy_sync(
     # SlowAPI requires the Request parameter in the endpoint signature.
     del request
     result = await sync_caddy_configuration(session)
-    await session.commit()
+    if _sync_succeeded(result.status):
+        await session.commit()
+    else:
+        await session.rollback()
 
     response_payload = CaddySyncResponse(
         status=result.status,

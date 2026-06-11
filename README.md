@@ -69,10 +69,11 @@ Release images are built for `giiibates/caddybuddy` on Docker Hub.
    ls -l /etc/caddy/Caddyfile
    ```
 
-4. Export the required variable:
+4. Export the required variables:
 
    ```bash
    export CB_SECRET_KEY="$(head -c 32 /dev/urandom | base64)"
+   export CB_ADMIN_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
    ```
 
 5. Start the container:
@@ -105,18 +106,17 @@ The local server listens on `http://127.0.0.1:8000` by default.
 
 ## First Startup Behavior
 
-- On an empty database, CaddyBuddy creates the initial `admin` user with the default password `admin`.
+- On an empty database, CaddyBuddy creates the initial `admin` user with the password from `CB_ADMIN_PASSWORD`. Startup fails if `CB_ADMIN_PASSWORD` is unset or uses an insecure default.
 - The SQLite database lives in `data/app.db` by default.
 - Caddy Admin URL, Caddyfile path, and rate limiting are configured in the Settings page after login.
 - Without Caddy onboarding, the application reports that onboarding is required and you can trigger it from the UI or API.
-
-Change the initial admin password immediately after the first login.
 
 ## Environment Variables
 
 | Variable | Meaning |
 | --- | --- |
 | `CB_SECRET_KEY` | Required session secret (generate with `head -c 32 /dev/urandom \| base64`) |
+| `CB_ADMIN_PASSWORD` | Required initial admin password (min 12 chars, must not be `admin`) |
 | `LOG_LEVEL` | Application log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`; default: `INFO`) |
 | `TZ` | Container or process timezone (e.g., `Europe/Berlin`) |
 

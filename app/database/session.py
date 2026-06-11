@@ -14,15 +14,12 @@ import threading
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from sqlalchemy import event, inspect
+from sqlalchemy import UniqueConstraint, event, inspect
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool, StaticPool
 
-try:
-    import fcntl
-except ImportError:  # pragma: no cover
-    fcntl = None
+import fcntl
 
 from app.config.settings import Settings, get_settings
 from app.models import entities as _entities  # noqa: F401
@@ -36,12 +33,12 @@ _lazy_init_lock = threading.RLock()
 
 
 def _configure_sqlite(dbapi_connection, _connection_record) -> None:
-    """Apply SQLite connection pragmas required by the application."""
+    """Apply per-connection SQLite pragmas (journal_mode is applied once at init)."""
     cursor = dbapi_connection.cursor()
     try:
-        cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
     finally:
         cursor.close()
 
@@ -174,6 +171,19 @@ def _read_existing_unique_constraints(sync_connection) -> dict[str, set[tuple[st
     return table_constraints
 
 
+def _read_existing_index_names(sync_connection) -> dict[str, set[str]]:
+    """Return named indexes currently present in the connected schema."""
+    schema_inspector = inspect(sync_connection)
+    return {
+        table_name: {
+            index["name"]
+            for index in schema_inspector.get_indexes(table_name)
+            if isinstance(index.get("name"), str)
+        }
+        for table_name in schema_inspector.get_table_names()
+    }
+
+
 def _sqlite_backup_table_name(base_name: str) -> str:
     """Return a per-process backup table name for SQLite rebuild migrations."""
     if re.fullmatch(r"[a-z0-9_]+", base_name) is None:
@@ -193,7 +203,11 @@ def _execute_sqlite_repair(sync_connection, statement: str, *, log_message: str)
 
 
 def _apply_known_table_migrations(sync_connection, existing_tables: set[str]) -> bool:
-    """Create newly required tables for existing databases."""
+    """Create newly required SQLite tables for existing databases."""
+    dialect_name = getattr(getattr(sync_connection, "dialect", None), "name", None)
+    if dialect_name != "sqlite":
+        return False
+
     migrated = False
     for table_name in (
         "app_settings",
@@ -250,11 +264,16 @@ def _apply_known_schema_migrations(
             migrated = True
 
     site_columns = existing_columns.get("caddy_sites")
+    added_placeholder_upstream = False
     if site_columns is not None and "upstream_url" not in site_columns:
-        logger.info("Applying known SQLite schema migration: caddy_sites.upstream_url")
+        logger.warning(
+            "Adding caddy_sites.upstream_url with placeholder default. "
+            "Existing sites will be disabled until upstream_url is reviewed in the Sites UI."
+        )
         sync_connection.exec_driver_sql(
             "ALTER TABLE caddy_sites ADD COLUMN upstream_url TEXT NOT NULL DEFAULT 'http://placeholder.invalid'"
         )
+        added_placeholder_upstream = True
         migrated = True
     if site_columns is not None and "upstream_url" in site_columns:
         migrated = _execute_sqlite_repair(
@@ -289,6 +308,13 @@ def _apply_known_schema_migrations(
             log_message="Repairing empty site_name values in caddy_sites",
         ) or migrated
 
+    if added_placeholder_upstream:
+        migrated = _execute_sqlite_repair(
+            sync_connection,
+            "UPDATE caddy_sites SET enabled = 0 WHERE upstream_url = 'http://placeholder.invalid'",
+            log_message="Disabling sites that require upstream_url review",
+        ) or migrated
+
     return migrated
 
 
@@ -299,7 +325,8 @@ async def get_db_session() -> AsyncIterator[AsyncSession]:
     back. Uncommitted changes are discarded automatically when the session is
     closed at dependency teardown.
     """
-    async with get_session_factory()() as session:
+    session_factory = get_session_factory()
+    async with session_factory() as session:
         yield session
 
 
@@ -312,21 +339,31 @@ def _current_process_uid() -> int | str:
 
 
 def _ensure_sqlite_database_directory(database_path: Path) -> None:
-    """Ensure the configured SQLite directory exists and is writable."""
+    """Ensure the configured SQLite directory exists and the lock file can be created."""
     data_dir = database_path.parent
-    data_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+        if not data_dir.is_dir():
+            raise RuntimeError(
+                f"Database directory does not exist and could not be created: {data_dir}"
+            )
+        lock_path = _sqlite_init_lock_path(database_path)
+        with lock_path.open("a+b"):
+            pass
+    except OSError as exc:
+        raise RuntimeError(
+            f"SQLite database directory is not writable: {data_dir}. "
+            f"Ensure permissions are correct (uid={_current_process_uid()})."
+        ) from exc
 
-    if not data_dir.is_dir():
-        raise RuntimeError(
-            f"Database directory does not exist and could not be created: {data_dir}"
-        )
-    if not os.access(data_dir, os.W_OK):
-        raise RuntimeError(
-            f"Database directory is not writable: {data_dir}. "
-            f"Ensure the directory exists with correct permissions (uid={_current_process_uid()})."
-        )
-    if database_path.exists() and not os.access(database_path, os.W_OK):
-        raise RuntimeError(f"SQLite database file is not writable: {database_path}")
+    if database_path.exists():
+        try:
+            with database_path.open("a+b"):
+                pass
+        except OSError as exc:
+            raise RuntimeError(
+                f"SQLite database file is not writable: {database_path}"
+            ) from exc
 
 
 def _sqlite_init_lock_path(database_path: Path) -> Path:
@@ -335,14 +372,10 @@ def _sqlite_init_lock_path(database_path: Path) -> Path:
 
 
 def _acquire_sqlite_init_lock(lock_file) -> None:
-    if fcntl is None:
-        raise RuntimeError("SQLite initialization lock requires fcntl on this platform.")
     fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
 
 
 def _release_sqlite_init_lock(lock_file) -> None:
-    if fcntl is None:
-        raise RuntimeError("SQLite initialization lock requires fcntl on this platform.")
     fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
@@ -396,7 +429,7 @@ async def _execute_database_init() -> None:
             expected_constraints = {
                 tuple(column.name for column in constraint.columns)
                 for constraint in table.constraints
-                if getattr(constraint, "__visit_name__", "") == "unique_constraint"
+                if isinstance(constraint, UniqueConstraint)
             }
             current_constraints = existing_unique_constraints.get(table_name, set())
             for expected_constraint in sorted(expected_constraints):
@@ -416,6 +449,28 @@ async def _execute_database_init() -> None:
                 "Startup will not mutate an existing schema automatically. "
                 "Reinitialize the database or add migrations before starting the app."
             )
+
+        existing_indexes = await connection.run_sync(_read_existing_index_names)
+        missing_indexes: list[str] = []
+        for table_name, table in Base.metadata.tables.items():
+            current_indexes = existing_indexes.get(table_name, set())
+            for index in table.indexes:
+                if index.name and index.name not in current_indexes:
+                    missing_indexes.append(f"{table_name}.{index.name}")
+
+        if missing_indexes:
+            logger.error("Database schema missing indexes: %s", ", ".join(sorted(missing_indexes)))
+            raise RuntimeError(
+                "Existing database schema is missing indexes: "
+                f"{', '.join(sorted(missing_indexes))}. "
+                "Reinitialize the database or add migrations before starting the app."
+            )
+
+
+async def _ensure_sqlite_wal_mode() -> None:
+    """Apply WAL journal mode once at init time rather than per-connection."""
+    async with get_engine().connect() as connection:
+        await connection.exec_driver_sql("PRAGMA journal_mode=WAL")
 
 
 async def init_database() -> None:
@@ -437,6 +492,7 @@ async def init_database() -> None:
     with lock_path.open("a+b") as lock_file:
         await asyncio.to_thread(_acquire_sqlite_init_lock, lock_file)
         try:
+            await _ensure_sqlite_wal_mode()
             await _execute_database_init()
         finally:
             await asyncio.to_thread(_release_sqlite_init_lock, lock_file)

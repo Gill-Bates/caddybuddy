@@ -3,39 +3,20 @@ services:
     image: giiibates/caddybuddy:${CADDYBUDDY_VERSION:-1.0.0}
     container_name: caddybuddy
     restart: unless-stopped
-    stop_grace_period: 20s
+
     environment:
-      CB_SECRET_KEY: ${CB_SECRET_KEY:?Set CB_SECRET_KEY to a strong random value before starting caddybuddy.} # Generate with: head -c 32 /dev/urandom | base64
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      CB_SECRET_KEY: ${CB_SECRET_KEY:?Set CB_SECRET_KEY}
       TZ: ${TZ:-Etc/UTC}
+      FORWARDED_ALLOW_IPS: "*"
+      CB_CADDY_CERTIFICATES_PATH: /var/lib/caddy/.local/share/caddy/certificates
+
+    ports:
+      - "127.0.0.1:8000:8000"
+
+    volumes:
+      - /etc/caddy/Caddyfile:/app/Caddyfile
+      - ./data:/app/data
+      - /var/lib/caddy/.local/share/caddy:/var/lib/caddy/.local/share/caddy
 
     extra_hosts:
       - "host.docker.internal:host-gateway"
-
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "5"
-    security_opt:
-      - no-new-privileges:true
-    ports:
-      - "127.0.0.1:8000:8000"
-    volumes:
-      # Create the host Caddyfile before first start. CaddyBuddy imports it
-      # into SQLite and then replaces the mounted file with a managed marker.
-      - type: bind
-        source: /etc/caddy/Caddyfile
-        target: /app/Caddyfile
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ./data
-        target: /app/data
-
-    healthcheck:
-      test: ["CMD", "python", "-c", "import sys, urllib.request; response = urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3); sys.exit(0 if response.status < 500 else 1)"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 15s

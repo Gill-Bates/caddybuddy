@@ -48,7 +48,7 @@ LABEL org.opencontainers.image.version=$APP_VERSION \
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update \
-    && apt-get install --no-install-recommends -y ca-certificates curl gnupg gosu \
+    && apt-get install --no-install-recommends -y acl ca-certificates curl gnupg gosu \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
         -o /tmp/caddy-stable.gpg \
@@ -64,8 +64,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         apt-get install --no-install-recommends -y "caddy=${CADDY_VERSION}*"; \
     else \
         apt-get install --no-install-recommends -y caddy; \
-    fi \
-    && rm -rf /var/lib/apt/lists/*
+    fi
 
 RUN groupadd --system --gid 1000 app \
     && useradd --system --uid 1000 --gid app --home /app --shell /usr/sbin/nologin app
@@ -82,6 +81,7 @@ COPY --chown=app:app BUILD_INFO ./BUILD_INFO
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 RUN python -m compileall -q app run.py \
+    && chown -R app:app /app \
     && chmod 0755 /usr/local/bin/entrypoint.sh \
     && install -d -o app -g app -m 0700 /app/data
 
@@ -90,9 +90,9 @@ RUN python -m compileall -q app run.py \
 
 EXPOSE 8000
 
-# Optimized healthcheck: -S skips site-packages import, -O enables optimizations
+# Optimized healthcheck: use -O only; -S would disable site initialization.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD python -SO -c "import os, sys, urllib.request; port = os.environ.get('PORT', '8000'); response = urllib.request.urlopen(f'http://127.0.0.1:{port}/api/v1/health', timeout=3); sys.exit(0 if response.status < 500 else 1)"
+    CMD python -O -c "import os, sys, urllib.request; port = os.environ.get('PORT', '8000'); response = urllib.request.urlopen(f'http://127.0.0.1:{port}/api/v1/health', timeout=3); sys.exit(0 if response.status < 500 else 1)"
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 

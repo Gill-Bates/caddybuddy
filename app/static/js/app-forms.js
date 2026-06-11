@@ -75,7 +75,7 @@
             if (normalizedValue && !settingsEmailPattern.test(normalizedValue.toLowerCase())) {
                 message = "ssllabs_email must be a valid email address.";
             }
-        } else if (field.name === "new_password") {
+        } else if (field.name === "new_password" && rawValue !== "") {
             const hasLowercase = /[a-z]/u.test(rawValue);
             const hasUppercase = /[A-Z]/u.test(rawValue);
             const hasDigit = /\d/u.test(rawValue);
@@ -106,6 +106,10 @@
             }
             return "";
         };
+
+        const snapshotFields = (fields) => JSON.stringify(
+            fields.map((field) => [field.name, getFieldValue(field)])
+        );
 
         const updateStatusElement = (statusElement, message, tone = "muted") => {
             if (!(statusElement instanceof HTMLElement)) {
@@ -157,15 +161,13 @@
                 }, 2500);
             };
 
-            const snapshot = () => fields
-                .map((field) => `${field.name}:${getFieldValue(field)}`)
-                .join("\u001f");
+            const snapshot = () => snapshotFields(fields);
 
             let lastSavedState = snapshot();
 
             const saveForm = async () => {
-                const currentState = snapshot();
-                if (currentState === lastSavedState) {
+                const submittedState = snapshot();
+                if (submittedState === lastSavedState) {
                     return;
                 }
                 if (isSaving) {
@@ -203,7 +205,7 @@
                         return;
                     }
 
-                    lastSavedState = snapshot();
+                    lastSavedState = submittedState;
                     updateStatusElement(statusElement, message, "success");
                     App.pushInlineFlash?.("success", message);
                     scheduleStatusReset();
@@ -705,6 +707,67 @@
         }
     };
 
+    // On small screens the create/edit site form is relocated into a Bootstrap
+    // modal that is opened via the "Add site" button (or automatically when an
+    // existing site is being edited). On larger screens it stays inline.
+    App.initializeSiteFormModal = () => {
+        const section = document.querySelector(".app-page--sites");
+        const modalElement = document.getElementById("site-form-modal");
+        const formPanel = document.getElementById("form-panel");
+        const desktopHome = document.querySelector("[data-site-form-home]");
+        const modalBody = modalElement?.querySelector("[data-site-form-modal-body]");
+
+        if (!(section instanceof HTMLElement) || !(modalElement instanceof HTMLElement)
+            || !(formPanel instanceof HTMLElement) || !(desktopHome instanceof HTMLElement)
+            || !(modalBody instanceof HTMLElement)) {
+            return;
+        }
+        if (section.dataset.siteFormModalInitialized === "true") {
+            return;
+        }
+        section.dataset.siteFormModalInitialized = "true";
+        section.classList.add("sites-modal-enabled");
+
+        const mobileQuery = window.matchMedia("(max-width: 767.98px)");
+        const getModal = () => (window.bootstrap?.Modal
+            ? window.bootstrap.Modal.getOrCreateInstance(modalElement)
+            : null);
+
+        const placeForViewport = () => {
+            if (mobileQuery.matches) {
+                if (formPanel.parentElement !== modalBody) {
+                    modalBody.append(formPanel);
+                }
+            } else {
+                getModal()?.hide();
+                if (formPanel.parentElement !== desktopHome) {
+                    desktopHome.append(formPanel);
+                }
+            }
+        };
+
+        placeForViewport();
+        mobileQuery.addEventListener("change", placeForViewport);
+
+        document.addEventListener("click", (event) => {
+            if (!(event.target instanceof Element)) {
+                return;
+            }
+            const trigger = event.target.closest("[data-site-form-modal-open]");
+            if (!(trigger instanceof HTMLElement) || !mobileQuery.matches) {
+                return;
+            }
+            event.preventDefault();
+            getModal()?.show();
+        });
+
+        // Editing an existing site reloads the page with the form pre-filled;
+        // surface it straight away on mobile so the edit isn't hidden.
+        if (section.hasAttribute("data-site-form-open") && mobileQuery.matches) {
+            getModal()?.show();
+        }
+    };
+
     App.initializeCaddyfileForms = () => {
         for (const form of document.querySelectorAll("form[data-caddyfile-config-form]")) {
             if (!(form instanceof HTMLFormElement) || form.dataset.caddyfileConfigInitialized === "true") {
@@ -774,14 +837,19 @@
                 const spinner = button.querySelector("[data-validate-button-spinner]");
                 const label = button.querySelector("[data-validate-button-label]");
                 const originalLabel = label instanceof HTMLElement ? label.textContent : button.textContent;
-                const submittedState = form.hasAttribute("data-caddyfile-config-form")
+                const serializeFormState = () => (form.hasAttribute("data-caddyfile-config-form")
                     ? serializeCaddyfileFormState(form)
-                    : serializeSiteConfigFormState(form);
+                    : serializeSiteConfigFormState(form));
+                const submittedState = serializeFormState();
                 const headers = new Headers({ "X-Requested-With": "fetch" });
                 const csrfToken = App.readCsrfToken(form);
                 if (csrfToken) {
                     headers.set("X-CSRF-Token", csrfToken);
                 }
+
+                form.dataset.validationState = "validating";
+                updateSiteConfigFormActions(form);
+                updateCaddyfileFormActions(form);
 
                 button.disabled = true;
                 button.setAttribute("aria-disabled", "true");
@@ -815,6 +883,13 @@
                         ? payload.message
                         : "Configuration is valid.";
 
+                    if (serializeFormState() !== submittedState) {
+                        form.dataset.validationState = "unvalidated";
+                        form.dataset.lastValidatedState = "";
+                        App.pushInlineFlash("warning", "Form changed during validation. Validate again before saving.");
+                        return;
+                    }
+
                     if (response.ok && payload.valid) {
                         // Apply formatted directives if returned (Sites page)
                         if (typeof payload.formatted_caddy_directives === "string") {
@@ -833,11 +908,7 @@
                             }
                         }
                         // Capture state AFTER formatting is applied
-                        const formattedState = form.hasAttribute("data-caddyfile-config-form")
-                            ? serializeCaddyfileFormState(form)
-                            : serializeSiteConfigFormState(form);
-                        form.dataset.lastValidatedState = formattedState;
-                        form.dataset.initialSerializedState = formattedState;
+                        form.dataset.lastValidatedState = serializeFormState();
                         form.dataset.validationState = "valid";
                         App.pushInlineFlash("success", `${successPrefix}: ${successMessage}`);
                     } else {

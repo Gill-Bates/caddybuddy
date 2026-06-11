@@ -20,8 +20,8 @@ from app.config.settings import get_settings
 
 
 _ENV_OVERRIDES = {
-    "CB_SECRET_KEY": "unit-test-secret-key",
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key",
+    "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
+    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
     "CB_ADMIN_PASSWORD": "UnitTestPassword-123A",
     "CADDYBUDDY_ADMIN_PASSWORD": "UnitTestPassword-123A",
 }
@@ -146,24 +146,30 @@ class AuthServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(digest, expected)
 
-    async def test_ensure_default_admin_accepts_explicit_weak_bootstrap_password(self) -> None:
-        session = SimpleNamespace()
+    async def test_ensure_default_admin_enforces_password_strength_and_uses_savepoint(self) -> None:
+        class _Savepoint:
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *args):
+                return False
+
+        session = SimpleNamespace(begin_nested=lambda: _Savepoint())
         created_user = SimpleNamespace(id=1)
 
         with (
             patch.object(auth_module.user_repository, "exists_any", new=AsyncMock(return_value=False)),
-            patch.object(auth_module.AuthService, "_hash_password_unchecked", new=AsyncMock(return_value="hashed-password")) as hash_password,
+            patch.object(auth_module.AuthService, "hash_password", new=AsyncMock(return_value="hashed-password")) as hash_password,
             patch.object(auth_module.user_repository, "create", new=AsyncMock(return_value=created_user)) as create_user,
         ):
             user = await auth_module.auth_service.ensure_default_admin(
                 session,
                 username="admin",
-                password="admin",
+                password="StrongAdmin123!",
                 email="admin@example.com",
             )
 
         self.assertIs(user, created_user)
-        hash_password.assert_awaited_once_with("admin")
+        hash_password.assert_awaited_once_with("StrongAdmin123!")
         create_user.assert_awaited_once_with(
             session,
             username="admin",

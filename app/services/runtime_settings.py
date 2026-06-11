@@ -66,17 +66,37 @@ def normalize_caddy_api_url(raw_url: str) -> str:
     return urlunsplit((parsed.scheme, f"{host}:{port}" if port is not None else host, "", "", ""))
 
 
+_ALLOWED_CADDYFILE_ROOTS = (Path("/app"), Path("/etc/caddy"), Path("/config"))
+
+
 def normalize_caddyfile_path(raw_path: str) -> str:
-    """Return a validated absolute Caddyfile path."""
+    """Return a validated absolute Caddyfile path.
+
+    Restricts writes to known-safe roots so a compromised admin session cannot
+    configure an arbitrary filesystem write target.
+    """
     normalized = raw_path.strip()
     if not normalized:
-        raise ValueError("Caddyfile path cannot be empty")
+        raise ValueError("Caddyfile path cannot be empty.")
     if "\x00" in normalized:
         raise ValueError("Caddyfile path contains an invalid character.")
 
     candidate = Path(normalized)
     if not candidate.is_absolute():
         raise ValueError("Caddyfile path must be absolute.")
+    if candidate.name != "Caddyfile":
+        raise ValueError("Caddyfile path must point to a file named 'Caddyfile'.")
+
+    resolved = candidate.resolve(strict=False)
+    if not any(
+        resolved == root or resolved.is_relative_to(root)
+        for root in _ALLOWED_CADDYFILE_ROOTS
+    ):
+        allowed = ", ".join(str(r) for r in _ALLOWED_CADDYFILE_ROOTS)
+        raise ValueError(
+            f"Caddyfile path must be inside an allowed directory ({allowed})."
+        )
+
     return str(candidate)
 
 

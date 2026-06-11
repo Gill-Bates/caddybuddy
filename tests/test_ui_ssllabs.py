@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 import unittest
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -16,8 +16,8 @@ from app.config.settings import get_settings
 
 
 _ENV_OVERRIDES = {
-    "CB_SECRET_KEY": "unit-test-secret-key",
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key",
+    "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
+    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
     "CB_ADMIN_PASSWORD": "UnitTestPassword-123A",
     "CADDYBUDDY_ADMIN_PASSWORD": "UnitTestPassword-123A",
 }
@@ -86,8 +86,8 @@ class UISslLabsTests(unittest.TestCase):
         scan = SimpleNamespace(
             grade="A+",
             status="ready",
-            completed_at=datetime(2026, 5, 27, 12, 0, tzinfo=UTC),
-            started_at=datetime(2026, 5, 27, 11, 59, tzinfo=UTC),
+            completed_at=datetime.now(UTC) - timedelta(hours=1),
+            started_at=datetime.now(UTC) - timedelta(hours=2),
             endpoint_count=2,
             error_message=None,
             result_json={

@@ -316,13 +316,31 @@ class CaddyService:
             pruned.append(candidate)
         return pruned
 
+    _MIN_CERT_ROOT_DEPTH = 4
+
     @staticmethod
-    def _remove_paths(paths: Iterable[Path]) -> int:
+    def _resolve_certificate_root(certificates_path: Path) -> Path:
+        root = certificates_path.expanduser().resolve(strict=False)
+        if root.name != "certificates" or len(root.parts) < CaddyService._MIN_CERT_ROOT_DEPTH:
+            raise CaddyServiceError(f"Unsafe Caddy certificate storage root: {root}")
+        return root
+
+    @staticmethod
+    def _is_within_any_root(path: Path, roots: tuple[Path, ...]) -> bool:
+        resolved = path.resolve(strict=False)
+        return any(resolved == root or resolved.is_relative_to(root) for root in roots)
+
+    @staticmethod
+    def _remove_paths(paths: Iterable[Path], *, allowed_roots: tuple[Path, ...] | None = None) -> int:
         removed = 0
         for path in paths:
-            if not path.exists():
+            if allowed_roots is not None and not CaddyService._is_within_any_root(path, allowed_roots):
+                raise CaddyServiceError(f"Refusing to delete outside certificate roots: {path}")
+            if not path.exists() and not path.is_symlink():
                 continue
-            if path.is_dir():
+            if path.is_symlink():
+                path.unlink()
+            elif path.is_dir():
                 shutil.rmtree(path, ignore_errors=False)
             else:
                 path.unlink(missing_ok=True)
@@ -335,19 +353,29 @@ class CaddyService:
         if not normalized_domain or certificates_path is None:
             return 0
 
+        try:
+            cert_root = self._resolve_certificate_root(certificates_path)
+        except CaddyServiceError:
+            logger.warning("Refusing certificate purge: unsafe configured root %s", certificates_path)
+            return 0
+
         roots: list[Path] = []
-        cert_root = certificates_path.expanduser()
         roots.append(cert_root)
         roots.append(cert_root.parent / "acme")
         roots.append(cert_root.parent / "ocsp")
+        resolved_roots = tuple(r.resolve(strict=False) for r in roots)
 
         def collect_matches() -> list[Path]:
             matches: list[Path] = []
             checked = 0
+            any_root_accessible = False
+            any_root_seen = False
             for root in roots:
                 try:
                     if not root.exists():
                         continue
+                    any_root_seen = True
+                    any_root_accessible = True
                     for path in root.rglob("*"):
                         checked += 1
                         if checked > _MAX_CERT_PURGE_SCAN_PATHS:
@@ -361,13 +389,22 @@ class CaddyService:
                         else:
                             matches.append(path)
                 except PermissionError:
+                    any_root_seen = True
                     logger.warning("Skipping inaccessible Caddy certificate storage root: %s", root)
+            if not any_root_accessible and not any_root_seen:
+                logger.warning(
+                    "No accessible certificate storage roots found for domain '%s'. "
+                    "Configured path: %s. If running in Docker, mount the Caddy "
+                    "certificate storage into the container and set CB_CADDY_CERTIFICATES_PATH.",
+                    normalized_domain,
+                    cert_root,
+                )
             return self._prune_duplicate_paths(matches)
 
         matched_paths = await asyncio.to_thread(collect_matches)
         if not matched_paths:
             return 0
-        return await asyncio.to_thread(self._remove_paths, matched_paths)
+        return await asyncio.to_thread(self._remove_paths, matched_paths, allowed_roots=resolved_roots)
 
     @staticmethod
     async def _kill_process(process: asyncio.subprocess.Process) -> None:

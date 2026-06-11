@@ -22,7 +22,8 @@ _SENSITIVE_QUERY_PARAM_PATTERN = re.compile(
     r"((?:^|[?&;\s])(?:"
     r"token|access_token|refresh_token|id_token|"
     r"api[_-]?key|password|passwd|secret|client_secret|"
-    r"authorization(?:[_-]?code)?|otp|passcode|csrf[_-]?token|code_verifier|"
+    r"(?:authorization[_-]?)?code|otp|passcode|"
+    r"csrf(?:[_-]?token)?|code_verifier|"
     r"session|sessionid|sid|jwt"
     r")=)[^&;\s]*",
     re.IGNORECASE,

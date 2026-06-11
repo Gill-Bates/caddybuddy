@@ -64,6 +64,13 @@
         </svg>
     </button>
     <div class="sidebar-backdrop" id="sidebarBackdrop" aria-hidden="true"></div>
+    <header class="mobile-topbar">
+        <a href="{{ request.app.url_path_for('home_page') }}" class="mobile-topbar__brand"
+            aria-label="{{ app_name }} home">
+            <img src="{{ request.app.url_path_for('static', path='img/caddybuddy_1c.svg') }}" alt="{{ app_name }}"
+                class="mobile-topbar__logo">
+        </a>
+    </header>
     {% endif %}
     <div class="app-shell {% if not current_user %}app-shell--public{% endif %}">
         {% if current_user %}

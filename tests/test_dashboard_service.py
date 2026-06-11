@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import socket
 import ssl
 import unittest
@@ -21,10 +22,12 @@ class DashboardServiceTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         async with dashboard_module._cert_cache_lock:
             dashboard_module._cert_cache.clear()
+            dashboard_module._cert_fetch_tasks.clear()
 
     async def asyncTearDown(self) -> None:
         async with dashboard_module._cert_cache_lock:
             dashboard_module._cert_cache.clear()
+            dashboard_module._cert_fetch_tasks.clear()
 
     async def test_get_dashboard_metrics_aggregates_domains_and_certificate_counts(self) -> None:
         sites = [
@@ -36,7 +39,7 @@ class DashboardServiceTests(unittest.IsolatedAsyncioTestCase):
             patch.object(dashboard_module.site_repository, "list_all", new=AsyncMock(return_value=sites)),
             patch.object(
                 dashboard_module,
-                "get_certificate_info_for_domains_remote",
+                "get_certificate_info_for_domains",
                 new=AsyncMock(
                     return_value={
                         "valid.example.com": dashboard_module.CertificateInfo(exists=True, valid=True, days_remaining=10),
@@ -68,7 +71,7 @@ class DashboardServiceTests(unittest.IsolatedAsyncioTestCase):
             patch.object(dashboard_module.site_repository, "list_all", new=AsyncMock(return_value=sites)),
             patch.object(
                 dashboard_module,
-                "get_certificate_info_for_domains_remote",
+                "get_certificate_info_for_domains",
                 new=AsyncMock(
                     return_value={
                         "soon.example.com": dashboard_module.CertificateInfo(
@@ -97,7 +100,7 @@ class DashboardServiceTests(unittest.IsolatedAsyncioTestCase):
             patch.object(dashboard_module.site_repository, "list_all", new=AsyncMock(return_value=sites)),
             patch.object(
                 dashboard_module,
-                "get_certificate_info_for_domains_remote",
+                "get_certificate_info_for_domains",
                 new=AsyncMock(
                     return_value={
                         "boundary.example.com": dashboard_module.CertificateInfo(
@@ -126,7 +129,7 @@ class DashboardServiceTests(unittest.IsolatedAsyncioTestCase):
             patch.object(dashboard_module.site_repository, "list_all", new=AsyncMock(return_value=sites)),
             patch.object(
                 dashboard_module,
-                "get_certificate_info_for_domains_remote",
+                "get_certificate_info_for_domains",
                 new=AsyncMock(
                     return_value={
                         "later.example.com": dashboard_module.CertificateInfo(
@@ -167,6 +170,45 @@ class DashboardServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(metrics.caddy_service_uptime, "Unavailable")
         self.assertEqual(metrics.caddy_version, "Unavailable")
         self.assertEqual(metrics.expiring_soon_certificate_count, 0)
+
+    async def test_get_certificate_info_for_domains_prefers_local_storage(self) -> None:
+        local_info = dashboard_module.CertificateInfo(
+            exists=True,
+            valid=True,
+            issued_at=datetime(2026, 5, 11, tzinfo=UTC),
+            expires_at=datetime(2026, 8, 11, tzinfo=UTC),
+            days_remaining=69,
+        )
+
+        with (
+            patch.object(
+                dashboard_module,
+                "_get_local_certificate_info_for_domains",
+                return_value={"dav.cirrio.de": local_info},
+            ),
+            patch.object(
+                dashboard_module,
+                "get_certificate_info_for_domains_remote",
+                new=AsyncMock(return_value={}),
+            ) as remote_mock,
+        ):
+            result = await dashboard_module.get_certificate_info_for_domains(["dav.cirrio.de"])
+
+        self.assertEqual(result, {"dav.cirrio.de": local_info})
+        remote_mock.assert_not_awaited()
+
+    def test_certificate_info_from_dates_requires_not_before(self) -> None:
+        now = datetime(2026, 6, 3, tzinfo=UTC)
+
+        info = dashboard_module._certificate_info_from_dates(
+            issued_at=now + timedelta(days=1),
+            expires_at=now + timedelta(days=30),
+            now=now,
+        )
+
+        self.assertIsNotNone(info)
+        self.assertFalse(info.valid)
+        self.assertEqual(info.days_remaining, 30)
 
     def test_scan_certificate_counts_returns_zero_for_missing_path(self) -> None:
         valid_count, expired_count = dashboard_module._scan_certificate_counts(Path("/does/not/exist"))
@@ -272,6 +314,23 @@ class DashboardServiceTests(unittest.IsolatedAsyncioTestCase):
 
         fetch_remote_mock.assert_not_awaited()
         self.assertEqual(result, {"example.com": cached_info})
+
+    async def test_get_certificate_info_for_domains_remote_deduplicates_inflight_fetches(self) -> None:
+        fetched_info = dashboard_module.CertificateInfo(exists=True, valid=True, days_remaining=5)
+
+        with patch.object(
+            dashboard_module,
+            "_fetch_remote_certificate",
+            new=AsyncMock(return_value=("example.com", fetched_info)),
+        ) as fetch_remote_mock:
+            first, second = await asyncio.gather(
+                dashboard_module.get_certificate_info_for_domains_remote(["example.com"]),
+                dashboard_module.get_certificate_info_for_domains_remote(["example.com"]),
+            )
+
+        self.assertEqual(first, {"example.com": fetched_info})
+        self.assertEqual(second, {"example.com": fetched_info})
+        fetch_remote_mock.assert_awaited_once_with("example.com")
 
     async def test_get_cached_certificate_info_for_domains_returns_stale_entries_without_fetching(self) -> None:
         stale_info = dashboard_module.CertificateInfo(exists=True, valid=False, days_remaining=0)

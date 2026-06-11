@@ -17,6 +17,7 @@
 
     const searchInput = root.querySelector("[data-ssllabs-search]");
     const gradeSelect = root.querySelector("[data-ssllabs-grade-filter]");
+    const clearFiltersButton = root.querySelector("[data-ssllabs-clear-filters]");
     const visibleCount = root.querySelector("[data-ssllabs-visible-count]");
     const visibleLabel = root.querySelector("[data-ssllabs-visible-label]");
     const emptyState = root.querySelector("[data-ssllabs-empty]");
@@ -26,15 +27,15 @@
         .replace(/\s+/g, " ")
         .toLowerCase();
 
-    const getCards = () => Array.from(root.querySelectorAll("[data-ssllabs-filter-card]"));
-    const getRows = () => Array.from(root.querySelectorAll("[data-ssllabs-site-row]"));
+    const cards = Array.from(root.querySelectorAll("[data-ssllabs-filter-card]"))
+        .filter((card) => card instanceof HTMLElement);
+    const rows = Array.from(root.querySelectorAll("[data-ssllabs-site-row]"))
+        .filter((row) => row instanceof HTMLElement);
 
     const applyFilters = () => {
         const query = normalize(searchInput instanceof HTMLInputElement ? searchInput.value : "");
         const queryTokens = query.split(" ").filter(Boolean);
         const selectedGrade = normalize(gradeSelect instanceof HTMLSelectElement ? gradeSelect.value : "");
-        const cards = getCards();
-        const rows = getRows();
         let visibleCards = 0;
 
         for (const card of cards) {
@@ -80,6 +81,21 @@
 
     if (gradeSelect instanceof HTMLSelectElement) {
         gradeSelect.addEventListener("change", applyFilters);
+    }
+
+    if (clearFiltersButton instanceof HTMLButtonElement) {
+        clearFiltersButton.addEventListener("click", () => {
+            if (searchInput instanceof HTMLInputElement) {
+                searchInput.value = "";
+            }
+            if (gradeSelect instanceof HTMLSelectElement) {
+                gradeSelect.value = "";
+            }
+            applyFilters();
+            if (searchInput instanceof HTMLInputElement) {
+                searchInput.focus();
+            }
+        });
     }
 
     applyFilters();

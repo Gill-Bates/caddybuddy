@@ -16,7 +16,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.entities import User
 
 
-_BCRYPT_HASH_RE = re.compile(r"^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$")
+_BCRYPT_HASH_RE = re.compile(r"^\$2[aby]\$(?P<cost>\d{2})\$[./A-Za-z0-9]{53}$")
+_MIN_BCRYPT_COST = 12
+_MAX_BCRYPT_COST = 31
+_VALID_USER_ROLES = frozenset({"admin", "user"})
 
 
 class DuplicateUserError(ValueError):
@@ -39,8 +42,21 @@ def _normalize_email(email: str | None) -> str | None:
 
 def _validate_password_hash(password_hash: str) -> str:
     normalized = password_hash.strip()
-    if _BCRYPT_HASH_RE.fullmatch(normalized) is None:
+    match = _BCRYPT_HASH_RE.fullmatch(normalized)
+    if match is None:
         raise ValueError("password_hash must be a bcrypt hash.")
+    cost = int(match.group("cost"))
+    if cost < _MIN_BCRYPT_COST or cost > _MAX_BCRYPT_COST:
+        raise ValueError(
+            f"bcrypt cost must be between {_MIN_BCRYPT_COST} and {_MAX_BCRYPT_COST}."
+        )
+    return normalized
+
+
+def _validate_user_role(role: str) -> str:
+    normalized = role.strip().lower()
+    if normalized not in _VALID_USER_ROLES:
+        raise ValueError(f"Invalid user role: {role!r}. Must be one of: {', '.join(sorted(_VALID_USER_ROLES))}.")
     return normalized
 
 
@@ -91,12 +107,13 @@ class UserRepository:
         normalized_username = _normalize_username(username)
         normalized_email = _normalize_email(email)
         normalized_password_hash = _validate_password_hash(password_hash)
+        normalized_role = _validate_user_role(role)
 
         user = User(
             username=normalized_username,
             email=normalized_email,
             password_hash=normalized_password_hash,
-            role=role,
+            role=normalized_role,
             is_active=is_active,
         )
         session.add(user)

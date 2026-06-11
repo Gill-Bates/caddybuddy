@@ -15,7 +15,7 @@ from app.config.settings import DEFAULT_CADDY_ADMIN_URL, DEFAULT_CADDYFILE_PATH,
 
 def _settings_kwargs(**overrides: object) -> dict[str, object]:
     values: dict[str, object] = {
-        "CADDYBUDDY_SECRET_KEY": "StrongSecretKey-1234567890",
+        "CADDYBUDDY_SECRET_KEY": "StrongSecretKey-1234567890abcdef",
         "CADDYBUDDY_ADMIN_PASSWORD": "StrongAdminPassword-123!",
     }
     values.update(overrides)
@@ -72,11 +72,11 @@ class SettingsValidationTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(ValueError, "Set a strong secret key"):
                 Settings(
-                    caddybuddy_SECRET_KEY="StrongSecretKey-1234567890",
+                    caddybuddy_SECRET_KEY="StrongSecretKey-1234567890abcdef",
                     CADDYBUDDY_ADMIN_PASSWORD="StrongAdminPassword-123!",
                 )
 
-    def test_legacy_caddy_runtime_env_aliases_are_ignored(self) -> None:
+    def test_caddy_api_url_uses_cb_env_only(self) -> None:
         with patch.dict(
             os.environ,
             {
@@ -86,21 +86,43 @@ class SettingsValidationTests(unittest.TestCase):
             clear=True,
         ):
             settings = Settings(
-                CB_SECRET_KEY="StrongSecretKey-1234567890",
+                CB_SECRET_KEY="StrongSecretKey-1234567890abcdef",
                 CB_ADMIN_PASSWORD="StrongAdminPassword-123!",
             )
 
         self.assertEqual(settings.caddy_admin_url, DEFAULT_CADDY_ADMIN_URL)
-        self.assertEqual(settings.caddy_api_url, DEFAULT_CADDY_ADMIN_URL)
+        self.assertEqual(settings.caddy_api_url, "http://host.docker.internal:2019")
         self.assertEqual(settings.mounted_caddyfile_path, DEFAULT_CADDYFILE_PATH)
 
-    def test_explicit_admin_bootstrap_password_is_allowed(self) -> None:
-        settings = Settings(
-            CB_SECRET_KEY="StrongSecretKey-1234567890",
-            CB_ADMIN_PASSWORD="admin",
-        )
+    def test_legacy_caddybuddy_caddy_api_url_alias_is_ignored(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "CADDYBUDDY_CADDY_API_URL": "http://host.docker.internal:2019",
+            },
+            clear=True,
+        ):
+            settings = Settings(
+                CB_SECRET_KEY="StrongSecretKey-1234567890abcdef",
+                CB_ADMIN_PASSWORD="StrongAdminPassword-123!",
+            )
 
-        self.assertEqual(settings.default_admin_password.get_secret_value(), "admin")
+        self.assertEqual(settings.caddy_api_url, DEFAULT_CADDY_ADMIN_URL)
+
+    def test_explicit_admin_bootstrap_password_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "non-default value"):
+            Settings(
+                CB_SECRET_KEY="StrongSecretKey-1234567890abcdef",
+                CB_ADMIN_PASSWORD="admin",
+            )
+
+    def test_mounted_caddyfile_path_requires_caddyfile_name(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must point to a file named 'Caddyfile'"):
+            Settings(
+                **_settings_kwargs(
+                    mounted_caddyfile_path="/etc/caddy/custom.conf",
+                )
+            )
 
     def test_ssllabs_url_is_normalized_and_email_env_is_ignored(self) -> None:
         settings = Settings(

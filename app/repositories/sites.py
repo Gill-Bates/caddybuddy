@@ -31,6 +31,14 @@ class SiteRepository:
         return not set(split_domain_names(left)).isdisjoint(split_domain_names(right))
 
     @staticmethod
+    def _validate_enabled_upstream(upstream_url: str, enabled: bool) -> None:
+        if enabled and upstream_url == _LEGACY_UPSTREAM_PLACEHOLDER:
+            raise ValueError(
+                "Enabled sites must define a valid upstream_url in caddy_directives. "
+                "The placeholder value is not a valid upstream target."
+            )
+
+    @staticmethod
     def _derive_legacy_upstream_url(caddy_directives: str) -> str:
         extracted_upstream = extract_upstream_from_directives(caddy_directives)
         if extracted_upstream is None:
@@ -146,10 +154,11 @@ class SiteRepository:
         if not normalized_directives:
             raise ValueError("caddy_directives cannot be empty")
 
+        upstream_url = self._derive_legacy_upstream_url(normalized_directives)
         site = Site(
             site_name=normalized_site_name,
             domain=normalized_domain,
-            upstream_url=self._derive_legacy_upstream_url(normalized_directives),
+            upstream_url=upstream_url,
             caddy_directives=normalized_directives,
             enabled=enabled,
         )
@@ -194,6 +203,7 @@ class SiteRepository:
             next_caddy_directives = normalized_directives
             next_upstream_url = self._derive_legacy_upstream_url(normalized_directives)
 
+        self._validate_enabled_upstream(next_upstream_url, next_enabled)
         site.site_name = next_site_name
         site.domain = next_domain
         site.caddy_directives = next_caddy_directives

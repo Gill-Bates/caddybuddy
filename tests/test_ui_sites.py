@@ -17,8 +17,8 @@ from app.config.settings import get_settings
 
 
 _ENV_OVERRIDES = {
-    "CB_SECRET_KEY": "unit-test-secret-key",
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key",
+    "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
+    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
     "CB_ADMIN_PASSWORD": "UnitTestPassword-123A",
     "CADDYBUDDY_ADMIN_PASSWORD": "UnitTestPassword-123A",
 }
@@ -278,6 +278,39 @@ class UISitesTests(unittest.TestCase):
         self.assertIn('remaining</span>', response.text)
         self.assertIn('class="site-cert__issued">Issued 2026-05-28</div>', response.text)
 
+    def test_sites_page_renders_issued_date_from_local_certificate_storage(self) -> None:
+        app = self._build_app()
+        current_user = SimpleNamespace(username="admin", role="admin")
+        site = SimpleNamespace(
+            id=1,
+            site_name="DAV",
+            domain="dav.cirrio.de",
+            upstream_url="http://backend:8080",
+            enabled=True,
+            caddy_directives="reverse_proxy backend:8080",
+        )
+        issued_at = datetime(2026, 5, 11, tzinfo=UTC)
+        certificate_info = {
+            "dav.cirrio.de": SimpleNamespace(
+                exists=True,
+                valid=True,
+                issued_at=issued_at,
+                expires_at=None,
+                days_remaining=68,
+            )
+        }
+
+        with (
+            patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)),
+            patch("app.routers.ui.sites.site_repository.list_all", new=AsyncMock(return_value=[site])),
+            patch("app.routers.ui.sites.get_cached_certificate_info_for_domains", new=AsyncMock(return_value=certificate_info)),
+        ):
+            with TestClient(app) as client:
+                response = client.get("/sites")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('class="site-cert__issued">Issued 2026-05-11</div>', response.text)
+
     def test_sites_page_renders_certificate_fetch_error_message(self) -> None:
         app = self._build_app()
         current_user = SimpleNamespace(username="admin", role="admin")
@@ -389,7 +422,7 @@ class UISitesTests(unittest.TestCase):
             )
         )
 
-    def test_renew_certificate_warns_when_no_storage_artifacts_found(self) -> None:
+    def test_renew_certificate_requests_certificate_when_no_local_artifacts_exist(self) -> None:
         app = self._build_app()
         current_user = SimpleNamespace(username="admin", role="admin")
         site = SimpleNamespace(
@@ -404,9 +437,11 @@ class UISitesTests(unittest.TestCase):
             patch("app.routers.ui.sites.require_admin", new=AsyncMock(return_value=current_user)),
             patch("app.routers.ui.sites.validated_form", new=AsyncMock(return_value={})),
             patch("app.routers.ui.sites.site_repository.get_by_id", new=AsyncMock(return_value=site)),
-            patch("app.routers.ui.sites.get_settings", return_value=SimpleNamespace(caddy_certificates_path=Path("/tmp/certs"))),
+            patch("app.routers.ui.sites.validate_rendered_caddy_configuration", new=AsyncMock(return_value=SimpleNamespace(status="validated", error=None))),
+            patch("app.routers.ui.sites.get_settings", return_value=SimpleNamespace(caddy_certificates_path=Path("/tmp"))),
             patch("app.routers.ui.sites.caddy_service.purge_certificate_artifacts", new=AsyncMock(return_value=0)) as purge_mock,
-            patch("app.routers.ui.sites.sync_caddy_configuration", new=AsyncMock()) as sync_mock,
+            patch("app.routers.ui.sites.sync_caddy_configuration", new=AsyncMock(return_value=SimpleNamespace(status="synced", error=None))) as sync_mock,
+            patch("app.routers.ui.sites.invalidate_certificate_cache", new=AsyncMock()) as invalidate_mock,
             patch("app.routers.ui.sites.push_flash") as push_flash_mock,
             patch("app.routers.ui.sites.publish_resource_event", new=AsyncMock()) as event_mock,
         ):
@@ -415,11 +450,51 @@ class UISitesTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/sites")
-        purge_mock.assert_awaited_once_with("mail.example.com", Path("/tmp/certs"))
-        sync_mock.assert_not_awaited()
+        purge_mock.assert_awaited_once_with("mail.example.com", Path("/tmp"))
+        invalidate_mock.assert_awaited_once_with("mail.example.com")
+        sync_mock.assert_awaited_once()
+        self.assertEqual(sync_mock.await_args.kwargs, {"force": True})
         push_flash_mock.assert_called_once()
-        self.assertIn("no matching certificate artifacts", push_flash_mock.call_args.args[2])
+        self.assertIn("No certificate artifacts were found on disk", push_flash_mock.call_args.args[2])
         self.assertEqual(event_mock.await_count, 2)
+
+    def test_create_site_auto_requests_certificate_when_local_cert_is_missing(self) -> None:
+        app = self._build_app()
+        current_user = SimpleNamespace(username="admin", role="admin")
+        site = SimpleNamespace(
+            id=5,
+            site_name="DAV",
+            domain="dav.cirrio.de",
+            enabled=True,
+            caddy_directives="reverse_proxy backend:8080",
+        )
+        form_data = {
+            "site_name": "DAV",
+            "domain": "dav.cirrio.de",
+            "caddy_directives": "reverse_proxy backend:8080",
+            "enabled": "true",
+        }
+
+        with (
+            patch("app.routers.ui.sites.require_admin", new=AsyncMock(return_value=current_user)),
+            patch("app.routers.ui.sites.validated_form", new=AsyncMock(return_value=form_data)),
+            patch("app.routers.ui.sites.site_repository.domain_exists", new=AsyncMock(return_value=False)),
+            patch("app.routers.ui.sites.site_repository.create", new=AsyncMock(return_value=site)),
+            patch("app.routers.ui.sites.validate_and_deploy_full_caddyfile", new=AsyncMock(return_value=(True, "ok"))),
+            patch("app.routers.ui.sites._auto_request_certificate_if_missing", new=AsyncMock(return_value=(True, None))) as auto_request_mock,
+            patch("app.routers.ui.sites.push_flash") as push_flash_mock,
+            patch("app.routers.ui.sites.publish_resource_event", new=AsyncMock()) as event_mock,
+        ):
+            with TestClient(app) as client:
+                response = client.post("/sites", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/sites")
+        auto_request_mock.assert_awaited_once_with(unittest.mock.ANY, "dav.cirrio.de")
+        self.assertEqual(push_flash_mock.call_count, 2)
+        self.assertIn("Automatic certificate request triggered", push_flash_mock.call_args_list[0].args[2])
+        self.assertIn("created and deployed", push_flash_mock.call_args_list[1].args[2])
+        self.assertEqual(event_mock.await_count, 1)
 
     def test_renew_certificate_purges_artifacts_and_forces_sync(self) -> None:
         app = self._build_app()
@@ -437,6 +512,7 @@ class UISitesTests(unittest.TestCase):
             patch("app.routers.ui.sites.require_admin", new=AsyncMock(return_value=current_user)),
             patch("app.routers.ui.sites.validated_form", new=AsyncMock(return_value={})),
             patch("app.routers.ui.sites.site_repository.get_by_id", new=AsyncMock(return_value=site)),
+            patch("app.routers.ui.sites.validate_rendered_caddy_configuration", new=AsyncMock(return_value=SimpleNamespace(status="validated", error=None))),
             patch("app.routers.ui.sites.get_settings", return_value=SimpleNamespace(caddy_certificates_path=Path("/tmp/certs"))),
             patch("app.routers.ui.sites.caddy_service.purge_certificate_artifacts", new=AsyncMock(return_value=2)) as purge_mock,
             patch("app.routers.ui.sites.invalidate_certificate_cache", new=AsyncMock()) as invalidate_mock,
@@ -454,7 +530,7 @@ class UISitesTests(unittest.TestCase):
         sync_mock.assert_awaited_once()
         self.assertEqual(sync_mock.await_args.kwargs, {"force": True})
         push_flash_mock.assert_called_once()
-        self.assertIn("after removing 2 certificate artifact(s)", push_flash_mock.call_args.args[2])
+        self.assertIn("removed 2 artifact(s)", push_flash_mock.call_args.args[2])
         self.assertEqual(event_mock.await_count, 2)
 
 

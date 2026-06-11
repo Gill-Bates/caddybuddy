@@ -42,7 +42,7 @@ def build_ui_test_app(
 ) -> FastAPI:
     app = FastAPI()
     app.add_middleware(CSRFMiddleware)
-    app.add_middleware(SessionMiddleware, secret_key="unit-test-secret-key")
+    app.add_middleware(SessionMiddleware, secret_key="unit-test-secret-key-for-testing")
     app.add_middleware(SecurityHeadersMiddleware)
     app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 

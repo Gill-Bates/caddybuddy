@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 import re
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -193,14 +194,18 @@ class SslLabsRepository:
         if active_scan is not None:
             return None
 
-        scan = SslLabsScan(
-            target_id=target.id,
-            site_id=target.site_id,
-            host=target.host,
-            status=status,
-        )
-        session.add(scan)
-        await session.flush()
+        try:
+            async with session.begin_nested():
+                scan = SslLabsScan(
+                    target_id=target.id,
+                    site_id=target.site_id,
+                    host=target.host,
+                    status=status,
+                )
+                session.add(scan)
+                await session.flush()
+        except IntegrityError:
+            return await self.get_active_scan_for_target(session, target.id, now=effective_now)
         return scan
 
     async def list_due_targets(

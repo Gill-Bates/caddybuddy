@@ -16,10 +16,6 @@ from app.database.session import get_db_session
 from app.dependencies.web import redirect_to, render_template
 from app.services.caddyfile_manager import get_caddy_runtime_status
 from app.services.dashboard import get_dashboard_shell_metrics
-
-
-get_dashboard_metrics = get_dashboard_shell_metrics
-
 from ._common import require_user
 
 router = APIRouter()
@@ -35,7 +31,7 @@ async def home_page(
     if current_user is None:
         return redirect_to("/login")
 
-    metrics = await get_dashboard_metrics(session)
+    metrics = await get_dashboard_shell_metrics(session)
     runtime_status = await get_caddy_runtime_status(session, check_admin_api=False)
     return render_template(
         request,

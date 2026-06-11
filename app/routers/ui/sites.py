@@ -8,7 +8,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from pathlib import Path
 from pydantic import ValidationError
 
 from fastapi import APIRouter, Depends, Request
@@ -24,6 +26,7 @@ from app.repositories.sites import DuplicateSiteError, site_repository
 from app.schemas.caddy import SiteCreateRequest
 from app.services.caddy import caddy_service
 from app.services.caddyfile_manager import get_baseline_caddyfile, sync_caddy_configuration, validate_and_deploy_full_caddyfile
+from app.services.caddyfile_manager import validate_rendered_caddy_configuration
 from app.services.dashboard import CertificateInfo, get_cached_certificate_info_for_domains, get_certificate_info_for_domains, invalidate_certificate_cache
 from app.services.events import publish_resource_event
 from app.utils.caddyfile import build_domain_site_preview, extract_site_handler_from_directives
@@ -71,6 +74,47 @@ def _serialize_certificate_info(info: CertificateInfo) -> dict[str, object]:
         "days_remaining": info.days_remaining,
         "error_message": getattr(info, "error_message", None),
     }
+
+
+async def _has_local_certificate(domain: str, certificates_path: Path | None) -> bool:
+    normalized_domain = domain.strip().lower()
+    if not normalized_domain or certificates_path is None:
+        return False
+
+    cert_root = certificates_path.expanduser()
+
+    def scan() -> bool:
+        try:
+            if not cert_root.is_dir():
+                return False
+            for cert_path in cert_root.rglob("*.crt"):
+                try:
+                    if not cert_path.is_file():
+                        continue
+                except OSError:
+                    continue
+                if cert_path.parent.name.strip().lower() == normalized_domain:
+                    return True
+        except (OSError, PermissionError):
+            return False
+        return False
+
+    return await asyncio.to_thread(scan)
+
+
+async def _auto_request_certificate_if_missing(
+    session: AsyncSession,
+    domain: str,
+) -> tuple[bool, str | None]:
+    settings = get_settings()
+    if await _has_local_certificate(domain, settings.caddy_certificates_path):
+        return False, None
+
+    await invalidate_certificate_cache(domain)
+    sync_result = await sync_caddy_configuration(session, force=True)
+    if sync_result.status in {"synced", "no_change"}:
+        return True, None
+    return False, sync_result.error or "Configuration sync failed while requesting certificate."
 
 
 async def _build_site_validation_caddyfile(
@@ -257,6 +301,22 @@ async def save_site(
                     push_flash(request, "danger", f"Site '{site_name}' was not saved: deployment failed unexpectedly.")
                     return redirect_to(f"/sites/{site.id}")
 
+                primary_domain = _primary_domain_name(domain)
+                if primary_domain:
+                    cert_requested, cert_error = await _auto_request_certificate_if_missing(session, primary_domain)
+                    if cert_error:
+                        push_flash(
+                            request,
+                            "warning",
+                            f"Site '{site_name}' saved and deployed, but automatic certificate request failed: {cert_error}",
+                        )
+                    elif cert_requested:
+                        push_flash(
+                            request,
+                            "info",
+                            f"No local certificate found for '{primary_domain}'. Automatic certificate request triggered.",
+                        )
+
             await session.commit()
             if requires_deploy:
                 push_flash(request, "success", f"Site '{site_name}' saved and deployed.")
@@ -290,6 +350,22 @@ async def save_site(
                 logger.exception("Deployment raised unexpectedly after site create id=%s", site.id)
                 push_flash(request, "danger", f"Site '{site_name}' was not created: deployment failed unexpectedly.")
                 return redirect_to("/sites")
+
+            primary_domain = _primary_domain_name(domain)
+            if primary_domain:
+                cert_requested, cert_error = await _auto_request_certificate_if_missing(session, primary_domain)
+                if cert_error:
+                    push_flash(
+                        request,
+                        "warning",
+                        f"Site '{site_name}' created and deployed, but automatic certificate request failed: {cert_error}",
+                    )
+                elif cert_requested:
+                    push_flash(
+                        request,
+                        "info",
+                        f"No local certificate found for '{primary_domain}'. Automatic certificate request triggered.",
+                    )
 
             await session.commit()
             push_flash(request, "success", f"Site '{site_name}' created and deployed.")
@@ -379,25 +455,74 @@ async def renew_certificate(
     try:
         settings = get_settings()
 
-        removed_artifacts = await caddy_service.purge_certificate_artifacts(
-            primary_domain,
-            settings.caddy_certificates_path,
-        )
-        if removed_artifacts == 0:
+        validation_result = await validate_rendered_caddy_configuration(session)
+        if validation_result.status == "validation_failed":
+            error_detail = validation_result.error or "Caddy configuration validation failed."
             await publish_resource_event(
                 "certificate",
                 "renewal_failed",
                 primary_domain,
-                {"site_id": site_id, "error": "No matching certificate artifacts found in Caddy storage."},
+                {"site_id": site_id, "error": error_detail},
+            )
+            push_flash(
+                request,
+                "danger",
+                f"Certificate renewal was not triggered: {error_detail}",
+            )
+            return redirect_to("/sites")
+
+        cert_path = settings.caddy_certificates_path
+        cert_root_permission_denied = False
+        try:
+            cert_root_accessible = (
+                cert_path is not None and cert_path.expanduser().exists()
+            )
+        except PermissionError:
+            cert_root_accessible = False
+            cert_root_permission_denied = True
+
+        removed_artifacts = await caddy_service.purge_certificate_artifacts(
+            primary_domain,
+            cert_path,
+        )
+
+        if removed_artifacts == 0 and not cert_root_accessible:
+            # Storage path not accessible — cannot proceed.
+            if cert_root_permission_denied:
+                path_hint = (
+                    f" Permission denied: {cert_path}. "
+                    f"Grant the CaddyBuddy process user read access to that path "
+                    f"using group membership or ACL (e.g. setfacl -m u:1000:rx {cert_path}) "
+                    f"rather than making the directory world-accessible."
+                )
+                error_detail = "Permission denied on certificate storage path."
+            elif cert_path:
+                path_hint = (
+                    f" Searched: {cert_path}. If running in Docker, mount the Caddy "
+                    f"certificate storage and set CB_CADDY_CERTIFICATES_PATH."
+                )
+                error_detail = "Certificate storage path not accessible."
+            else:
+                path_hint = " CB_CADDY_CERTIFICATES_PATH is not configured."
+                error_detail = "Certificate storage path not configured."
+            await publish_resource_event(
+                "certificate",
+                "renewal_failed",
+                primary_domain,
+                {"site_id": site_id, "error": error_detail},
             )
             push_flash(
                 request,
                 "warning",
-                f"Certificate renewal was not triggered for '{primary_domain}': no matching certificate artifacts were found in Caddy storage.",
+                f"Certificate renewal was not triggered for '{primary_domain}': "
+                f"the certificate storage is not accessible.{path_hint}",
             )
             return redirect_to("/sites")
 
-        # Invalidate cache to force fresh certificate check after renewal
+        # Storage is accessible. If no artifacts existed, Caddy never issued a
+        # certificate for this domain — a forced config sync is enough to
+        # request one. If artifacts were removed, the sync causes Caddy to
+        # reissue the certificate.
         await invalidate_certificate_cache(primary_domain)
 
         sync_result = await sync_caddy_configuration(session, force=True)
@@ -408,13 +533,23 @@ async def renew_certificate(
         )
 
         if success:
-            # Publish renewed event
             await publish_resource_event("certificate", "renewed", primary_domain, {"site_id": site_id})
-            push_flash(
-                request,
-                "success",
-                f"Certificate renewal triggered for '{primary_domain}' after removing {removed_artifacts} certificate artifact(s) from Caddy storage.",
-            )
+            if removed_artifacts > 0:
+                push_flash(
+                    request,
+                    "success",
+                    f"Certificate renewal triggered for '{primary_domain}': removed "
+                    f"{removed_artifacts} artifact(s) from storage. Caddy will re-issue the certificate.",
+                )
+            else:
+                push_flash(
+                    request,
+                    "info",
+                    f"Configuration synchronized for '{primary_domain}'. "
+                    f"No certificate artifacts were found on disk — Caddy may already manage "
+                    f"this certificate internally, or acquisition is in progress. "
+                    f"Check Caddy logs if the certificate does not appear within a few minutes.",
+                )
         else:
             await publish_resource_event("certificate", "renewal_failed", primary_domain, {"site_id": site_id, "error": deploy_message})
             push_flash(

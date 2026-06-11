@@ -16,8 +16,8 @@ from app.config.settings import get_settings
 
 
 _ENV_OVERRIDES = {
-    "CB_SECRET_KEY": "unit-test-secret-key",
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key",
+    "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
+    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
     "CB_ADMIN_PASSWORD": "UnitTestPassword-123A",
     "CADDYBUDDY_ADMIN_PASSWORD": "UnitTestPassword-123A",
 }
@@ -59,7 +59,7 @@ class UIAuthTests(unittest.TestCase):
     def _build_app(self) -> FastAPI:
         app = FastAPI()
         app.add_middleware(CSRFMiddleware)
-        app.add_middleware(SessionMiddleware, secret_key="unit-test-secret-key")
+        app.add_middleware(SessionMiddleware, secret_key="unit-test-secret-key-for-testing")
         app.add_middleware(SecurityHeadersMiddleware)
         app.mount("/static", StaticFiles(directory="/opt/caddybuddy/app/static"), name="static")
         app.include_router(auth_router)
@@ -100,8 +100,12 @@ class UIAuthTests(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertIn("Invalid credentials.", response.text)
         self.assertIn('class="toast-container app-toast-stack position-fixed top-0 end-0 p-3"', response.text)
-        self.assertIn('class="toast align-items-center text-bg-danger border-0 shadow-sm" role="status"', response.text)
+        self.assertIn('class="toast align-items-center text-bg-danger border-0 shadow-sm"', response.text)
+        self.assertIn('role="alert"', response.text)
+        self.assertIn('aria-live="assertive"', response.text)
+        self.assertIn('data-auto-dismiss-delay="12000"', response.text)
         self.assertIn('class="toast-body">Invalid credentials.</div>', response.text)
+        self.assertIn('<div class="alert alert-danger" role="alert">Invalid credentials.</div>', response.text)
         warning.assert_called_once_with("Authentication failed for username=%r status_code=403", "admin")
 
     def test_successful_login_keeps_redirect_flow(self) -> None:

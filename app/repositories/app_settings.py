@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,6 +31,17 @@ def _validate_setting_key(key: str) -> str:
     return normalized
 
 
+def _upsert_app_setting(key: str, value: str, dialect_name: str):
+    if dialect_name == "postgresql":
+        stmt = postgres_insert(AppSetting)
+    else:
+        stmt = sqlite_insert(AppSetting)
+    return stmt.values(key=key, value=value).on_conflict_do_update(
+        index_elements=[AppSetting.key],
+        set_={"value": value},
+    )
+
+
 class AppSettingsRepository:
     async def get(self, session: AsyncSession, key: str) -> str:
         """Get a setting value, returning default if not set."""
@@ -49,15 +61,8 @@ class AppSettingsRepository:
     async def set(self, session: AsyncSession, key: str, value: str) -> AppSetting:
         """Set a setting value, creating or updating as needed."""
         normalized_key = _validate_setting_key(key)
-        await session.execute(
-            sqlite_insert(AppSetting)
-            .values(key=normalized_key, value=value)
-            .on_conflict_do_update(
-                index_elements=[AppSetting.key],
-                set_={"value": value},
-            )
-        )
-
+        dialect_name = session.get_bind().dialect.name
+        await session.execute(_upsert_app_setting(normalized_key, value, dialect_name))
         await session.flush()
         result = await session.execute(
             select(AppSetting).where(AppSetting.key == normalized_key)

@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 _ENV_OVERRIDES = {
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key",
+    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
     "CADDYBUDDY_ADMIN_PASSWORD": "unit-test-password",
 }
 _ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}
@@ -94,7 +94,7 @@ class CaddyApiTests(unittest.TestCase):
         )
 
     def test_caddy_onboard_endpoint_maps_admin_api_failure_to_503(self) -> None:
-        session = SimpleNamespace(commit=AsyncMock())
+        session = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
         app = _build_app(session)
 
         with (

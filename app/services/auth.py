@@ -143,17 +143,17 @@ class AuthService:
         """Create the default admin when the database has no users yet."""
         if await user_repository.exists_any(session):
             return None
-        self._validate_password_input(password)
+        password_hash = await self.hash_password(password)
         try:
-            return await user_repository.create(
-                session,
-                username=username,
-                email=email,
-                password_hash=await self._hash_password_unchecked(password),
-                role="admin",
-            )
+            async with session.begin_nested():
+                return await user_repository.create(
+                    session,
+                    username=username,
+                    email=email,
+                    password_hash=password_hash,
+                    role="admin",
+                )
         except IntegrityError:
-            await session.rollback()
             return None
 
 

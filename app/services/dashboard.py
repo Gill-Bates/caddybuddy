@@ -35,12 +35,16 @@ _CERT_FETCH_TIMEOUT = 5.0
 _CERT_FETCH_CONCURRENCY = 10
 _CERT_CACHE_TTL_SECONDS = 600  # 10 minutes
 _MAX_CERT_CACHE_ENTRIES = 1000
+_MAX_CERTIFICATE_FILE_BYTES = 1024 * 1024
+_MAX_CERT_INDEX_SCAN_FILES = 20_000
 _EXPIRING_SOON_DAYS = 7
 type ResolvedIPAddress = IPv4Address | IPv6Address
 
 # Simple in-memory cache for certificate info
 _cert_cache: dict[str, tuple[datetime, CertificateInfo]] = {}
 _cert_cache_lock = asyncio.Lock()
+_CERT_FETCH_SEMAPHORE = asyncio.Semaphore(_CERT_FETCH_CONCURRENCY)
+_cert_fetch_tasks: dict[str, asyncio.Task[tuple[str, CertificateInfo]]] = {}
 
 
 async def invalidate_certificate_cache(domain: str) -> None:
@@ -57,6 +61,21 @@ def _prune_cert_cache() -> None:
     overflow = len(_cert_cache) - _MAX_CERT_CACHE_ENTRIES
     for domain, _value in sorted(_cert_cache.items(), key=lambda item: item[1][0])[:overflow]:
         _cert_cache.pop(domain, None)
+
+
+def _get_local_certificate_info_for_domains(domains: list[str]) -> dict[str, CertificateInfo]:
+    """Return certificate info from local Caddy storage when accessible."""
+    unique_domains = _normalize_domains(domains)
+    if not unique_domains:
+        return {}
+
+    certificates_path = get_settings().caddy_certificates_path
+    certificate_index = _build_certificate_index(certificates_path)
+    return {
+        domain: info
+        for domain in unique_domains
+        if (info := certificate_index.get(domain)) is not None
+    }
 
 
 @dataclass(slots=True, frozen=True)
@@ -141,9 +160,10 @@ def _certificate_info_from_dates(
         return None
 
     seconds_remaining = int((expires_at - now).total_seconds())
+    valid_from_ok = issued_at is None or issued_at <= now
     return CertificateInfo(
         exists=True,
-        valid=seconds_remaining > 0,
+        valid=valid_from_ok and seconds_remaining > 0,
         issued_at=issued_at,
         expires_at=expires_at,
         days_remaining=math.ceil(seconds_remaining / 86400) if seconds_remaining > 0 else 0,
@@ -204,6 +224,9 @@ def _load_x509_certificate_bytes(certificate_bytes: bytes) -> x509.Certificate |
 
 def _load_x509_certificate_from_path(certificate_path: Path) -> x509.Certificate | None:
     try:
+        if certificate_path.stat().st_size > _MAX_CERTIFICATE_FILE_BYTES:
+            logger.warning("Skipping oversized certificate file: %s", certificate_path)
+            return None
         certificate_bytes = certificate_path.read_bytes()
     except OSError:
         return None
@@ -254,8 +277,24 @@ def _fetch_remote_certificate_sync(domain: str) -> CertificateInfo:
 
 async def _fetch_remote_certificate(domain: str) -> tuple[str, CertificateInfo]:
     """Async wrapper for remote certificate fetching."""
-    info = await asyncio.to_thread(_fetch_remote_certificate_sync, domain)
+    async with _CERT_FETCH_SEMAPHORE:
+        info = await asyncio.to_thread(_fetch_remote_certificate_sync, domain)
     return domain, info
+
+
+async def _get_or_start_certificate_fetch(domain: str) -> tuple[str, CertificateInfo]:
+    async with _cert_cache_lock:
+        task = _cert_fetch_tasks.get(domain)
+        if task is None:
+            task = asyncio.create_task(_fetch_remote_certificate(domain))
+            _cert_fetch_tasks[domain] = task
+
+    try:
+        return await task
+    finally:
+        async with _cert_cache_lock:
+            if _cert_fetch_tasks.get(domain) is task:
+                _cert_fetch_tasks.pop(domain, None)
 
 
 def _normalize_domains(domains: list[str]) -> list[str]:
@@ -280,7 +319,6 @@ async def get_certificate_info_for_domains_remote(
     # Deduplicate and normalize domains
     unique_domains = _normalize_domains(domains)
     
-    now = datetime.now(UTC)
     cert_info: dict[str, CertificateInfo] = {}
     domains_to_fetch: list[str] = []
 
@@ -302,17 +340,12 @@ async def get_certificate_info_for_domains_remote(
                  len(domains_to_fetch), len(cert_info))
 
     # Fetch uncached domains
-    semaphore = asyncio.Semaphore(_CERT_FETCH_CONCURRENCY)
-
-    async def fetch_with_limit(domain: str) -> tuple[str, CertificateInfo]:
-        async with semaphore:
-            return await _fetch_remote_certificate(domain)
-
-    tasks = [fetch_with_limit(d) for d in domains_to_fetch]
+    tasks = [_get_or_start_certificate_fetch(domain) for domain in domains_to_fetch]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     # Process results and update cache
     async with _cert_cache_lock:
+        cached_at = datetime.now(UTC)
         for i, result in enumerate(results):
             domain = domains_to_fetch[i]
             if isinstance(result, Exception):
@@ -322,8 +355,8 @@ async def get_certificate_info_for_domains_remote(
                 info = result[1]
             
             cert_info[domain] = info
-            _cert_cache[domain] = (now, info)
-            _prune_cert_cache()
+            _cert_cache[domain] = (cached_at, info)
+        _prune_cert_cache()
 
     return cert_info
 
@@ -338,9 +371,14 @@ async def get_cached_certificate_info_for_domains(
     if not unique_domains:
         return {}
 
-    cached_results: dict[str, CertificateInfo] = {}
+    cached_results = await asyncio.to_thread(_get_local_certificate_info_for_domains, unique_domains)
+    remaining_domains = [domain for domain in unique_domains if domain not in cached_results]
+
+    if not remaining_domains:
+        return cached_results
+
     async with _cert_cache_lock:
-        for domain in unique_domains:
+        for domain in remaining_domains:
             cached = _cert_cache.get(domain)
             if cached is None:
                 continue
@@ -358,13 +396,16 @@ def _build_certificate_index(certificates_path: Path | None) -> dict[str, Certif
     try:
         if not certificates_path.is_dir():
             return {}
-        cert_files = list(certificates_path.rglob("*.crt"))
+        cert_iter = certificates_path.rglob("*.crt")
     except (OSError, PermissionError):
         return {}
 
     now = datetime.now(UTC)
     certificate_index: dict[str, CertificateInfo] = {}
-    for cert_path in cert_files:
+    for checked, cert_path in enumerate(cert_iter, start=1):
+        if checked > _MAX_CERT_INDEX_SCAN_FILES:
+            logger.warning("Certificate index scan limit exceeded: %s", certificates_path)
+            break
         try:
             if not cert_path.is_file():
                 continue
@@ -429,50 +470,30 @@ def _find_certificate_for_domain(certificates_path: Path | None, domain: str) ->
 
 
 async def get_certificate_info_for_domains(domains: list[str]) -> dict[str, CertificateInfo]:
-    """Get certificate info for multiple domains by fetching from remote hosts."""
-    return await get_certificate_info_for_domains_remote(domains)
+    """Get certificate info for multiple domains, preferring local Caddy storage."""
+    unique_domains = _normalize_domains(domains)
+    if not unique_domains:
+        return {}
+
+    local_results = await asyncio.to_thread(_get_local_certificate_info_for_domains, unique_domains)
+    remaining_domains = [domain for domain in unique_domains if domain not in local_results]
+    if not remaining_domains:
+        return local_results
+
+    remote_results = await get_certificate_info_for_domains_remote(remaining_domains)
+    return {**local_results, **remote_results}
 
 
 def _scan_certificate_counts(certificates_path: Path | None) -> tuple[int, int]:
-    if certificates_path is None:
-        logger.debug("Certificate path is None, returning 0 counts")
-        return 0, 0
-
-    try:
-        if not certificates_path.is_dir():
-            logger.debug("Certificate path %s is not a directory", certificates_path)
-            return 0, 0
-    except (OSError, PermissionError) as exc:
-        logger.debug("Cannot access certificate path %s: %s", certificates_path, exc)
-        return 0, 0
-
+    certificate_index = _build_certificate_index(certificates_path)
     valid_count = 0
     expired_count = 0
-    now = datetime.now(UTC)
-
-    try:
-        cert_files = list(certificates_path.rglob("*.crt"))
-        logger.debug("Found %d .crt files in %s", len(cert_files), certificates_path)
-    except (OSError, PermissionError) as exc:
-        logger.debug("Cannot scan certificate path %s: %s", certificates_path, exc)
-        return 0, 0
-
-    for certificate_path in cert_files:
-        try:
-            if not certificate_path.is_file():
-                continue
-            expires_at = _decode_certificate_expiry(certificate_path)
-        except (OSError, PermissionError):
-            continue
-        if expires_at is None:
-            logger.debug("Could not decode expiry from %s", certificate_path)
-            continue
-        if expires_at < now:
-            expired_count += 1
-        else:
+    for info in certificate_index.values():
+        if info.valid:
             valid_count += 1
+        else:
+            expired_count += 1
 
-    logger.debug("Certificate scan result: %d valid, %d expired", valid_count, expired_count)
     return valid_count, expired_count
 
 
@@ -532,7 +553,7 @@ async def get_dashboard_metrics(session: AsyncSession) -> DashboardMetrics:
     expiring_soon_certificate_count = 0
 
     if all_domains:
-        cert_info = await get_certificate_info_for_domains_remote(all_domains)
+        cert_info = await get_certificate_info_for_domains(all_domains)
         for info in cert_info.values():
             if info.exists:
                 if info.valid:

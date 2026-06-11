@@ -19,11 +19,16 @@
         return true;
     };
 
-    const resolveAppUrl = (url) => {
+    const resolveAppUrl = (rawUrl) => {
         if (typeof App.resolveSameOriginUrl === "function") {
-            return App.resolveSameOriginUrl(url);
+            return App.resolveSameOriginUrl(rawUrl);
         }
-        return url;
+
+        const url = new URL(rawUrl, window.location.origin);
+        if (url.origin !== window.location.origin) {
+            throw new Error("External URLs are not allowed.");
+        }
+        return url.toString();
     };
 
     const readJsonSafely = async (response) => {
@@ -48,6 +53,9 @@
         const versionWrapper = document.getElementById("caddy-version-wrapper");
         if (!(badge instanceof HTMLElement) || !(statusDot instanceof HTMLElement) || !(statusMeta instanceof HTMLElement)) {
             return;
+        }
+        if (typeof badge.dashboardStatusCleanup === "function") {
+            badge.dashboardStatusCleanup();
         }
         if (!markInitialized(badge, "dashboardStatusInitialized")) {
             return;
@@ -127,18 +135,33 @@
             }
         };
 
-        intervalId = window.setInterval(updateBadge, REFRESH_INTERVAL_MS);
-        document.addEventListener("visibilitychange", () => {
+        const stopPolling = () => {
+            if (intervalId !== null) {
+                window.clearInterval(intervalId);
+                intervalId = null;
+            }
+        };
+
+        const handleVisibilityChange = () => {
             if (document.hidden) {
-                if (intervalId !== null) {
-                    window.clearInterval(intervalId);
-                    intervalId = null;
-                }
+                stopPolling();
             } else if (intervalId === null) {
                 updateBadge();
                 intervalId = window.setInterval(updateBadge, REFRESH_INTERVAL_MS);
             }
-        });
+        };
+
+        badge.dashboardStatusCleanup = () => {
+            stopPolling();
+            document.removeEventListener("visibilitychange", handleVisibilityChange);
+            window.removeEventListener("beforeunload", badge.dashboardStatusCleanup);
+            delete badge.dataset.dashboardStatusInitialized;
+            badge.dashboardStatusCleanup = null;
+        };
+
+        intervalId = window.setInterval(updateBadge, REFRESH_INTERVAL_MS);
+        document.addEventListener("visibilitychange", handleVisibilityChange);
+        window.addEventListener("beforeunload", badge.dashboardStatusCleanup, { once: true });
 
         updateBadge();
     };
@@ -216,6 +239,15 @@
             return;
         }
 
+        const setSslLabsControlsBusy = (busy) => {
+            if (registerBtn instanceof HTMLButtonElement && !registerBtn.classList.contains("d-none")) {
+                registerBtn.disabled = busy;
+            }
+            if (refreshBtn instanceof HTMLButtonElement) {
+                refreshBtn.disabled = busy;
+            }
+        };
+
         const setStatusBadge = (element, className, text) => {
             element.textContent = "";
             const badge = document.createElement("span");
@@ -291,7 +323,7 @@
             if (!(registerBtn instanceof HTMLButtonElement)) {
                 return;
             }
-            registerBtn.disabled = true;
+            setSslLabsControlsBusy(true);
             registerBtn.textContent = "";
             const spinner = document.createElement("span");
             spinner.className = "spinner-border spinner-border-sm me-1";
@@ -323,13 +355,13 @@
                 } else {
                     statusHintEl.textContent = data.detail || data.message || "Registration failed.";
                     registerBtn.textContent = "Register with SSL Labs";
-                    registerBtn.disabled = false;
                 }
             } catch (error) {
                 statusHintEl.textContent = "Registration request failed. Please try again.";
                 registerBtn.textContent = "Register with SSL Labs";
-                registerBtn.disabled = false;
                 console.error("SSL Labs registration failed:", error);
+            } finally {
+                setSslLabsControlsBusy(false);
             }
         };
 
@@ -337,7 +369,7 @@
             if (!(refreshBtn instanceof HTMLButtonElement)) {
                 return;
             }
-            refreshBtn.disabled = true;
+            setSslLabsControlsBusy(true);
             showLoading();
 
             try {
@@ -362,7 +394,7 @@
                 statusHintEl.textContent = "Could not refresh registration status.";
                 console.error("SSL Labs status refresh failed:", error);
             } finally {
-                refreshBtn.disabled = false;
+                setSslLabsControlsBusy(false);
             }
         };
 
@@ -380,6 +412,9 @@
         const page = document.querySelector("[data-sites-certificates-url]");
         if (!(page instanceof HTMLElement)) {
             return;
+        }
+        if (typeof page.sitesCertificatesCleanup === "function") {
+            page.sitesCertificatesCleanup();
         }
         if (!markInitialized(page, "sitesCertificatesInitialized")) {
             return;
@@ -538,13 +573,28 @@
 
         // Set up SSE listener for certificate events
         if (typeof App.addSseEventListener === "function") {
+            const cleanupSitesCertificates = () => {
+                if (typeof App.removeSseEventListener === "function") {
+                    App.removeSseEventListener(handleCertificateEvent);
+                }
+                window.removeEventListener("beforeunload", cleanupSitesCertificates);
+                delete page.dataset.sitesCertificatesInitialized;
+                if (page.sitesCertificatesCleanup === cleanupSitesCertificates) {
+                    page.sitesCertificatesCleanup = null;
+                }
+            };
+
             App.addSseEventListener(handleCertificateEvent);
+            page.sitesCertificatesCleanup = cleanupSitesCertificates;
+            window.addEventListener("beforeunload", cleanupSitesCertificates, { once: true });
         }
 
         refreshCertificates();
     };
 
-    App.initializeLiveUpdates?.();
+    if (!document.body.classList.contains('app-body--public')) {
+        App.initializeLiveUpdates?.();
+    }
     App.initializeMobileMenu?.();
     App.initializeLoadingSubmitForms?.();
     App.initializeAutoDismissToasts?.();
@@ -552,11 +602,13 @@
     App.initializeAutoSubmitForms?.();
     App.initializeSiteDomainInputs?.();
     App.initializeSiteConfigForms?.();
+    App.initializeSiteFormModal?.();
     App.initializeCaddyfileForms?.();
     App.initializeValidateButtons?.();
     App.initializeDashboardStatus?.();
     App.initializeDashboardMetrics?.();
     App.initializeSettingsPasswordValidation?.();
+    App.initializeResponsiveCodeTextareas?.();
     App.initializeSslLabsStatus?.();
     App.initializeSitesCertificates?.();
 })();

@@ -4,11 +4,14 @@
 # Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
 #
 
+import logging
 import os
 from functools import cache
 from pathlib import Path
 
 from app.config.settings import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 @cache
@@ -28,10 +31,13 @@ def get_build_info() -> dict[str, str]:
 
 
 def _read_text(path: Path) -> str | None:
-    """Return stripped file contents, or ``None`` for missing or empty files."""
+    """Return stripped file contents, or None for missing, unreadable, or empty files."""
     try:
         text = path.read_text(encoding="utf-8").strip()
     except FileNotFoundError:
+        return None
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.warning("Ignoring unreadable build metadata file %s: %s", path, exc)
         return None
     return text or None
 

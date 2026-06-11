@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 _ENV_OVERRIDES = {
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key",
+    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
     "CADDYBUDDY_ADMIN_PASSWORD": "unit-test-password",
 }
 _ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}
@@ -174,7 +174,7 @@ class ApiRouterTests(unittest.TestCase):
 
         with (
             TestClient(app) as client,
-            patch.object(system_api, "get_session_user", new=AsyncMock(return_value=SimpleNamespace(id=1))),
+            patch.object(system_api, "get_session_user", new=AsyncMock(return_value=SimpleNamespace(id=1, is_admin=True))),
             patch.object(system_api, "get_settings", return_value=SimpleNamespace(ssllabs_api_base_url="https://api.ssllabs.com/api/v4")),
             patch.object(system_api, "get_ssllabs_email", new=AsyncMock(return_value="team@example.com")),
             patch.object(system_api, "check_email_registration_status", new=check_status),
@@ -182,7 +182,8 @@ class ApiRouterTests(unittest.TestCase):
             response = client.get("/api/v1/ssllabs/registration-status")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["email"], "team@example.com")
+        self.assertNotIn("email", response.json())
+        self.assertIn("masked_email", response.json())
         self.assertTrue(response.json()["is_registered"])
         check_status.assert_awaited_once_with(
             "team@example.com",
@@ -194,7 +195,7 @@ class ApiRouterTests(unittest.TestCase):
 
         with (
             TestClient(app) as client,
-            patch.object(system_api, "get_session_user", new=AsyncMock(return_value=SimpleNamespace(id=1))),
+            patch.object(system_api, "get_session_user", new=AsyncMock(return_value=SimpleNamespace(id=1, is_admin=True))),
             patch.object(system_api, "get_settings", return_value=SimpleNamespace(ssllabs_api_base_url="https://api.ssllabs.com/api/v4")),
             patch.object(system_api, "get_ssllabs_email", new=AsyncMock(return_value=None)),
         ):
@@ -208,7 +209,7 @@ class ApiRouterTests(unittest.TestCase):
 
         with (
             TestClient(app) as client,
-            patch.object(system_api, "get_session_user", new=AsyncMock(return_value=SimpleNamespace(id=1))),
+            patch.object(system_api, "get_session_user", new=AsyncMock(return_value=SimpleNamespace(id=1, is_admin=True))),
             patch.object(system_api, "get_settings", return_value=SimpleNamespace(ssllabs_api_base_url="https://api.ssllabs.com/api/v4")),
             patch.object(system_api, "get_ssllabs_email", new=AsyncMock(return_value="team@example.com")),
             patch.object(

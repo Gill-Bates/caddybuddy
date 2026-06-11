@@ -4,7 +4,8 @@
 
 {% block content %}
 <section class="app-page app-page--sites"
-    data-sites-certificates-url="{{ request.app.url_path_for('sites_certificates') }}">
+    data-sites-certificates-url="{{ request.app.url_path_for('sites_certificates') }}"
+    {% if selected_site %}data-site-form-open{% endif %}>
     <div class="app-page__header">
         <div class="app-page__lede">
             <p class="eyebrow mb-2">Configuration</p>
@@ -13,7 +14,7 @@
     </div>
 
     <div class="row app-grid">
-        <div class="col-xl-5 sites-form-column">
+        <div class="col-xl-5 sites-form-column" data-site-form-home>
             <div class="panel-card sites-form-panel" id="form-panel">
                 <div class="panel-card__header">
                     <h2 class="h5 mb-0">{% if selected_site %}Edit site{% else %}Create site{% endif %}</h2>
@@ -57,7 +58,7 @@
                         <label class="form-label" for="site-caddy-directives">Config</label>
                         <textarea id="site-caddy-directives" name="caddy_directives" rows="14"
                             class="form-control font-monospace" spellcheck="false" autocapitalize="off"
-                            autocomplete="off" wrap="off" maxlength="524288"
+                            autocomplete="off" wrap="off" data-responsive-code-textarea maxlength="524288"
                             required>{{ selected_site.caddy_directives if selected_site and selected_site.caddy_directives else '' }}</textarea>
                         <div class="form-text">Site-specific Caddy directives. Paste the inner config for this domain,
                             like in the Caddyfile editor.</div>
@@ -117,6 +118,15 @@
                 <div class="panel-card__header sites-list-panel__header">
                     <h2 class="h5 mb-0">All Sites</h2>
                     <p class="sites-list-panel__count mb-0">{{ sites | length }} configured</p>
+                    <button type="button" class="btn btn-primary btn-sm sites-add-btn" data-site-form-modal-open>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+                            focusable="false">
+                            <path d="M12 5v14"></path>
+                            <path d="M5 12h14"></path>
+                        </svg>
+                        Add site
+                    </button>
                 </div>
                 <div class="sites-list-scroll">
                     <div class="table-responsive">
@@ -285,6 +295,21 @@
                         </table>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- On small screens the create/edit form above is relocated into this modal by JS. -->
+    <div class="modal fade sites-form-modal" id="site-form-modal" tabindex="-1"
+        aria-labelledby="site-form-modal-label" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 class="modal-title h5" id="site-form-modal-label">{% if selected_site %}Edit site{% else
+                        %}Create site{% endif %}</h2>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" data-site-form-modal-body></div>
             </div>
         </div>
     </div>

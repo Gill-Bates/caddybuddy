@@ -1,8 +1,11 @@
 {% if flashes %}
 <div class="toast-container app-toast-stack position-fixed top-0 end-0 p-3" aria-live="polite" aria-atomic="true">
     {% for flash in flashes %}
-    <div class="toast align-items-center text-bg-{{ flash.category }} border-0 shadow-sm" role="status"
-        aria-live="polite" aria-atomic="true" data-auto-dismiss-toast data-auto-dismiss-delay="5000">
+    {% set is_alert_flash = flash.category in ['danger', 'warning'] %}
+    <div class="toast align-items-center text-bg-{{ flash.category }} border-0 shadow-sm"
+        role="{{ 'alert' if is_alert_flash else 'status' }}"
+        aria-live="{{ 'assertive' if is_alert_flash else 'polite' }}" aria-atomic="true" data-auto-dismiss-toast
+        data-auto-dismiss-delay="{{ '12000' if is_alert_flash else '5000' }}">
         <div class="d-flex">
             <div class="toast-body">{{ flash.message }}</div>
             <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"

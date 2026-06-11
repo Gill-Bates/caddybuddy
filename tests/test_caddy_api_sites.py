@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi import HTTPException, Response
 
 _ENV_OVERRIDES = {
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key",
+    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
     "CADDYBUDDY_ADMIN_PASSWORD": "unit-test-password",
 }
 _ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}

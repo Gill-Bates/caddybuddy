@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
@@ -27,6 +27,8 @@ from ._common import require_admin, require_user, validated_form
 
 
 router = APIRouter()
+
+_SSLLABS_REPORT_CACHE_HOURS = 80
 
 
 def _parse_schedule_frequency(raw_value: str) -> SslLabsScheduleFrequency | None:
@@ -81,6 +83,13 @@ async def ssllabs_page(
             site_rows_by_id[site.id] = site_row
             site_rows.append(site_row)
 
+        scan_completed_at = getattr(latest_scan, "completed_at", None)
+        scan_report_available = bool(
+            latest_scan is not None
+            and getattr(latest_scan, "grade", None)
+            and scan_completed_at is not None
+            and scan_completed_at >= now - timedelta(hours=_SSLLABS_REPORT_CACHE_HOURS)
+        )
         site_row["domains"].append(
             {
                 "target": target,
@@ -94,6 +103,7 @@ async def ssllabs_page(
                 "grade_badge_class": grade_badge_class(getattr(latest_scan, "grade", None)),
                 "endpoints": endpoints,
                 "scan_active": scan_active,
+                "scan_report_available": scan_report_available,
             }
         )
 
@@ -164,4 +174,18 @@ async def update_ssllabs_schedule(
     else:
         label = "weekly" if frequency == "weekly" else "every 30 days"
         push_flash(request, "success", f"SSL Labs schedule saved: {label}.")
+        _period_days = 7 if frequency == "weekly" else 30
+        latest_scan = await ssllabs_repository.get_latest_scan_for_target(session, target_id)
+        _completed = getattr(latest_scan, "completed_at", None)
+        scan_stale = (
+            latest_scan is None
+            or _completed is None
+            or _completed < datetime.now(UTC) - timedelta(days=_period_days)
+        )
+        if scan_stale:
+            try:
+                await ssllabs_service.request_scan(target_id=target_id, force_new=False)
+                push_flash(request, "info", "Scan automatically queued.")
+            except (SslLabsServiceError, ValueError):
+                pass
     return redirect_to("/ssl-labs")

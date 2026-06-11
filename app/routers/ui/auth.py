@@ -62,7 +62,7 @@ async def login_page(request: Request, session: AsyncSession = Depends(get_db_se
 
 
 @router.post("/login")
-@limiter.limit("10/minute")
+@limiter.limit("5/minute;20/hour")
 async def login_action(request: Request, session: AsyncSession = Depends(get_db_session)) -> Response:
     form = await validated_form(request)
     username = str(form.get("username", "")).strip()

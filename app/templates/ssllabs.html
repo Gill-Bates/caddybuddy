@@ -70,10 +70,12 @@
                             <option value="failed">Failed/Error</option>
                         </select>
                     </div>
+                    <button type="button" class="btn btn-outline-secondary" data-ssllabs-clear-filters>Clear</button>
                 </div>
                 <div class="ssllabs-scrollbox">
                     <div class="table-responsive ssllabs-table-wrap">
                         <table class="table align-middle mb-0 ssllabs-table">
+                            <caption class="visually-hidden">SSL Labs scan results grouped by configured site and domain.</caption>
                             <colgroup>
                                 <col class="ssllabs-table__site-col">
                                 <col class="ssllabs-table__domains-col">
@@ -115,6 +117,7 @@
                                             {% endif %}
                                             {% endif %}
                                             <section class="ssllabs-domain-card" data-ssllabs-filter-card
+                                                aria-label="SSL Labs results for {{ row.target.host }}"
                                                 data-ssllabs-grade="{{ filter_grade }}"
                                                 data-ssllabs-search="{{ (site_row.site.site_name ~ ' ' ~ site_row.site.domain ~ ' ' ~ row.target.host) | lower }}">
                                                 <div class="ssllabs-domain-card__header">
@@ -216,7 +219,7 @@
                                                             data-loading-submit-form>
                                                             <input type="hidden" name="csrf_token"
                                                                 value="{{ csrf_token }}">
-                                                            {% if row.scan and row.scan.grade %}
+                                                            {% if row.scan_report_available %}
                                                             <a href="https://www.ssllabs.com/ssltest/analyze.html?d={{ row.target.host }}"
                                                                 target="_blank" rel="noopener"
                                                                 class="btn btn-sm btn-outline-secondary"

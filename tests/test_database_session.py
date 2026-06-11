@@ -178,6 +178,7 @@ class DatabaseSessionInitTests(_SessionModuleStateMixin, unittest.IsolatedAsynci
                 patch.object(session_module, "get_settings", return_value=SimpleNamespace()),
                 patch.object(session_module, "_resolve_sqlite_database_path", return_value=database_path),
                 patch.object(session_module, "_execute_database_init", execute_database_init),
+                patch.object(session_module, "_ensure_sqlite_wal_mode", new=AsyncMock()),
                 patch.object(session_module.fcntl, "flock") as flock,
             ):
                 await session_module.init_database()
@@ -212,7 +213,7 @@ class DatabaseSessionInitTests(_SessionModuleStateMixin, unittest.IsolatedAsynci
 
 class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase):
     def test_apply_known_table_migrations_creates_missing_caddy_state_table(self) -> None:
-        fake_connection = object()
+        fake_connection = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
 
         with (
             patch.object(session_module.Base.metadata.tables["app_settings"], "create") as create_app_settings,
@@ -239,7 +240,7 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
         create_table.assert_called_once_with(fake_connection, checkfirst=True)
 
     def test_apply_known_table_migrations_creates_missing_ssllabs_tables(self) -> None:
-        fake_connection = object()
+        fake_connection = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
 
         with (
             patch.object(session_module.Base.metadata.tables["app_settings"], "create") as create_app_settings,
@@ -288,6 +289,7 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
                 "ALTER TABLE caddy_sites ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1",
                 "ALTER TABLE caddy_sites ADD COLUMN site_name TEXT NOT NULL DEFAULT ''",
                 "UPDATE caddy_sites SET site_name = trim(CASE WHEN instr(domain, ',') > 0 THEN substr(domain, 1, instr(domain, ',') - 1) ELSE domain END) WHERE site_name IS NULL OR site_name = ''",
+                "UPDATE caddy_sites SET enabled = 0 WHERE upstream_url = 'http://placeholder.invalid'",
             ],
         )
 

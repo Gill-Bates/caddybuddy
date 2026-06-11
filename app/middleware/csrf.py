@@ -79,6 +79,13 @@ def _is_https_request(scope: Scope) -> bool:
 
 def _request_origin_tuple(request: Request) -> tuple[str, str, int] | None:
     scheme = (request.url.scheme or "").lower()
+    # When uvicorn doesn't fully trust the reverse proxy's IP (e.g. Docker bridge
+    # NAT makes the source appear as 172.17.0.1 instead of 127.0.0.1), it won't
+    # rewrite the scope scheme from X-Forwarded-Proto. Fall back to the header
+    # directly so the CSRF origin check works behind a TLS-terminating proxy.
+    forwarded_proto = request.headers.get("X-Forwarded-Proto", "").lower().strip()
+    if forwarded_proto in {"http", "https"}:
+        scheme = forwarded_proto
     host = request.url.hostname
     if not scheme or not host:
         return None
