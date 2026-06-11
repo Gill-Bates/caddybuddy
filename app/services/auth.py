@@ -17,7 +17,11 @@ import bcrypt
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config.settings import get_settings
+from app.config.settings import (
+    get_settings,
+    _INSECURE_ADMIN_PASSWORD_VALUES,
+    _MIN_ADMIN_PASSWORD_LENGTH,
+)
 from app.models.entities import User
 from app.repositories.users import user_repository
 
@@ -143,6 +147,12 @@ class AuthService:
         """Create the default admin when the database has no users yet."""
         if await user_repository.exists_any(session):
             return None
+        password = password.strip()
+        if password in _INSECURE_ADMIN_PASSWORD_VALUES or len(password) < _MIN_ADMIN_PASSWORD_LENGTH:
+            raise ValueError(
+                "Set CB_ADMIN_PASSWORD, CADDYBUDDY_ADMIN_PASSWORD, or ADMIN_PASSWORD to a non-default value "
+                f"of at least {_MIN_ADMIN_PASSWORD_LENGTH} characters before first startup."
+            )
         password_hash = await self.hash_password(password)
         try:
             async with session.begin_nested():

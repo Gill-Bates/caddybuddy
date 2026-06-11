@@ -449,14 +449,7 @@ class Settings(BaseSettings):
                 )
 
         admin_password = self.default_admin_password.get_secret_value().strip()
-        if (
-            admin_password in _INSECURE_ADMIN_PASSWORD_VALUES
-            or len(admin_password) < _MIN_ADMIN_PASSWORD_LENGTH
-        ):
-            raise ValueError(
-                "Set CB_ADMIN_PASSWORD, CADDYBUDDY_ADMIN_PASSWORD, or ADMIN_PASSWORD to a non-default value "
-                f"of at least {_MIN_ADMIN_PASSWORD_LENGTH} characters before first startup."
-            )
+        # Admin password strength is validated at first-startup time in auth_service.ensure_default_admin.
 
         if self.session_cookie_samesite == "none" and not self.session_https_only:
             raise ValueError("session_cookie_samesite='none' requires session_https_only=true.")
