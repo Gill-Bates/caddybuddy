@@ -5,6 +5,7 @@
 #
 
 from functools import cache
+import logging
 from pathlib import Path
 import re
 from typing import Literal, Self
@@ -424,9 +425,9 @@ class Settings(BaseSettings):
         if not entries:
             raise ValueError("forwarded_allow_ips must not be empty.")
         if "*" in entries:
-            raise ValueError(
-                "forwarded_allow_ips must list explicit trusted proxy IPs, not '*'. "
-                "Wildcard trust allows clients to spoof forwarded IP headers."
+            logging.getLogger(__name__).warning(
+                "FORWARDED_ALLOW_IPS='*' trusts all proxy IPs. "
+                "Set explicit trusted proxy IPs in production."
             )
         return ",".join(entries)
 
