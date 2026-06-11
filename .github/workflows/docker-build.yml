@@ -252,7 +252,6 @@ jobs:
           image-ref: '${{ env.IMAGE_NAME }}:${{ needs.meta.outputs.version }}-amd64'
           format: 'json'
           output: 'trivy-amd64.json'
-          skip-version-check: true
           cache: false
           exit-code: ${{ (github.event.inputs.enforce_trivy_gate == 'true' || github.event_name == 'push') && '1' || '0' }}
           ignore-unfixed: true
@@ -466,7 +465,6 @@ jobs:
           image-ref: '${{ env.IMAGE_NAME }}:${{ needs.meta.outputs.version }}-arm64'
           format: 'json'
           output: 'trivy-arm64.json'
-          skip-version-check: true
           cache: false
           exit-code: ${{ (github.event.inputs.enforce_trivy_gate == 'true' || github.event_name == 'push') && '1' || '0' }}
           ignore-unfixed: true
