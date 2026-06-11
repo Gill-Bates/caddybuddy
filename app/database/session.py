@@ -452,19 +452,24 @@ async def _execute_database_init() -> None:
 
         existing_indexes = await connection.run_sync(_read_existing_index_names)
         missing_indexes: list[str] = []
+        missing_index_objects: list[tuple[str, object]] = []
         for table_name, table in Base.metadata.tables.items():
             current_indexes = existing_indexes.get(table_name, set())
             for index in table.indexes:
                 if index.name and index.name not in current_indexes:
                     missing_indexes.append(f"{table_name}.{index.name}")
+                    missing_index_objects.append((table_name, index))
 
         if missing_indexes:
-            logger.error("Database schema missing indexes: %s", ", ".join(sorted(missing_indexes)))
-            raise RuntimeError(
-                "Existing database schema is missing indexes: "
-                f"{', '.join(sorted(missing_indexes))}. "
-                "Reinitialize the database or add migrations before starting the app."
+            logger.warning(
+                "Database schema missing indexes: %s — creating them now",
+                ", ".join(sorted(missing_indexes)),
             )
+            for _table_name, index in missing_index_objects:
+                await connection.run_sync(
+                    lambda sync_conn, idx=index: idx.create(bind=sync_conn)
+                )
+            logger.info("Successfully created %d missing index(es)", len(missing_indexes))
 
 
 async def _ensure_sqlite_wal_mode() -> None:
