@@ -119,6 +119,7 @@ jobs:
     outputs:
       version: ${{ needs.meta.outputs.version }}
       trivy_summary: ${{ steps.trivy_summary.outputs.summary }}
+      trivy_artifact_url: ${{ steps.trivy_artifact.outputs.artifact-url }}
     permissions:
       contents: read
 
@@ -251,6 +252,8 @@ jobs:
           image-ref: '${{ env.IMAGE_NAME }}:${{ needs.meta.outputs.version }}-amd64'
           format: 'json'
           output: 'trivy-amd64.json'
+          skip-version-check: true
+          cache: false
           exit-code: ${{ (github.event.inputs.enforce_trivy_gate == 'true' || github.event_name == 'push') && '1' || '0' }}
           ignore-unfixed: true
           vuln-type: 'os,library'
@@ -289,6 +292,7 @@ jobs:
 
       - name: Upload Trivy findings (amd64)
         if: always()
+        id: trivy_artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: trivy-findings-amd64
@@ -330,6 +334,7 @@ jobs:
     outputs:
       version: ${{ needs.meta.outputs.version }}
       trivy_summary: ${{ steps.trivy_summary.outputs.summary }}
+      trivy_artifact_url: ${{ steps.trivy_artifact.outputs.artifact-url }}
     permissions:
       contents: read
 
@@ -461,6 +466,8 @@ jobs:
           image-ref: '${{ env.IMAGE_NAME }}:${{ needs.meta.outputs.version }}-arm64'
           format: 'json'
           output: 'trivy-arm64.json'
+          skip-version-check: true
+          cache: false
           exit-code: ${{ (github.event.inputs.enforce_trivy_gate == 'true' || github.event_name == 'push') && '1' || '0' }}
           ignore-unfixed: true
           vuln-type: 'os,library'
@@ -499,6 +506,7 @@ jobs:
 
       - name: Upload Trivy findings (arm64)
         if: always()
+        id: trivy_artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: trivy-findings-arm64
@@ -617,15 +625,20 @@ jobs:
         env:
           VERSION: ${{ needs.meta.outputs.version }}
           TRIVY_AMD64: ${{ needs.build-amd64.outputs.trivy_summary }}
+          TRIVY_AMD64_URL: ${{ needs.build-amd64.outputs.trivy_artifact_url }}
           TRIVY_ARM64: ${{ needs.build-arm64.outputs.trivy_summary }}
+          TRIVY_ARM64_URL: ${{ needs.build-arm64.outputs.trivy_artifact_url }}
         with:
           script: |
             const fs = require('node:fs');
             const version = process.env.VERSION;
             const trivyAmd64 = process.env.TRIVY_AMD64 || 'Scan not available';
+            const trivyAmd64Url = process.env.TRIVY_AMD64_URL || '';
             const trivyArm64 = process.env.TRIVY_ARM64 || 'Scan not available';
+            const trivyArm64Url = process.env.TRIVY_ARM64_URL || '';
             const imageName = 'giiibates/caddybuddy';
             const isPrerelease = version.includes('-');
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
 
             function normalizeVersion(value) {
               const main = value.split('-', 1)[0];
@@ -687,15 +700,28 @@ jobs:
               tags.push('- `' + imageName + ':latest`');
             }
 
+            function escapeCell(value) {
+              return String(value).replace(/\|/g, '\\|');
+            }
+
+            function artifactLink(label, url) {
+              return url ? `[${label}](${url})` : '_Artifact unavailable_';
+            }
+
             const body = [
               '**Docker Image:** `docker pull ' + imageName + ':' + version + '`',
               '',
               '### Available Tags',
               ...tags,
               '',
-              '### Security Scan',
-              '- **amd64:** ' + trivyAmd64,
-              '- **arm64:** ' + trivyArm64,
+              '### Security Scan Results',
+              '| Architecture | Status | Findings |',
+              '| --- | --- | --- |',
+              '| amd64 | ' + escapeCell(trivyAmd64) + ' | ' + artifactLink('trivy-findings-amd64', trivyAmd64Url) + ' |',
+              '| arm64 | ' + escapeCell(trivyArm64) + ' | ' + artifactLink('trivy-findings-arm64', trivyArm64Url) + ' |',
+              '| run | workflow details | [Actions Run](' + runUrl + ') |',
+              '',
+              'Scanned with Trivy for HIGH and CRITICAL severity vulnerabilities (unfixed CVEs ignored).',
               '',
               '### Changelog',
               changelogSection || '_No matching CHANGELOG entry found for this version._'
