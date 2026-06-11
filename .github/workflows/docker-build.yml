@@ -187,6 +187,8 @@ jobs:
 
           mkdir -p smoke-test-amd64/data
           printf '### MANAGED BY CADDYBUDDY ###\n' > smoke-test-amd64/Caddyfile
+          sudo chown -R 1000:1000 smoke-test-amd64/data
+          sudo chown 1000:1000 smoke-test-amd64/Caddyfile
 
           docker network create smoke-amd64
 
@@ -395,6 +397,8 @@ jobs:
 
           mkdir -p smoke-test-arm64/data
           printf '### MANAGED BY CADDYBUDDY ###\n' > smoke-test-arm64/Caddyfile
+          sudo chown -R 1000:1000 smoke-test-arm64/data
+          sudo chown 1000:1000 smoke-test-arm64/Caddyfile
 
           docker network create smoke-arm64
 
