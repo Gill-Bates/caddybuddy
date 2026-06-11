@@ -216,6 +216,7 @@ jobs:
             --platform linux/amd64 \
             --network smoke-amd64 \
             -e CB_SECRET_KEY="ci-smoke-test-key-not-for-production" \
+            -e CB_ADMIN_PASSWORD="CI-Smoke-Admin-Password-123" \
             -e LOG_LEVEL="DEBUG" \
             -v "$PWD/smoke-test-amd64/Caddyfile:/app/Caddyfile" \
             -v "$PWD/smoke-test-amd64/data:/app/data" \
@@ -425,6 +426,7 @@ jobs:
             --platform linux/arm64 \
             --network smoke-arm64 \
             -e CB_SECRET_KEY="ci-smoke-test-key-not-for-production" \
+            -e CB_ADMIN_PASSWORD="CI-Smoke-Admin-Password-123" \
             -e LOG_LEVEL="DEBUG" \
             -v "$PWD/smoke-test-arm64/Caddyfile:/app/Caddyfile" \
             -v "$PWD/smoke-test-arm64/data:/app/data" \
