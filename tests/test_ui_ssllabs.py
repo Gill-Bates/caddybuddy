@@ -173,18 +173,14 @@ class UISslLabsTests(unittest.TestCase):
         self.assertIn('data-label="Site"', response.text)
         self.assertIn('data-label="Domains"', response.text)
         self.assertIn('class="ssllabs-domain-list"', response.text)
-        self.assertIn('<details class="ssllabs-domain-card"', response.text)
+        self.assertIn('<div class="ssllabs-domain-card"', response.text)
+        self.assertNotIn('<details class="ssllabs-domain-card"', response.text)
         self.assertIn('class="ssllabs-domain-card__summary"', response.text)
-        self.assertIn('class="ssllabs-domain-card__actions"', response.text)
-        self.assertIn('class="ssllabs-domain-card__details"', response.text)
+        self.assertNotIn('class="ssllabs-domain-card__actions"', response.text)
         self.assertIn('class="ssllabs-domain-card__quick-actions"', response.text)
         self.assertRegex(
             response.text,
-            r'<summary class="ssllabs-domain-card__summary">[\s\S]*class="ssllabs-domain-card__quick-actions"[\s\S]*</summary>',
-        )
-        self.assertRegex(
-            response.text,
-            r'<div class="ssllabs-domain-card__actions">\s*<div class="ssllabs-domain-card__inline-scheduler">',
+            r'<div class="ssllabs-domain-card__summary">[\s\S]*class="ssllabs-domain-card__inline-scheduler"[\s\S]*class="ssllabs-domain-card__quick-actions"',
         )
         self.assertNotIn('class="cell-actions ssllabs-actions"', response.text)
         self.assertIn("data-require-csrf", response.text)
@@ -198,7 +194,6 @@ class UISslLabsTests(unittest.TestCase):
         self.assertIn('class="ssllabs-result__endpoints"', response.text)
         self.assertIn("IPv4", response.text)
         self.assertIn("IPv6", response.text)
-        self.assertIn("2 endpoints", response.text)
         self.assertIn("Not scanned yet", response.text)
 
     def test_ssllabs_mobile_scheduler_form_stretches_full_width(self) -> None:
@@ -206,10 +201,10 @@ class UISslLabsTests(unittest.TestCase):
         css = css_path.read_text(encoding="utf-8")
 
         self.assertIn(
-            ".ssllabs-domain-card__inline-scheduler {\n        display: flex;\n        align-items: stretch;\n        width: 100%;",
+            ".ssllabs-domain-card__inline-scheduler {\n        align-items: stretch;\n        width: 100%;",
             css,
         )
-        self.assertIn(
+        self.assertNotIn(
             ".ssllabs-domain-card__actions {\n    display: grid;\n    grid-template-columns: minmax(0, 1fr);",
             css,
         )

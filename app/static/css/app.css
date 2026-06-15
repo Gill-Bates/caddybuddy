@@ -2668,10 +2668,6 @@ body.app-body--menu-open .app-sidebar {
     background: rgba(21, 34, 46, 0.03);
 }
 
-.ssllabs-domain-card[open] {
-    background: rgba(21, 34, 46, 0.04);
-}
-
 .ssllabs-domain-card__summary {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto auto;
@@ -2679,21 +2675,6 @@ body.app-body--menu-open .app-sidebar {
     gap: 0.75rem;
     min-height: 46px;
     padding: 0.35rem 0.75rem 0.35rem 0.85rem;
-    cursor: pointer;
-    list-style: none;
-}
-
-.ssllabs-domain-card__summary::-webkit-details-marker {
-    display: none;
-}
-
-.ssllabs-domain-card__summary::marker {
-    content: "";
-}
-
-.ssllabs-domain-card__summary:focus-visible {
-    outline: 2px solid rgba(74, 110, 250, 0.45);
-    outline-offset: -2px;
 }
 
 .ssllabs-domain-card__main {
@@ -2732,15 +2713,6 @@ body.app-body--menu-open .app-sidebar {
     white-space: nowrap;
 }
 
-.ssllabs-domain-card__chevron {
-    color: var(--cb-muted);
-    transition: transform 0.15s ease;
-}
-
-.ssllabs-domain-card[open] .ssllabs-domain-card__chevron {
-    transform: rotate(180deg);
-}
-
 .ssllabs-domain-card__details {
     display: grid;
     gap: 0.6rem;
@@ -2748,17 +2720,17 @@ body.app-body--menu-open .app-sidebar {
     border-top: 1px solid rgba(21, 34, 46, 0.08);
 }
 
-.ssllabs-domain-card__actions {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0 0.75rem 0.55rem 0.85rem;
+.ssllabs-domain-card__inline-scheduler {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+    align-items: flex-start;
 }
 
-.ssllabs-domain-card__inline-scheduler {
-    display: none;
-    min-width: 0;
+.ssllabs-domain-card__next-run {
+    padding-inline: 0.1rem;
+    line-height: 1.2;
 }
 
 /* Grade keeps a heavier weight and a stable min-width for alignment,
@@ -2778,7 +2750,7 @@ body.app-body--menu-open .app-sidebar {
     display: flex;
     flex-wrap: wrap;
     gap: 0.35rem;
-    margin-top: 0.2rem;
+    margin-top: 0;
 }
 
 .ssllabs-endpoint-chip {
@@ -2864,16 +2836,15 @@ body.app-body--menu-open .app-sidebar {
     }
 
     .ssllabs-domain-card__summary {
-        grid-template-columns: minmax(0, 1fr) var(--cb-ssllabs-actions-column-width) auto;
+        grid-template-columns: minmax(0, 1fr) var(--cb-ssllabs-scheduler-column-width) var(--cb-ssllabs-actions-column-width);
         min-height: 44px;
         padding-block: 0.25rem;
     }
 
     .ssllabs-domain-card__inline-scheduler {
-        display: flex;
-        align-items: center;
+        align-items: flex-start;
         min-width: 0;
-        width: var(--cb-ssllabs-scheduler-column-width);
+        width: 100%;
     }
 
     .ssllabs-domain-card__inline-scheduler .ssllabs-schedule-form {
@@ -2894,16 +2865,6 @@ body.app-body--menu-open .app-sidebar {
     .ssllabs-domain-card__quick-actions {
         width: var(--cb-ssllabs-actions-column-width);
         justify-content: flex-end;
-    }
-
-    .ssllabs-domain-card__actions .ssllabs-schedule-form {
-        width: 100%;
-        min-width: 0;
-    }
-
-    .ssllabs-domain-card__actions .ssllabs-schedule-form .form-select {
-        width: 100%;
-        min-width: 0;
     }
 
     .ssllabs-table .ssllabs-actions {
@@ -2948,34 +2909,29 @@ body.app-body--menu-open .app-sidebar {
     }
 
     .ssllabs-domain-card__summary {
-        grid-template-columns: minmax(0, 1fr) auto;
-        align-items: stretch;
+        grid-template-columns: minmax(0, 1fr) var(--cb-ssllabs-actions-column-width);
+        align-items: center;
     }
 
     .ssllabs-domain-card__main {
+        grid-column: 1 / -1;
         flex-wrap: wrap;
         white-space: normal;
     }
 
+    .ssllabs-domain-card__inline-scheduler {
+        grid-column: 1;
+        align-items: flex-start;
+    }
+
     .ssllabs-domain-card__quick-actions {
-        grid-column: 1 / -1;
-        justify-content: space-between;
+        grid-column: 2;
+        justify-content: flex-end;
+        align-self: center;
     }
 
     .ssllabs-domain-card__details {
         gap: 0.7rem;
-    }
-
-    .ssllabs-domain-card__actions {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr);
-        align-items: stretch;
-        padding-top: 0;
-    }
-
-    .ssllabs-domain-card__inline-scheduler {
-        display: flex;
-        align-items: center;
     }
 }
 
@@ -3083,17 +3039,17 @@ body.app-body--menu-open .app-sidebar {
 
     .ssllabs-domain-card__summary {
         grid-template-columns: minmax(0, 1fr) auto;
-        align-items: stretch;
+        align-items: start;
         padding-inline: 0.75rem;
     }
 
     .ssllabs-domain-card__main {
+        grid-column: 1 / -1;
         flex-wrap: wrap;
         white-space: normal;
     }
 
     .ssllabs-domain-card__inline-scheduler {
-        display: flex;
         align-items: stretch;
         width: 100%;
     }
@@ -3101,13 +3057,6 @@ body.app-body--menu-open .app-sidebar {
     .ssllabs-domain-card__quick-actions {
         grid-column: 1 / -1;
         justify-content: space-between;
-    }
-
-    .ssllabs-domain-card__actions {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr);
-        align-items: stretch;
-        padding-top: 0;
     }
 
     .ssllabs-domain-card .ssllabs-schedule-form {

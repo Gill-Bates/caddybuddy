@@ -115,31 +115,61 @@
                                             {% set scan_status = (row.scan.status or 'unknown') | replace('_', ' ') | title %}
                                             {% endif %}
                                             {% set schedule_select_id = "ssllabs-schedule-" ~ row.target.id %}
-                                            <details class="ssllabs-domain-card" data-ssllabs-filter-card
+                                            <div class="ssllabs-domain-card" data-ssllabs-filter-card
                                                 aria-label="SSL Labs results for {{ row.target.host }}"
                                                 data-ssllabs-grade="{{ row.filter_grade }}"
                                                 data-ssllabs-search="{{ (site_row.site.site_name ~ ' ' ~ site_row.site.domain ~ ' ' ~ row.target.host) | lower }}">
-                                                <summary class="ssllabs-domain-card__summary">
+                                                <div class="ssllabs-domain-card__summary">
                                                     <div class="ssllabs-domain-card__main">
                                                         <span class="ssllabs-domain-card__host">{{ row.target.host }}</span>
                                                         {% if row.scan %}
                                                         {% if row.scan.grade %}
                                                         <span class="badge {{ row.grade_badge_class }} ssllabs-result__grade ssllabs-result__grade--compact">{{ row.scan.grade }}</span>
-                                                        <span class="status-pill {{ row.badge_class }} ssllabs-result__status-badge ssllabs-result__status-badge--compact">{{
-                                                            scan_status }}</span>
+                                                        <span class="status-pill {{ row.badge_class }} ssllabs-result__status-badge ssllabs-result__status-badge--compact">{{ scan_status }}</span>
                                                         {% else %}
-                                                        <span
-                                                            class="status-pill {{ row.badge_class }} ssllabs-result__status-badge ssllabs-result__status-badge--compact">{{
-                                                            scan_status }}</span>
+                                                        <span class="status-pill {{ row.badge_class }} ssllabs-result__status-badge ssllabs-result__status-badge--compact">{{ scan_status }}</span>
                                                         {% endif %}
                                                         {% if scan_time %}
                                                         <span class="ssllabs-domain-card__muted" data-ui-lint-dynamic>{{ scan_time|datetimeformat }}</span>
                                                         {% endif %}
-                                                        {% if row.scan.endpoint_count is not none %}
+                                                        {% if row.endpoints %}
+                                                        <div class="ssllabs-result__endpoints">
+                                                            {% for ep in row.endpoints %}
+                                                            <span class="ssllabs-endpoint-chip" title="{{ ep.ip }}">
+                                                                <span class="ssllabs-endpoint-chip__label">{{ ep.ip_version }}</span>
+                                                                <span class="badge {{ ep.badge_class }} ssllabs-endpoint-chip__grade">{{ ep.grade or 'N/A' }}</span>
+                                                            </span>
+                                                            {% endfor %}
+                                                        </div>
+                                                        {% elif row.scan.endpoint_count is not none %}
                                                         <span class="ssllabs-domain-card__muted" data-ui-lint-dynamic>{{ row.scan.endpoint_count }} endpoint{% if row.scan.endpoint_count != 1 %}s{% endif %}</span>
                                                         {% endif %}
                                                         {% else %}
                                                         <span class="ssllabs-domain-card__muted">Not scanned yet</span>
+                                                        {% endif %}
+                                                    </div>
+                                                    <div class="ssllabs-domain-card__inline-scheduler">
+                                                        <form
+                                                            action="{{ request.app.url_path_for('update_ssllabs_schedule', target_id=row.target.id) }}"
+                                                            method="post"
+                                                            class="ssllabs-schedule-form"
+                                                            data-require-csrf
+                                                            data-ssllabs-inline-scheduler>
+                                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                                            <label class="visually-hidden" for="{{ schedule_select_id }}">
+                                                                Weekly SSL Labs scan schedule for {{ row.target.host }}
+                                                            </label>
+                                                            <select id="{{ schedule_select_id }}" class="form-select form-select-sm"
+                                                                name="schedule_frequency"
+                                                                aria-label="Weekly SSL Labs scan schedule"
+                                                                data-ssllabs-autosave
+                                                                {% if row.host_error %}disabled{% endif %}>
+                                                                <option value="" {% if not row.target.schedule_frequency %}selected{% endif %}>Off</option>
+                                                                <option value="weekly" {% if row.target.schedule_frequency %}selected{% endif %}>On (weekly)</option>
+                                                            </select>
+                                                        </form>
+                                                        {% if row.target.next_scheduled_at %}
+                                                        <div class="ssllabs-domain-card__next-run small text-body-secondary" data-ui-lint-dynamic>Next run {{ row.target.next_scheduled_at|datetimeformat }}</div>
                                                         {% endif %}
                                                     </div>
                                                     <div class="ssllabs-domain-card__quick-actions">
@@ -177,54 +207,18 @@
                                                                 data-ui-lint-ignore-click-target {% if row.host_error or row.scan_active %}disabled{% endif %}>Scan</button>
                                                         </form>
                                                     </div>
-                                                    <span class="ssllabs-domain-card__chevron" aria-hidden="true">▾</span>
-                                                </summary>
-                                                <div class="ssllabs-domain-card__actions">
-                                                    <div class="ssllabs-domain-card__inline-scheduler">
-                                                        <form
-                                                            action="{{ request.app.url_path_for('update_ssllabs_schedule', target_id=row.target.id) }}"
-                                                            method="post"
-                                                            class="ssllabs-schedule-form"
-                                                            data-require-csrf
-                                                            data-ssllabs-inline-scheduler>
-                                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                                            <label class="visually-hidden" for="{{ schedule_select_id }}">
-                                                                Weekly SSL Labs scan schedule for {{ row.target.host }}
-                                                            </label>
-                                                            <select id="{{ schedule_select_id }}" class="form-select form-select-sm"
-                                                                name="schedule_frequency"
-                                                                aria-label="Weekly SSL Labs scan schedule"
-                                                                data-ssllabs-autosave
-                                                                {% if row.host_error %}disabled{% endif %}>
-                                                                <option value="" {% if not row.target.schedule_frequency %}selected{% endif %}>Off</option>
-                                                                <option value="weekly" {% if row.target.schedule_frequency %}selected{% endif %}>On (weekly)</option>
-                                                            </select>
-                                                        </form>
-                                                    </div>
                                                 </div>
+                                                {% if row.host_error or (row.scan and row.scan.error_message) %}
                                                 <div class="ssllabs-domain-card__details">
-                                                    {% if row.target.next_scheduled_at %}
-                                                    <div class="small text-body-secondary" data-ui-lint-dynamic>Next run {{
-                                                        row.target.next_scheduled_at|datetimeformat }}</div>
-                                                    {% endif %}
                                                     {% if row.host_error %}
                                                     <div class="small text-danger" data-ui-lint-dynamic>{{ row.host_error }}</div>
-                                                    {% endif %}
-                                                    {% if row.endpoints %}
-                                                    <div class="ssllabs-result__endpoints">
-                                                        {% for ep in row.endpoints %}
-                                                        <span class="ssllabs-endpoint-chip" title="{{ ep.ip }}">
-                                                            <span class="ssllabs-endpoint-chip__label">{{ ep.ip_version }}</span>
-                                                            <span class="badge {{ ep.badge_class }} ssllabs-endpoint-chip__grade">{{ ep.grade or 'N/A' }}</span>
-                                                        </span>
-                                                        {% endfor %}
-                                                    </div>
                                                     {% endif %}
                                                     {% if row.scan and row.scan.error_message %}
                                                     <div class="ssllabs-result__error" data-ui-lint-dynamic>{{ row.scan.error_message }}</div>
                                                     {% endif %}
                                                 </div>
-                                            </details>
+                                                {% endif %}
+                                            </div>
                                             {% endfor %}
                                         </div>
                                     </td>

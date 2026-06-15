@@ -47,12 +47,6 @@
         const getRows = () => Array.from(root.querySelectorAll("[data-ssllabs-site-row]"))
             .filter((row) => row instanceof HTMLElement);
 
-        const summaryActions = Array.from(root.querySelectorAll(".ssllabs-domain-card__summary button, .ssllabs-domain-card__summary a, .ssllabs-domain-card__summary select"))
-            .filter((action) => action instanceof HTMLElement);
-        const handleSummaryActionClick = (event) => {
-            event.stopPropagation();
-        };
-
         const autosaveSelects = Array.from(root.querySelectorAll("[data-ssllabs-autosave]"))
             .filter((el) => el instanceof HTMLSelectElement);
         const handleAutosaveChange = (event) => {
@@ -116,9 +110,6 @@
 
         searchInput.addEventListener("input", handleSearchInput);
         gradeSelect.addEventListener("change", handleGradeChange);
-        for (const action of summaryActions) {
-            action.addEventListener("click", handleSummaryActionClick);
-        }
         for (const select of autosaveSelects) {
             select.addEventListener("change", handleAutosaveChange);
         }
@@ -132,9 +123,6 @@
         root.ssllabsFilterCleanup = () => {
             searchInput.removeEventListener("input", handleSearchInput);
             gradeSelect.removeEventListener("change", handleGradeChange);
-            for (const action of summaryActions) {
-                action.removeEventListener("click", handleSummaryActionClick);
-            }
             for (const select of autosaveSelects) {
                 select.removeEventListener("change", handleAutosaveChange);
             }
