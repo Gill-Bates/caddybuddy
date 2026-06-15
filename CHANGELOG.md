@@ -1,3 +1,9 @@
+## [1.5] - 2026-xx-xx
+
+
+<details>
+<summary>Previous versions...</summary>
+
 ## [1.4] - 2026-06-15
 
 - `New` Added browser-based first-run setup so a fresh instance can create the initial admin account without container-only bootstrap steps.
@@ -18,10 +24,6 @@
 - `Security` All JavaScript assets are served from local static files — no external CDN requests at runtime.
 - `Security` Restricted control commands, script execution, and certificate cleanup to validated paths and permission checks.
 - `Security` Reduced exposure of internal error details in UI responses and event streams.
-
-
-<details>
-<summary>Previous versions...</summary>
 
 ## [1.3] - 2026-06-11
 
