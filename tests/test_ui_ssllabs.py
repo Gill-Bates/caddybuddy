@@ -11,6 +11,7 @@ import os
 import re
 import unittest
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -177,6 +178,14 @@ class UISslLabsTests(unittest.TestCase):
         self.assertIn('class="ssllabs-domain-card__actions"', response.text)
         self.assertIn('class="ssllabs-domain-card__details"', response.text)
         self.assertIn('class="ssllabs-domain-card__quick-actions"', response.text)
+        self.assertRegex(
+            response.text,
+            r'<summary class="ssllabs-domain-card__summary">[\s\S]*class="ssllabs-domain-card__quick-actions"[\s\S]*</summary>',
+        )
+        self.assertRegex(
+            response.text,
+            r'<div class="ssllabs-domain-card__actions">\s*<div class="ssllabs-domain-card__inline-scheduler">',
+        )
         self.assertNotIn('class="cell-actions ssllabs-actions"', response.text)
         self.assertIn("data-require-csrf", response.text)
         self.assertIn("data-loading-submit-button", response.text)
@@ -191,6 +200,31 @@ class UISslLabsTests(unittest.TestCase):
         self.assertIn("IPv6", response.text)
         self.assertIn("2 endpoints", response.text)
         self.assertIn("Not scanned yet", response.text)
+
+    def test_ssllabs_mobile_scheduler_form_stretches_full_width(self) -> None:
+        css_path = Path(__file__).resolve().parents[1] / "app/static/css/app.css"
+        css = css_path.read_text(encoding="utf-8")
+
+        self.assertIn(
+            ".ssllabs-domain-card__inline-scheduler {\n        display: flex;\n        align-items: stretch;\n        width: 100%;",
+            css,
+        )
+        self.assertIn(
+            ".ssllabs-domain-card__actions {\n    display: grid;\n    grid-template-columns: minmax(0, 1fr);",
+            css,
+        )
+        self.assertIn(
+            ".ssllabs-domain-card .ssllabs-schedule-form {\n        display: flex;\n        width: 100%;\n        min-width: 0;",
+            css,
+        )
+        self.assertIn(
+            ".ssllabs-domain-card .ssllabs-schedule-form .form-select {\n        width: 100%;\n        min-width: 0;\n        flex: 1 1 auto;",
+            css,
+        )
+        self.assertNotIn(
+            ".ssllabs-domain-card .ssllabs-schedule-form {\n        display: grid;\n        grid-template-columns: minmax(0, 1fr) auto;",
+            css,
+        )
 
     def test_ssllabs_page_marks_mixed_filter_grade_for_mixed_endpoints(self) -> None:
         app = self._build_app()

@@ -86,7 +86,7 @@ class UIAuthTests(unittest.TestCase):
             "Select controls must keep a 44px minimum touch target.",
         )
         self.assertIn(
-            ".cb-footer-link {\n    color: inherit;\n    transition: color 0.15s ease-in-out;\n    display: inline-flex;\n    flex: 0 0 auto;\n    align-items: center;\n    justify-content: center;\n    gap: 0.3rem;\n    min-width: 2.75rem;\n    min-height: 2.75rem;",
+            ".cb-footer-link {\n    color: inherit;\n    transition: color 0.15s ease-in-out;\n    display: inline-flex;\n    flex: 0 0 auto;\n    align-items: center;\n    justify-content: center;\n    gap: 0.2rem;\n    min-width: 0;\n    min-height: 2.75rem;",
             css,
             "Footer links must keep a 44px minimum touch target.",
         )

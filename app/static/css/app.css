@@ -355,10 +355,10 @@ body.app-body--menu-open .app-sidebar {
     flex: 0 0 auto;
     align-items: center;
     justify-content: center;
-    gap: 0.3rem;
-    min-width: 2.75rem;
+    gap: 0.2rem;
+    min-width: 0;
     min-height: 2.75rem;
-    padding: 0.45rem 0.75rem;
+    padding: 0.45rem 0.3rem;
     border-radius: 999px;
 }
 
@@ -2674,7 +2674,7 @@ body.app-body--menu-open .app-sidebar {
 
 .ssllabs-domain-card__summary {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     align-items: center;
     gap: 0.75rem;
     min-height: 46px;
@@ -2750,7 +2750,7 @@ body.app-body--menu-open .app-sidebar {
 
 .ssllabs-domain-card__actions {
     display: grid;
-    grid-template-columns: var(--cb-ssllabs-domain-grid);
+    grid-template-columns: minmax(0, 1fr);
     align-items: center;
     gap: 0.75rem;
     padding: 0 0.75rem 0.55rem 0.85rem;
@@ -2864,7 +2864,7 @@ body.app-body--menu-open .app-sidebar {
     }
 
     .ssllabs-domain-card__summary {
-        grid-template-columns: var(--cb-ssllabs-domain-grid);
+        grid-template-columns: minmax(0, 1fr) var(--cb-ssllabs-actions-column-width) auto;
         min-height: 44px;
         padding-block: 0.25rem;
     }
@@ -2894,10 +2894,6 @@ body.app-body--menu-open .app-sidebar {
     .ssllabs-domain-card__quick-actions {
         width: var(--cb-ssllabs-actions-column-width);
         justify-content: flex-end;
-    }
-
-    .ssllabs-domain-card__actions {
-        grid-template-columns: var(--cb-ssllabs-domain-grid);
     }
 
     .ssllabs-domain-card__actions .ssllabs-schedule-form {
@@ -2952,7 +2948,7 @@ body.app-body--menu-open .app-sidebar {
     }
 
     .ssllabs-domain-card__summary {
-        grid-template-columns: minmax(0, 1fr);
+        grid-template-columns: minmax(0, 1fr) auto;
         align-items: stretch;
     }
 
@@ -2962,6 +2958,7 @@ body.app-body--menu-open .app-sidebar {
     }
 
     .ssllabs-domain-card__quick-actions {
+        grid-column: 1 / -1;
         justify-content: space-between;
     }
 
@@ -3085,7 +3082,7 @@ body.app-body--menu-open .app-sidebar {
     }
 
     .ssllabs-domain-card__summary {
-        grid-template-columns: minmax(0, 1fr);
+        grid-template-columns: minmax(0, 1fr) auto;
         align-items: stretch;
         padding-inline: 0.75rem;
     }
@@ -3097,10 +3094,12 @@ body.app-body--menu-open .app-sidebar {
 
     .ssllabs-domain-card__inline-scheduler {
         display: flex;
-        align-items: center;
+        align-items: stretch;
+        width: 100%;
     }
 
     .ssllabs-domain-card__quick-actions {
+        grid-column: 1 / -1;
         justify-content: space-between;
     }
 
@@ -3112,8 +3111,15 @@ body.app-body--menu-open .app-sidebar {
     }
 
     .ssllabs-domain-card .ssllabs-schedule-form {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
+        display: flex;
+        width: 100%;
+        min-width: 0;
+    }
+
+    .ssllabs-domain-card .ssllabs-schedule-form .form-select {
+        width: 100%;
+        min-width: 0;
+        flex: 1 1 auto;
     }
 }
 

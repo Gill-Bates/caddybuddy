@@ -142,30 +142,6 @@
                                                         <span class="ssllabs-domain-card__muted">Not scanned yet</span>
                                                         {% endif %}
                                                     </div>
-                                                    <span class="ssllabs-domain-card__chevron" aria-hidden="true">▾</span>
-                                                </summary>
-                                                <div class="ssllabs-domain-card__actions">
-                                                    <div class="ssllabs-domain-card__inline-scheduler">
-                                                        <form
-                                                            action="{{ request.app.url_path_for('update_ssllabs_schedule', target_id=row.target.id) }}"
-                                                            method="post"
-                                                            class="ssllabs-schedule-form"
-                                                            data-require-csrf
-                                                            data-ssllabs-inline-scheduler>
-                                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                                            <label class="visually-hidden" for="{{ schedule_select_id }}">
-                                                                Weekly SSL Labs scan schedule for {{ row.target.host }}
-                                                            </label>
-                                                            <select id="{{ schedule_select_id }}" class="form-select form-select-sm"
-                                                                name="schedule_frequency"
-                                                                aria-label="Weekly SSL Labs scan schedule"
-                                                                data-ssllabs-autosave
-                                                                {% if row.host_error %}disabled{% endif %}>
-                                                                <option value="" {% if not row.target.schedule_frequency %}selected{% endif %}>Off</option>
-                                                                <option value="weekly" {% if row.target.schedule_frequency %}selected{% endif %}>On (weekly)</option>
-                                                            </select>
-                                                        </form>
-                                                    </div>
                                                     <div class="ssllabs-domain-card__quick-actions">
                                                         {% if row.scan_report_available %}
                                                         <a href="https://www.ssllabs.com/ssltest/analyze.html?d={{ row.target.host | urlencode }}"
@@ -199,6 +175,30 @@
                                                                 title="Start a new SSL Labs scan for {{ row.target.host }}"
                                                                 data-confirm-btn-class="btn-primary"
                                                                 data-ui-lint-ignore-click-target {% if row.host_error or row.scan_active %}disabled{% endif %}>Scan</button>
+                                                        </form>
+                                                    </div>
+                                                    <span class="ssllabs-domain-card__chevron" aria-hidden="true">▾</span>
+                                                </summary>
+                                                <div class="ssllabs-domain-card__actions">
+                                                    <div class="ssllabs-domain-card__inline-scheduler">
+                                                        <form
+                                                            action="{{ request.app.url_path_for('update_ssllabs_schedule', target_id=row.target.id) }}"
+                                                            method="post"
+                                                            class="ssllabs-schedule-form"
+                                                            data-require-csrf
+                                                            data-ssllabs-inline-scheduler>
+                                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                                            <label class="visually-hidden" for="{{ schedule_select_id }}">
+                                                                Weekly SSL Labs scan schedule for {{ row.target.host }}
+                                                            </label>
+                                                            <select id="{{ schedule_select_id }}" class="form-select form-select-sm"
+                                                                name="schedule_frequency"
+                                                                aria-label="Weekly SSL Labs scan schedule"
+                                                                data-ssllabs-autosave
+                                                                {% if row.host_error %}disabled{% endif %}>
+                                                                <option value="" {% if not row.target.schedule_frequency %}selected{% endif %}>Off</option>
+                                                                <option value="weekly" {% if row.target.schedule_frequency %}selected{% endif %}>On (weekly)</option>
+                                                            </select>
                                                         </form>
                                                     </div>
                                                 </div>
