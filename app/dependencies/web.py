@@ -7,10 +7,12 @@
 from base64 import b64encode
 from functools import cache
 import hmac
+import re
 import secrets
 import time
 from datetime import UTC, datetime
 from hashlib import sha256, sha384
+from urllib.parse import unquote
 
 from fastapi import HTTPException, Request
 from fastapi.responses import RedirectResponse, Response
@@ -22,6 +24,15 @@ from app.config.settings import get_settings
 from app.models.entities import User
 from app.repositories.users import user_repository
 from app.services.build_info import get_build_info
+
+
+_MAX_CSRF_TOKEN_LENGTH = 256
+_MAX_FLASHES = 5
+_MAX_FLASH_MESSAGE_LENGTH = 500
+_UNSAFE_REDIRECT_PATH_RE = re.compile(r"[\x00-\x1f\x7f\\]")
+# Allow up to a minute of clock skew before treating a session timestamp as
+# being from the future (and therefore tampered/invalid).
+_SESSION_CLOCK_SKEW_SECONDS = 60
 
 
 settings = get_settings()
@@ -125,6 +136,17 @@ def _asset_integrity_live(relative_path: str) -> str:
     return _asset_integrity_cached(relative_path, stat.st_mtime_ns, stat.st_size)
 
 
+def _session_timestamp(value: object) -> float | None:
+    """Return a positive float timestamp, or None when missing/invalid."""
+    try:
+        parsed = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if parsed <= 0:
+        return None
+    return parsed
+
+
 def _user_session_fingerprint(password_hash: str) -> str:
     """Derive a short HMAC fingerprint from the user's password hash.
 
@@ -158,16 +180,30 @@ async def get_session_user(request: Request, session: AsyncSession) -> User | No
         return None
 
     now = time.time()
-    created_at = request.session.get("session_created_at", 0)
-    last_activity = request.session.get("session_last_activity", 0)
+    created_at = _session_timestamp(request.session.get("session_created_at"))
+    last_activity = _session_timestamp(request.session.get("session_last_activity"))
+
+    # A session missing either timestamp predates the timeout fields and must not
+    # be trusted, otherwise the absolute timeout would never be enforced.
+    if created_at is None or last_activity is None:
+        request.session.clear()
+        return None
+
+    # Reject timestamps from the future (clock tampering / corrupted cookie).
+    if (
+        created_at > now + _SESSION_CLOCK_SKEW_SECONDS
+        or last_activity > now + _SESSION_CLOCK_SKEW_SECONDS
+    ):
+        request.session.clear()
+        return None
 
     # Check absolute timeout (24h since login)
-    if created_at and (now - created_at) > settings.session_absolute_timeout_seconds:
+    if (now - created_at) > settings.session_absolute_timeout_seconds:
         request.session.clear()
         return None
 
     # Check inactivity timeout (60 min since last request)
-    if last_activity and (now - last_activity) > settings.session_inactivity_timeout_seconds:
+    if (now - last_activity) > settings.session_inactivity_timeout_seconds:
         request.session.clear()
         return None
 
@@ -204,10 +240,23 @@ def ensure_csrf_token(request: Request) -> str:
     return f"{token}.{_csrf_hmac(token)}"
 
 
+def ensure_csp_nonce(request: Request) -> str:
+    """Return the per-request CSP nonce used for inline style authorization."""
+    nonce = getattr(request.state, "csp_nonce", None)
+    if not nonce:
+        nonce = secrets.token_urlsafe(16)
+        request.state.csp_nonce = nonce
+    return nonce
+
+
 def validate_csrf_token(request: Request, submitted_token: str | None) -> None:
     """Verify a submitted CSRF token against the session-bound signed value."""
     session_token = request.session.get("csrf_token")
-    if not session_token or not submitted_token:
+    if (
+        not session_token
+        or not submitted_token
+        or len(submitted_token) > _MAX_CSRF_TOKEN_LENGTH
+    ):
         raise HTTPException(status_code=403, detail="Invalid CSRF token.")
 
     expected_token = f"{session_token}.{_csrf_hmac(session_token)}"
@@ -216,10 +265,13 @@ def validate_csrf_token(request: Request, submitted_token: str | None) -> None:
 
 
 def push_flash(request: Request, category: str, message: str) -> None:
-    """Append a flash message to the current session."""
+    """Append a flash message to the current session, bounded in size and count."""
     flashes = list(request.session.get("flashes", []))
-    flashes.append({"category": category, "message": message})
-    request.session["flashes"] = flashes
+    flashes.append({
+        "category": str(category)[:32],
+        "message": str(message)[:_MAX_FLASH_MESSAGE_LENGTH],
+    })
+    request.session["flashes"] = flashes[-_MAX_FLASHES:]
 
 
 def pop_flashes(request: Request) -> list[dict[str, str]]:
@@ -229,15 +281,35 @@ def pop_flashes(request: Request) -> list[dict[str, str]]:
     return flashes
 
 
-def redirect_to(path: str) -> RedirectResponse:
-    """Return a 303 redirect response for the given path."""
-    return RedirectResponse(url=path, status_code=303)
+def safe_redirect_path(path: str | None, *, fallback: str = "/") -> str:
+    """Return ``path`` only if it is a safe same-origin path, else ``fallback``.
+
+    Rejects absolute URLs, protocol-relative paths, backslash tricks and control
+    characters so the helper cannot be turned into an open redirect.
+    """
+    if not path or not path.startswith("/") or path.startswith("//") or path.startswith("/\\"):
+        return fallback
+    decoded = unquote(path)
+    if (
+        not decoded.startswith("/")
+        or decoded.startswith("//")
+        or decoded.startswith("/\\")
+        or _UNSAFE_REDIRECT_PATH_RE.search(path)
+        or _UNSAFE_REDIRECT_PATH_RE.search(decoded)
+    ):
+        return fallback
+    return path
+
+
+def redirect_to(path: str, *, fallback: str = "/") -> RedirectResponse:
+    """Return a 303 redirect response for a validated same-origin path."""
+    return RedirectResponse(url=safe_redirect_path(path, fallback=fallback), status_code=303)
 
 
 def optional_url_path_for(request: Request, route_name: str, **path_params: object) -> str | None:
     """Return a route path when present, else None for partial test apps."""
     try:
-        return request.app.url_path_for(route_name, **path_params)
+        return str(request.app.url_path_for(route_name, **path_params))
     except NoMatchFound:
         return None
 
@@ -279,6 +351,7 @@ def render_template(
         "request": request,
         "current_user": current_user,
         "csrf_token": ensure_csrf_token(request),
+        "csp_nonce": ensure_csp_nonce(request),
         "asset_integrity": asset_integrity,
         "optional_url_path_for": optional_url_path_for,
         "flashes": pop_flashes(request),

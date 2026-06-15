@@ -50,6 +50,15 @@ class CaddyApiSiteMutationTests(unittest.IsolatedAsyncioTestCase):
                 enabled=True,
             )
 
+    def test_create_request_rejects_too_many_domains(self) -> None:
+        with self.assertRaisesRegex(ValueError, "more than 25 domains"):
+            SiteCreateRequest(
+                site_name="Example Site",
+                domain=", ".join(f"site-{index}.example.com" for index in range(26)),
+                caddy_directives="reverse_proxy backend.example.test:443",
+                enabled=True,
+            )
+
     def test_site_response_rejects_naive_timestamps(self) -> None:
         naive_now = datetime.now()
 

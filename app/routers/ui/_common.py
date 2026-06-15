@@ -12,17 +12,27 @@ from collections.abc import Sequence
 from urllib.parse import unquote
 
 from fastapi import HTTPException, Request
+from fastapi.responses import Response
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import FormData
 
-from app.dependencies.web import get_session_user, push_flash, validate_csrf_token
+from app.dependencies.web import get_session_user, push_flash, redirect_to, validate_csrf_token
 from app.models.entities import User
+from app.services.caddy_onboarding import get_onboarding_state
 
 logger = logging.getLogger(__name__)
 
 _UNSAFE_NEXT_PATH_RE = re.compile(r"[\x00-\x1f\x7f\\]")
 _MAX_FORM_BODY_BYTES = 2 * 1024 * 1024
+
+
+async def require_onboarding_completed(session: AsyncSession) -> Response | None:
+    """Return a redirect to /onboarding when the wizard has not been completed, else None."""
+    state = await get_onboarding_state(session)
+    if state.status != "completed":
+        return redirect_to("/onboarding")
+    return None
 
 
 async def require_user(request: Request, session: AsyncSession) -> User | None:
@@ -44,7 +54,7 @@ async def require_admin(request: Request, session: AsyncSession) -> User | None:
     return current_user
 
 
-async def validated_form(request: Request) -> FormData:
+async def validated_csrf_form(request: Request) -> FormData:
     """Parse form data and validate CSRF token."""
     content_length = request.headers.get("content-length")
     if content_length is not None:
@@ -57,6 +67,9 @@ async def validated_form(request: Request) -> FormData:
     form = await request.form()
     validate_csrf_token(request, str(form.get("csrf_token", "")))
     return form
+
+
+validated_form = validated_csrf_form
 
 
 def safe_next(next_path: str | None) -> str:

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import re
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -24,7 +25,7 @@ _ENV_OVERRIDES = {
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 from fastapi.testclient import TestClient
-from starlette.middleware.sessions import SessionMiddleware
+from app.middleware.session import RequestAwareSessionMiddleware
 
 
 class _SecurityTestEnvMixin:
@@ -69,6 +70,26 @@ class SecurityHeadersMiddlewareTests(_SecurityTestEnvMixin, unittest.TestCase):
         self.assertEqual(response.headers["cross-origin-opener-policy"], "same-origin")
         self.assertNotIn("strict-transport-security", response.headers)
 
+    def test_csp_nonce_is_shared_between_request_state_and_header(self) -> None:
+        app = FastAPI()
+        app.add_middleware(self._csrf_module.CSRFMiddleware)
+        app.add_middleware(
+            RequestAwareSessionMiddleware,
+            secret_key="unit-test-secret-key-for-testing",
+        )
+        app.add_middleware(self._csrf_module.SecurityHeadersMiddleware)
+
+        @app.get("/")
+        async def index(request: Request) -> PlainTextResponse:
+            return PlainTextResponse(request.state.csp_nonce)
+
+        with TestClient(app) as client:
+            response = client.get("/")
+
+        nonce = response.text
+        self.assertRegex(response.headers["content-security-policy"], rf"style-src 'self' 'nonce-{re.escape(nonce)}'")
+        self.assertEqual(nonce, response.headers["content-security-policy"].split("'nonce-", 1)[1].split("'", 1)[0])
+
     def test_hsts_is_added_for_https_requests(self) -> None:
         app = FastAPI()
         app.add_middleware(self._csrf_module.SecurityHeadersMiddleware)
@@ -96,7 +117,10 @@ class CSRFMiddlewareTests(_SecurityTestEnvMixin, unittest.TestCase):
     def _build_app(self) -> FastAPI:
         app = FastAPI()
         app.add_middleware(self._csrf_module.CSRFMiddleware)
-        app.add_middleware(SessionMiddleware, secret_key="unit-test-secret-key-for-testing")
+        app.add_middleware(
+            RequestAwareSessionMiddleware,
+            secret_key="unit-test-secret-key-for-testing",
+        )
 
         @app.get("/login")
         async def login_page(request: Request) -> PlainTextResponse:
@@ -104,6 +128,10 @@ class CSRFMiddlewareTests(_SecurityTestEnvMixin, unittest.TestCase):
 
         @app.post("/api/protected")
         async def protected() -> PlainTextResponse:
+            return PlainTextResponse("ok")
+
+        @app.get("/api/public")
+        async def public_api() -> PlainTextResponse:
             return PlainTextResponse("ok")
 
         return app
@@ -203,6 +231,17 @@ class CSRFMiddlewareTests(_SecurityTestEnvMixin, unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.text, "ok")
 
+    def test_safe_api_requests_do_not_prime_session_csrf_token(self) -> None:
+        app = self._build_app()
+
+        with self._settings_patch():
+            with TestClient(app) as client:
+                response = client.get("/api/public")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.text, "ok")
+        self.assertNotIn("session=", response.headers.get("set-cookie", "").lower())
+
     def test_cookie_authenticated_api_request_rejects_invalid_csrf_header(self) -> None:
         app = self._build_app()
 
@@ -226,6 +265,29 @@ class CSRFMiddlewareTests(_SecurityTestEnvMixin, unittest.TestCase):
 
         self.assertRegex(response.text, r"^[A-Za-z0-9_-]+\.[0-9a-f]{64}$")
         self.assertTrue(client.cookies.get("session"))
+
+    def test_ui_post_route_requires_csrf_under_variant_a(self) -> None:
+        app = FastAPI()
+        app.add_middleware(self._csrf_module.CSRFMiddleware)
+        app.add_middleware(
+            RequestAwareSessionMiddleware,
+            secret_key="unit-test-secret-key-for-testing",
+        )
+
+        @app.get("/login")
+        async def login_page(request: Request) -> PlainTextResponse:
+            return PlainTextResponse(self._ensure_csrf_token(request))
+
+        @app.post("/settings/change-password")
+        async def change_password() -> PlainTextResponse:
+            return PlainTextResponse("ok")
+
+        with TestClient(app) as client:
+            client.get("/login")
+            response = client.post("/settings/change-password")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json(), {"detail": "CSRF token missing or invalid"})
 
     def test_forwarded_proto_header_alone_does_not_enable_hsts(self) -> None:
         app = FastAPI()

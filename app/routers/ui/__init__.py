@@ -14,10 +14,11 @@ _router: APIRouter | None = None
 
 
 def _build_router() -> APIRouter:
-    from . import auth, caddyfile, dashboard, settings, sites, ssllabs
+    from . import auth, caddyfile, dashboard, onboarding, settings, sites, ssllabs
 
     ui_router = APIRouter()
     ui_router.include_router(auth.router)
+    ui_router.include_router(onboarding.router)
     ui_router.include_router(dashboard.router)
     ui_router.include_router(caddyfile.router)
     ui_router.include_router(sites.router)

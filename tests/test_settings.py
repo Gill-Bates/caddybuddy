@@ -16,7 +16,6 @@ from app.config.settings import DEFAULT_CADDY_ADMIN_URL, DEFAULT_CADDYFILE_PATH,
 def _settings_kwargs(**overrides: object) -> dict[str, object]:
     values: dict[str, object] = {
         "CADDYBUDDY_SECRET_KEY": "StrongSecretKey-1234567890abcdef",
-        "CADDYBUDDY_ADMIN_PASSWORD": "StrongAdminPassword-123!",
     }
     values.update(overrides)
     return values
@@ -73,7 +72,6 @@ class SettingsValidationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Set a strong secret key"):
                 Settings(
                     caddybuddy_SECRET_KEY="StrongSecretKey-1234567890abcdef",
-                    CADDYBUDDY_ADMIN_PASSWORD="StrongAdminPassword-123!",
                 )
 
     def test_caddy_api_url_uses_cb_env_only(self) -> None:
@@ -87,7 +85,6 @@ class SettingsValidationTests(unittest.TestCase):
         ):
             settings = Settings(
                 CB_SECRET_KEY="StrongSecretKey-1234567890abcdef",
-                CB_ADMIN_PASSWORD="StrongAdminPassword-123!",
             )
 
         self.assertEqual(settings.caddy_admin_url, DEFAULT_CADDY_ADMIN_URL)
@@ -104,17 +101,9 @@ class SettingsValidationTests(unittest.TestCase):
         ):
             settings = Settings(
                 CB_SECRET_KEY="StrongSecretKey-1234567890abcdef",
-                CB_ADMIN_PASSWORD="StrongAdminPassword-123!",
             )
 
         self.assertEqual(settings.caddy_api_url, DEFAULT_CADDY_ADMIN_URL)
-
-    def test_explicit_admin_bootstrap_password_is_rejected(self) -> None:
-        with self.assertRaisesRegex(ValueError, "non-default value"):
-            Settings(
-                CB_SECRET_KEY="StrongSecretKey-1234567890abcdef",
-                CB_ADMIN_PASSWORD="admin",
-            )
 
     def test_mounted_caddyfile_path_requires_caddyfile_name(self) -> None:
         with self.assertRaisesRegex(ValueError, "must point to a file named 'Caddyfile'"):

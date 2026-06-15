@@ -11,7 +11,8 @@ WORKDIR /build
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update \
-    && apt-get install --no-install-recommends -y build-essential
+    && apt-get install --no-install-recommends -y build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
 # Create isolated virtual environment (PEP 668 compliance)
 RUN python -m venv /opt/venv
@@ -31,7 +32,6 @@ FROM python:3.13-slim AS runtime
 ARG APP_VERSION=dev
 ARG GIT_SHA=unknown
 ARG BUILD_DATE=unknown
-ARG CADDY_VERSION
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -48,23 +48,8 @@ LABEL org.opencontainers.image.version=$APP_VERSION \
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update \
-    && apt-get install --no-install-recommends -y acl ca-certificates curl gnupg gosu \
-    && curl --proto '=https' --tlsv1.2 -fsSL \
-        'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
-        -o /tmp/caddy-stable.gpg \
-    && gpg --batch --dearmor \
-        -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg \
-        /tmp/caddy-stable.gpg \
-    && rm -f /tmp/caddy-stable.gpg \
-    && curl --proto '=https' --tlsv1.2 -fsSL \
-        'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
-        -o /etc/apt/sources.list.d/caddy-stable.list \
-    && apt-get update \
-    && if [ -n "$CADDY_VERSION" ]; then \
-        apt-get install --no-install-recommends -y "caddy=${CADDY_VERSION}*"; \
-    else \
-        apt-get install --no-install-recommends -y caddy; \
-    fi
+    && apt-get install --no-install-recommends -y acl ca-certificates gosu \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --system --gid 1000 app \
     && useradd --system --uid 1000 --gid app --home /app --shell /usr/sbin/nologin app

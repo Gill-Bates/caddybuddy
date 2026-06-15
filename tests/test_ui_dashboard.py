@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -60,7 +61,11 @@ class UIDashboardTests(unittest.TestCase):
             dashboard_router,
             session_override=self._session_override,
             stub_routes=[
+                ("GET", "/api/v1/dashboard/metrics", "dashboard_metrics"),
+                ("GET", "/api/v1/caddy/status", "caddy_status"),
+                ("GET", "/api/v1/dashboard/ssllabs-history", "dashboard_ssllabs_history"),
                 ("GET", "/caddyfile", "caddyfile_page"),
+                ("GET", "/onboarding", "onboarding_page"),
                 ("GET", "/sites", "sites_page"),
                 ("POST", "/logout", "logout_action"),
             ],
@@ -82,10 +87,14 @@ class UIDashboardTests(unittest.TestCase):
 
         with (
             patch("app.routers.ui.dashboard.require_user", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.dashboard.get_dashboard_metrics", new=AsyncMock(return_value=metrics)),
+            patch("app.routers.ui.dashboard.get_dashboard_shell_metrics", new=AsyncMock(return_value=metrics)),
             patch(
                 "app.routers.ui.dashboard.get_caddy_runtime_status",
                 new=AsyncMock(return_value=SimpleNamespace(onboarding_required=False)),
+            ),
+            patch(
+                "app.routers.ui._common.get_onboarding_state",
+                new=AsyncMock(return_value=SimpleNamespace(status="completed")),
             ),
         ):
             with TestClient(app) as client:
@@ -100,7 +109,24 @@ class UIDashboardTests(unittest.TestCase):
         self.assertIn('/static/js/app-status.js', response.text)
         self.assertNotIn('/static/js/app.js', response.text)
         self.assertIn('data-dashboard-metrics-url="/api/v1/dashboard/metrics"', response.text)
-        self.assertEqual(response.text.count('class="col-6 col-md-4"'), 3)
+        # SSL Labs rank history chart card with quick-range filter.
+        self.assertIn('data-status-url="/api/v1/caddy/status"', response.text)
+        self.assertIn('data-ssllabs-history-url="/api/v1/dashboard/ssllabs-history"', response.text)
+        self.assertIn('data-ssllabs-history-loading-shell="true"', response.text)
+        self.assertIn('id="ssllabs-history-chart"', response.text)
+        self.assertIn('id="ssllabs-history-range"', response.text)
+        self.assertIn('id="ssllabs-grade-legend"', response.text)
+        self.assertIn('id="ssllabs-domain-search"', response.text)
+        self.assertIn('id="ssllabs-history-inspector"', response.text)
+        self.assertIn('id="ssllabs-history-periods"', response.text)
+        self.assertIn("Weekly samples appear here after the first completed scheduled scan.", response.text)
+        self.assertIn('id="ssllabs-problem-domains"', response.text)
+        self.assertIn('id="ssllabs-focus-wrap"', response.text)
+        self.assertIn('id="ssllabs-domain-focus-chart"', response.text)
+        self.assertIn('/static/vendor/chartjs/chart.umd.min.js', response.text)
+        self.assertIn('/static/js/ssllabs-history-chart.js', response.text)
+        self.assertIn('class="metric-grid"', response.text)
+        self.assertEqual(response.text.count('<article class="metric-card hero-metric'), 3)
         self.assertEqual(response.text.count('class="hero-metric__icon" aria-hidden="true"'), 3)
         self.assertIn(">10<", response.text)  # enabled_domain_count
         self.assertIn("/12</span>", response.text)  # total domain_count
@@ -132,55 +158,49 @@ class UIDashboardTests(unittest.TestCase):
 
         with (
             patch("app.routers.ui.dashboard.require_user", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.dashboard.get_dashboard_metrics", new=AsyncMock(return_value=metrics)),
+            patch("app.routers.ui.dashboard.get_dashboard_shell_metrics", new=AsyncMock(return_value=metrics)),
             patch(
                 "app.routers.ui.dashboard.get_caddy_runtime_status",
                 new=AsyncMock(return_value=SimpleNamespace(onboarding_required=False)),
             ),
-        ):
-            with TestClient(app) as client:
-                response = client.get("/")
-
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("Create your first managed site", response.text)
-        self.assertIn("Add a domain and deploy its Caddy configuration from CaddyBuddy.", response.text)
-        self.assertIn('href="/sites"', response.text)
-        self.assertIn('id="dashboard-certificate-warning"', response.text)
-        self.assertIn('d-none', response.text)
-
-    def test_home_page_points_to_caddyfile_when_onboarding_is_required(self) -> None:
-        app = self._build_app()
-        current_user = SimpleNamespace(username="admin", role="admin")
-        metrics = SimpleNamespace(
-            domain_count=0,
-            enabled_domain_count=0,
-            valid_certificate_count=0,
-            expired_certificate_count=0,
-            expiring_soon_certificate_count=0,
-            caddy_service_status="Running",
-            caddy_service_uptime="Unavailable",
-            caddy_version="v2.8.4",
-        )
-
-        with (
-            patch("app.routers.ui.dashboard.require_user", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.dashboard.get_dashboard_metrics", new=AsyncMock(return_value=metrics)),
             patch(
-                "app.routers.ui.dashboard.get_caddy_runtime_status",
-                new=AsyncMock(return_value=SimpleNamespace(onboarding_required=True)),
+                "app.routers.ui._common.get_onboarding_state",
+                new=AsyncMock(return_value=SimpleNamespace(status="completed")),
             ),
         ):
             with TestClient(app) as client:
                 response = client.get("/")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("Create the managed Caddyfile first", response.text)
-        self.assertIn(
-            "Import the host-mounted Caddyfile into CaddyBuddy and replace it with the managed marker before creating",
-            response.text,
-        )
-        self.assertIn('href="/caddyfile"', response.text)
-        self.assertNotIn("href=\"/sites\" class=\"btn btn-primary\">Create site", response.text)
+        self.assertNotIn("Create your first managed site", response.text)
+        self.assertIn('id="dashboard-certificate-warning"', response.text)
+        self.assertIn('d-none', response.text)
+
+    def test_ssllabs_history_chart_uses_week_based_previous_comparison_labels(self) -> None:
+        chart_script = Path("app/static/js/ssllabs-history-chart.js").read_text(encoding="utf-8")
+        self.assertIn("Improved vs. previous week", chart_script)
+        self.assertIn("Worsened vs. previous week", chart_script)
+        self.assertNotIn("prev. scan", chart_script)
+        self.assertNotIn("prev. day", chart_script)
+
+    def test_home_page_redirects_to_wizard_when_onboarding_not_completed(self) -> None:
+        app = self._build_app()
+        current_user = SimpleNamespace(username="admin", role="admin")
+
+        with (
+            patch("app.routers.ui.dashboard.require_user", new=AsyncMock(return_value=current_user)),
+            patch("app.routers.ui.dashboard.get_dashboard_shell_metrics", new=AsyncMock()) as get_metrics,
+            patch(
+                "app.routers.ui._common.get_onboarding_state",
+                new=AsyncMock(return_value=SimpleNamespace(status="not_started")),
+            ),
+        ):
+            with TestClient(app) as client:
+                response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.url.path, "/onboarding")
+        get_metrics.assert_not_awaited()
 
     def test_home_page_redirects_anonymous_user_to_login(self) -> None:
         app = self._build_app()
@@ -196,8 +216,12 @@ class UIDashboardTests(unittest.TestCase):
         app = self._build_app()
         app.include_router(auth_router)
 
-        with TestClient(app) as client:
-            response = client.get("/", follow_redirects=True)
+        with (
+            patch("app.routers.ui.dashboard.require_user", new=AsyncMock(return_value=None)),
+            patch("app.routers.ui.auth.user_repository.exists_any", new=AsyncMock(return_value=True)),
+        ):
+            with TestClient(app) as client:
+                response = client.get("/", follow_redirects=True)
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("Please sign in to continue", response.text)

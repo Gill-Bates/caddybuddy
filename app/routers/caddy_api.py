@@ -30,7 +30,10 @@ from app.services.caddyfile_manager import (
     CaddySyncResult,
     get_caddy_runtime_status,
     onboard_caddy,
+    onboarding_result_should_commit,
+    onboarding_succeeded,
     sync_caddy_configuration,
+    sync_succeeded,
 )
 from app.services.events import try_publish_resource_event
 
@@ -47,17 +50,13 @@ def _sync_error_status(error_code: str | None) -> int:
     return status.HTTP_500_INTERNAL_SERVER_ERROR
 
 
-def _sync_succeeded(sync_status: str) -> bool:
-    return sync_status in {"synced", "no_change"}
-
-
 async def _run_sync_followup(session: AsyncSession) -> CaddySyncResult:
     try:
         sync_result = await sync_caddy_configuration(session)
     except Exception:
         await session.rollback()
         raise
-    if not _sync_succeeded(sync_result.status):
+    if not sync_succeeded(sync_result.status):
         await session.rollback()
         raise HTTPException(
             status_code=_sync_error_status(sync_result.error_code),
@@ -122,7 +121,7 @@ async def caddy_onboard(
     # SlowAPI requires the Request parameter in the endpoint signature.
     del request
     result = await onboard_caddy(session)
-    if result.status in {"onboarded", "already_managed", "synced", "no_change"}:
+    if onboarding_result_should_commit(result.status):
         await session.commit()
     else:
         await session.rollback()
@@ -133,7 +132,7 @@ async def caddy_onboard(
         synced=result.synced,
         detail=result.error,
     )
-    if not _sync_succeeded(result.status) and result.status not in {"onboarded", "already_managed"}:
+    if not sync_succeeded(result.status) and not onboarding_succeeded(result.status):
         response.status_code = _sync_error_status(result.error_code)
     return response_payload
 
@@ -149,7 +148,7 @@ async def caddy_sync(
     # SlowAPI requires the Request parameter in the endpoint signature.
     del request
     result = await sync_caddy_configuration(session)
-    if _sync_succeeded(result.status):
+    if sync_succeeded(result.status):
         await session.commit()
     else:
         await session.rollback()
@@ -160,7 +159,7 @@ async def caddy_sync(
         synced=result.synced,
         detail=result.error,
     )
-    if not _sync_succeeded(result.status):
+    if not sync_succeeded(result.status):
         response.status_code = _sync_error_status(result.error_code)
     return response_payload
 

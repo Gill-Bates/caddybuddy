@@ -24,12 +24,10 @@ require_tools() {
         echo "ERROR: gosu is required but not installed." >&2
         exit 1
     fi
+}
 
-    if ! command -v setfacl >/dev/null 2>&1; then
-        echo "ERROR: setfacl is required to grant CaddyBuddy access without world-writable permissions." >&2
-        echo "Install ACL support or set ownership/group permissions on the host." >&2
-        exit 1
-    fi
+has_setfacl() {
+    command -v setfacl >/dev/null 2>&1
 }
 
 bootstrap_data_directory() {
@@ -48,82 +46,75 @@ bootstrap_data_directory() {
 # -----------------------------------------------------------------------------
 verify_caddyfile_mount() {
     if [ ! -e "$CADDYFILE_PATH" ]; then
-        echo "ERROR: required Caddyfile is missing: $CADDYFILE_PATH" >&2
-        echo "Create and bind-mount the host Caddyfile before starting CaddyBuddy." >&2
-        exit 1
+        echo "WARNING: Caddyfile is missing at $CADDYFILE_PATH." >&2
+        echo "CaddyBuddy will start; the onboarding wizard can initialize or import the managed configuration later." >&2
+        return 0
     fi
 
     if [ ! -f "$CADDYFILE_PATH" ]; then
-        echo "ERROR: Caddyfile path is not a regular file: $CADDYFILE_PATH" >&2
-        exit 1
+        echo "WARNING: Caddyfile path is not a regular file: $CADDYFILE_PATH" >&2
+        echo "CaddyBuddy will start; fix the mount if the managed Caddyfile is needed." >&2
+        return 0
     fi
 
     if ! gosu "${APP_UID}:${APP_GID}" test -r "$CADDYFILE_PATH" 2>/dev/null; then
-        echo "ERROR: Caddyfile is not readable by uid=${APP_UID}: $CADDYFILE_PATH" >&2
-        echo "On the host, run for example:" >&2
-        echo "  sudo chown ${APP_UID}:${APP_GID} /path/to/Caddyfile" >&2
-        exit 1
+        echo "WARNING: Caddyfile is not readable by uid=${APP_UID}: $CADDYFILE_PATH" >&2
+        echo "CaddyBuddy will start; update the host mount permissions if Caddyfile editing is required." >&2
     fi
 
     if ! gosu "${APP_UID}:${APP_GID}" test -w "$CADDYFILE_PATH" 2>/dev/null; then
-        echo "ERROR: Caddyfile is not writable by uid=${APP_UID}: $CADDYFILE_PATH" >&2
-        echo "Ensure the mounted Caddyfile is bind-mounted read-write." >&2
-        echo "On the host, run for example:" >&2
-        echo "  sudo chown ${APP_UID}:${APP_GID} /path/to/Caddyfile" >&2
-        exit 1
+        echo "WARNING: Caddyfile is not writable by uid=${APP_UID}: $CADDYFILE_PATH" >&2
+        echo "CaddyBuddy will start; onboarding may still proceed in API-only mode." >&2
     fi
 }
 
 
 ensure_caddy_cert_permissions() {
-    local cert_path="${CB_CADDY_CERTIFICATES_PATH:-$DEFAULT_CERT_PATH}"
-    local caddy_share
-    local cert_root
+    local cert_dir="${CB_CADDY_CERTIFICATES_PATH:-$DEFAULT_CERT_PATH}"
     local current
 
-    case "$cert_path" in
+    case "$cert_dir" in
         /*) ;;
         *)
-            echo "ERROR: CB_CADDY_CERTIFICATES_PATH must be an absolute path: $cert_path" >&2
+            echo "ERROR: CB_CADDY_CERTIFICATES_PATH must be an absolute path: $cert_dir" >&2
             exit 1
             ;;
     esac
 
-    cert_root="$(dirname "$cert_path")"
-    caddy_share="$(dirname "$cert_root")"
-
-    if [ "$cert_root" = "/" ] || [ "$caddy_share" = "/" ]; then
-        echo "ERROR: refusing unsafe certificate storage path: $cert_path" >&2
-        echo "Set CB_CADDY_CERTIFICATES_PATH to a specific directory under Caddy storage." >&2
+    if [ "$cert_dir" = "/" ]; then
+        echo "ERROR: refusing unsafe certificate storage path: $cert_dir" >&2
         exit 1
     fi
 
-    if [ ! -e "$caddy_share" ]; then
+    if [ ! -e "$cert_dir" ]; then
         return 0
     fi
 
-    current="$caddy_share"
+    if ! has_setfacl; then
+        echo "WARNING: setfacl is not installed; certificate storage ACLs will not be modified." >&2
+        echo "CaddyBuddy will start; certificate filesystem inspection may be unavailable." >&2
+        return 0
+    fi
+
+    # Parent directories only need traversal, not listing.
+    current="$cert_dir"
     while [ "$current" != "/" ]; do
         if [ -d "$current" ] && ! gosu "${APP_UID}:${APP_GID}" test -x "$current" 2>/dev/null; then
-            setfacl -m "u:${APP_UID}:rx" "$current" 2>/dev/null || true
+            setfacl -m "u:${APP_UID}:x" "$current" 2>/dev/null || true
         fi
         current="$(dirname "$current")"
     done
 
-    # Grant app write access only inside Caddy's storage root, not the parent share tree.
-    find "$cert_root" -type d -exec setfacl -m "u:${APP_UID}:rwx" '{}' + 2>/dev/null || true
+    # Existing certificate tree: allow directory traversal/listing and file reads.
+    find "$cert_dir" -type d -exec setfacl -m "u:${APP_UID}:rx" '{}' + 2>/dev/null || true
+    find "$cert_dir" -type f -exec setfacl -m "u:${APP_UID}:r" '{}' + 2>/dev/null || true
 
-    if ! gosu "${APP_UID}:${APP_GID}" test -x "$cert_root" 2>/dev/null; then
-        echo "ERROR: Caddy storage is not traversable by uid=${APP_UID}: $cert_root" >&2
-        echo "Automatic repair of the mounted Caddy storage permissions did not succeed." >&2
-        exit 1
-    fi
+    # Future certificates: new issuer/domain folders and files inherit access.
+    find "$cert_dir" -type d -exec setfacl -d -m "u:${APP_UID}:rx" '{}' + 2>/dev/null || true
 
-    if ! gosu "${APP_UID}:${APP_GID}" test -w "$cert_root" 2>/dev/null; then
-        echo "ERROR: Caddy storage is not writable by uid=${APP_UID}: $cert_root" >&2
+    if ! gosu "${APP_UID}:${APP_GID}" test -x "$cert_dir" 2>/dev/null; then
+        echo "ERROR: Caddy certificate storage is not traversable by uid=${APP_UID}: $cert_dir" >&2
         echo "Automatic repair of the mounted Caddy storage permissions did not succeed." >&2
-        echo "On the host, run for example:" >&2
-        echo "  sudo setfacl -R -m u:${APP_UID}:rwx /var/lib/caddy/.local/share/caddy" >&2
         exit 1
     fi
 }

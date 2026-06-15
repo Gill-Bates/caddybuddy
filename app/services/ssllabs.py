@@ -12,28 +12,52 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import Settings, get_settings
 from app.database.session import get_session_factory
 from app.repositories.sites import site_repository
-from app.repositories.ssllabs import TERMINAL_SCAN_STATUSES, ssllabs_repository
+from app.repositories.ssllabs import ssllabs_repository
 from app.schemas.ssllabs import SslLabsScanStatus, SslLabsScheduleFrequency
 from app.services.events import try_publish_resource_event
-from app.services.runtime_settings import get_ssllabs_email
-from app.utils.ssllabs import mask_email, next_schedule_time, validate_ssllabs_host
+from app.services.runtime_settings import get_ssllabs_email, get_ssllabs_history_retention_days
+from app.utils.ssllabs import (
+    GRADE_RANKS,
+    grade_to_rank,
+    is_ssllabs_scan_terminal,
+    mask_email,
+    next_schedule_time,
+    ssllabs_scan_event_action,
+    validate_ssllabs_host,
+)
 
 
 logger = logging.getLogger(__name__)
+
+# Quick-filter presets for the dashboard SSL Labs rank chart.
+SSLLABS_HISTORY_RANGES: dict[str, int] = {
+    "30d": 30,
+    "90d": 90,
+    "180d": 180,
+    "1y": 365,
+    "2y": 730,
+}
+SSLLABS_HISTORY_DEFAULT_RANGE = "30d"
 
 _INITIAL_POLL_SECONDS = 5
 _RUNNING_POLL_SECONDS = 10
 _SCHEDULER_POLL_SECONDS = 60
 _MIN_SECONDS_BETWEEN_NEW_SCANS = 300
 _MAX_RETRY_AFTER_SECONDS = 60 * 60
-_SCHEDULE_JITTER = timedelta(minutes=15)
+# Spread weekly scheduled scans across a full day (deterministic per host) so a large
+# fleet does not fire at the SSL Labs API simultaneously.
+_WEEKLY_SCHEDULE_JITTER = timedelta(hours=24)
 _MAX_SCAN_DURATION_SECONDS = 2 * 60 * 60
+_MAX_SSL_LABS_RESPONSE_BYTES = 2 * 1024 * 1024
+_ALLOWED_SSL_LABS_API_HOST = "api.ssllabs.com"
 
 
 @dataclass(slots=True, frozen=True)
@@ -72,6 +96,42 @@ class SslLabsServiceError(RuntimeError):
     pass
 
 
+def _normalize_ssllabs_api_base_url(api_base_url: str) -> str:
+    normalized = api_base_url.strip()
+    if not normalized:
+        raise SslLabsClientError("SSL Labs API base URL must not be empty.")
+
+    parsed = urlsplit(normalized)
+    if parsed.scheme != "https":
+        raise SslLabsClientError("SSL Labs API base URL must use HTTPS.")
+    if parsed.username or parsed.password:
+        raise SslLabsClientError("SSL Labs API base URL must not include username or password.")
+    if not parsed.hostname:
+        raise SslLabsClientError("SSL Labs API base URL must include a host.")
+    if parsed.query or parsed.fragment:
+        raise SslLabsClientError("SSL Labs API base URL must not include query or fragment.")
+    if parsed.hostname.lower() != _ALLOWED_SSL_LABS_API_HOST:
+        raise SslLabsClientError("SSL Labs API host is not allowed.")
+
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise SslLabsClientError("SSL Labs API base URL has an invalid port.") from exc
+
+    host = parsed.hostname
+    if host is None:
+        raise SslLabsClientError("SSL Labs API base URL must include a host.")
+    if ":" in host:
+        host = f"[{host}]"
+
+    raw_path = parsed.path.strip().strip("/")
+    path = f"/{raw_path}" if raw_path else "/api/v4"
+    if path.rstrip("/") != "/api/v4":
+        raise SslLabsClientError("SSL Labs API base URL path must be /api/v4.")
+    netloc = f"{host}:{port}" if port is not None else host
+    return urlunsplit(("https", netloc, path, "", ""))
+
+
 def _next_scheduled_at_for_target(target, reference: datetime) -> datetime | None:
     frequency = getattr(target, "schedule_frequency", None)
     if frequency is None:
@@ -82,7 +142,7 @@ def _next_scheduled_at_for_target(target, reference: datetime) -> datetime | Non
         frequency,
         reference,
         jitter_key=jitter_key,
-        max_jitter=_SCHEDULE_JITTER,
+        max_jitter=_WEEKLY_SCHEDULE_JITTER,
     )
 
 
@@ -164,9 +224,14 @@ def _map_remote_status(payload: dict[str, Any]) -> SslLabsScanStatus:
     return "starting"
 
 
-# Registration status cache: {email: (is_registered, timestamp)}
+# Registration status cache: {normalised_email: (is_registered, timestamp)}
 _registration_status_cache: dict[str, tuple[bool | None, datetime]] = {}
 _REGISTRATION_CACHE_TTL_SECONDS = 300  # 5 minutes
+_REGISTRATION_CACHE_MAX_ENTRIES = 32
+
+
+def _registration_cache_key(email: str) -> str:
+    return email.strip().casefold()
 
 
 async def check_email_registration_status(
@@ -182,39 +247,35 @@ async def check_email_registration_status(
     Returns True if registered, False if explicitly unregistered, else None.
     """
     now = datetime.now(UTC)
+    key = _registration_cache_key(email)
 
-    # Check cache first
-    if use_cache and email in _registration_status_cache:
-        is_registered, cached_at = _registration_status_cache[email]
+    if use_cache and key in _registration_status_cache:
+        is_registered, cached_at = _registration_status_cache[key]
         age_seconds = (now - cached_at).total_seconds()
         if age_seconds < _REGISTRATION_CACHE_TTL_SECONDS:
             return is_registered
 
-    # Make a lightweight API call to check registration
-    # Using the info endpoint or a minimal analyze request
+    client = SslLabsClient(
+        SslLabsClientSettings(
+            api_base_url=api_base_url,
+            email=email,
+        )
+    )
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
-            # Try to call the info endpoint with the email header
-            response = await client.get(
-                f"{api_base_url.rstrip('/')}/info",
-                headers={"email": email},
-            )
-            if response.status_code == 200:
-                _registration_status_cache[email] = (True, now)
-                return True
-            if response.status_code == 400:
-                body = response.text.lower()
-                if "not yet registered" in body or "register api" in body:
-                    _registration_status_cache[email] = (False, now)
-                    return False
-            logger.warning(
-                "SSL Labs registration status returned unexpected response",
-                extra={"status_code": response.status_code, "email": mask_email(email)},
-            )
-            return None
-    except httpx.HTTPError as exc:
+        await client.info()
+        if len(_registration_status_cache) >= _REGISTRATION_CACHE_MAX_ENTRIES:
+            oldest = min(_registration_status_cache, key=lambda k: _registration_status_cache[k][1])
+            _registration_status_cache.pop(oldest, None)
+        _registration_status_cache[key] = (True, now)
+        return True
+    except SslLabsEmailNotRegisteredError:
+        _registration_status_cache[key] = (False, now)
+        return False
+    except SslLabsClientError as exc:
         logger.warning("Failed to check SSL Labs registration status: %s", exc)
         return None
+    finally:
+        await client.aclose()
 
 
 def clear_registration_status_cache(email: str | None = None) -> None:
@@ -222,7 +283,7 @@ def clear_registration_status_cache(email: str | None = None) -> None:
     if email is None:
         _registration_status_cache.clear()
     else:
-        _registration_status_cache.pop(email, None)
+        _registration_status_cache.pop(_registration_cache_key(email), None)
 
 
 async def register_email_with_ssllabs(
@@ -242,35 +303,23 @@ async def register_email_with_ssllabs(
         "email": email,
         "organization": organization,
     }
+    client = SslLabsClient(
+        SslLabsClientSettings(
+            api_base_url=api_base_url,
+            email=email,
+        )
+    )
 
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-            response = await client.post(
-                f"{api_base_url.rstrip('/')}/register",
-                json=payload,
-            )
-            response.raise_for_status()
-            try:
-                data = response.json()
-            except ValueError as exc:
-                raise SslLabsClientError("SSL Labs registration returned invalid JSON.") from exc
-            if data.get("status") == "success":
-                logger.info("Successfully registered email %s with SSL Labs", mask_email(email))
-                # Clear cache to reflect new registration status
-                clear_registration_status_cache(email)
-                return True
-            logger.warning(
-                "SSL Labs registration failed",
-                extra={
-                    "status_code": response.status_code,
-                    "email": mask_email(email),
-                },
-            )
-            return False
-    except httpx.TimeoutException as exc:
-        raise SslLabsClientError("SSL Labs registration timed out.") from exc
-    except httpx.HTTPError as exc:
-        raise SslLabsClientError("SSL Labs registration request failed.") from exc
+        data = await client.register(payload)
+        if data.get("status") == "success":
+            logger.info("Successfully registered email %s with SSL Labs", mask_email(email))
+            clear_registration_status_cache(email)
+            return True
+        logger.warning("SSL Labs registration failed", extra={"email": mask_email(email)})
+        return False
+    finally:
+        await client.aclose()
 
 
 class SslLabsClient:
@@ -282,9 +331,14 @@ class SslLabsClient:
     ) -> None:
         masked = mask_email(settings.email)
         logger.debug("Initializing SSL Labs client with email: %s", masked)
-        self._settings = settings
+        normalized_api_base_url = _normalize_ssllabs_api_base_url(settings.api_base_url)
+        self._settings = SslLabsClientSettings(
+            api_base_url=normalized_api_base_url,
+            email=settings.email,
+            timeout_seconds=settings.timeout_seconds,
+        )
         self._client = httpx.AsyncClient(
-            base_url=settings.api_base_url.rstrip("/") + "/",
+            base_url=normalized_api_base_url.rstrip("/") + "/",
             timeout=httpx.Timeout(settings.timeout_seconds),
             headers={"email": settings.email},
             follow_redirects=False,
@@ -297,6 +351,18 @@ class SslLabsClient:
 
     async def aclose(self) -> None:
         await self._client.aclose()
+
+    async def info(self) -> dict[str, Any]:
+        response = await self._client.get("info")
+        if response.status_code in {400, 441}:
+            body = response.text.lower()
+            if "not registered" in body or "not yet registered" in body or "register api" in body:
+                raise SslLabsEmailNotRegisteredError("SSL Labs email is not registered.")
+        return self._decode_response(response)
+
+    async def register(self, payload: dict[str, Any]) -> dict[str, Any]:
+        response = await self._client.post("register", json=payload)
+        return self._decode_response(response)
 
     async def analyze(
         self,
@@ -319,6 +385,8 @@ class SslLabsClient:
 
     @staticmethod
     def _decode_response(response: httpx.Response) -> dict[str, Any]:
+        if len(response.content) > _MAX_SSL_LABS_RESPONSE_BYTES:
+            raise SslLabsClientError("SSL Labs response is too large.")
         if response.status_code == 429:
             raise SslLabsRetryableError(
                 "SSL Labs rate limit reached.",
@@ -338,17 +406,12 @@ class SslLabsClient:
                 status_code=response.status_code,
             )
         if response.status_code == 400:
-            # Log response body for debugging
-            try:
-                body = response.text[:500]
-            except Exception:
-                body = "<unreadable>"
-            logger.warning("SSL Labs HTTP 400 response body: %s", body)
-            # Check if it's a "not registered" error
-            if "not yet registered" in body.lower() or "register api" in body.lower():
+            body = response.text.lower()
+            if "not yet registered" in body or "register api" in body:
                 raise SslLabsEmailNotRegisteredError(
                     "SSL Labs email is not yet registered. Registration required."
                 )
+            logger.warning("SSL Labs rejected request with HTTP 400.")
             raise SslLabsClientError(
                 "SSL Labs rejected request (HTTP 400). "
                 "Ensure the configured SSL Labs email is valid."
@@ -388,7 +451,7 @@ class SslLabsService:
         if not email:
             raise SslLabsServiceError("SSL Labs email is not configured.")
         return SslLabsClientSettings(
-            api_base_url=settings.ssllabs_api_base_url,
+            api_base_url=_normalize_ssllabs_api_base_url(settings.ssllabs_api_base_url),
             email=email,
             timeout_seconds=settings.ssllabs_timeout_seconds,
         )
@@ -402,7 +465,7 @@ class SslLabsService:
         del settings
         shutdown_event = self._ensure_shutdown_event()
         shutdown_event.clear()
-        if self._scheduler_task is not None:
+        if self._scheduler_task is not None and not self._scheduler_task.done():
             return
         self._scheduler_task = asyncio.create_task(self._scheduler_loop(), name="ssllabs-scheduler")
 
@@ -456,21 +519,26 @@ class SslLabsService:
         self._client_settings_from(settings, email=email or "")
 
         async with self._ensure_task_lock():
-            if target_id in self._active_tasks:
-                async with session_factory() as session:
-                    active_scan = await ssllabs_repository.get_active_scan_for_target(
-                        session,
-                        target_id,
-                        now=datetime.now(UTC),
-                    )
+            task = self._active_tasks.get(target_id)
+            if task is not None:
+                if task.done():
+                    self._active_tasks.pop(target_id, None)
+                else:
+                    async with session_factory() as session:
+                        active_scan = await ssllabs_repository.get_active_scan_for_target(
+                            session,
+                            target_id,
+                            now=datetime.now(UTC),
+                        )
                     if active_scan is None:
-                        raise SslLabsServiceError("SSL Labs scan task state is inconsistent.")
-                    return SslLabsScanRequestResult(
-                        scan_id=active_scan.id,
-                        host=active_scan.host,
-                        created=False,
-                        status=active_scan.status,
-                    )
+                        self._active_tasks.pop(target_id, None)
+                    else:
+                        return SslLabsScanRequestResult(
+                            scan_id=active_scan.id,
+                            host=active_scan.host,
+                            created=False,
+                            status=active_scan.status,
+                        )
 
             session_factory = get_session_factory()
             async with session_factory() as session:
@@ -522,13 +590,18 @@ class SslLabsService:
                 self._run_scan(target_id=target_id, scan_id=scan.id, force_new=force_new),
                 name=f"ssllabs-scan-{target_id}",
             )
-            self._active_tasks[target_id] = task
-            task.add_done_callback(
-                lambda done_task, *, current_target_id=target_id: self._discard_scan_task(
-                    current_target_id,
-                    done_task,
+            try:
+                self._active_tasks[target_id] = task
+                task.add_done_callback(
+                    lambda done_task, *, current_target_id=target_id: self._discard_scan_task(
+                        current_target_id,
+                        done_task,
+                    )
                 )
-            )
+            except Exception:
+                task.cancel()
+                self._active_tasks.pop(target_id, None)
+                raise
             return SslLabsScanRequestResult(scan_id=scan.id, host=scan.host, created=True, status=scan.status)
 
     def _discard_scan_task(self, target_id: int, task: asyncio.Task[None]) -> None:
@@ -537,13 +610,14 @@ class SslLabsService:
         if task.cancelled():
             return
 
-        exc = task.exception()
-        if exc is not None:
-            logger.error(
-                "SSL Labs scan task crashed",
-                exc_info=(type(exc), exc, exc.__traceback__),
-                extra={"target_id": target_id},
-            )
+        with suppress(asyncio.CancelledError):
+            exc = task.exception()
+            if exc is not None:
+                logger.error(
+                    "SSL Labs scan task crashed",
+                    exc_info=(type(exc), exc, exc.__traceback__),
+                    extra={"target_id": target_id},
+                )
 
     async def _publish_scan_event(
         self,
@@ -553,15 +627,9 @@ class SslLabsService:
         status: SslLabsScanStatus,
         payload: dict[str, Any] | None,
     ) -> None:
-        action = "scan_updated"
-        if status == "queued":
-            action = "scan_started"
-        elif status in TERMINAL_SCAN_STATUSES:
-            action = "scan_completed" if status == "ready" else "scan_failed"
-
         await try_publish_resource_event(
             "ssllabs_scan",
-            action,
+            ssllabs_scan_event_action(status),
             str(target_id),
             {
                 "scan_id": scan_id,
@@ -602,7 +670,30 @@ class SslLabsService:
             if completed:
                 scan.completed_at = now
                 target.last_scan_completed_at = now
-                target.next_scheduled_at = _next_scheduled_at_for_target(target, now)
+                if scan.grade is not None:
+                    rank = grade_to_rank(scan.grade)
+                    if rank is not None:
+                        await ssllabs_repository.record_rank_history(
+                            session,
+                            host=scan.host,
+                            grade=scan.grade,
+                            rank=rank,
+                            recorded_at=now,
+                        )
+                if target.schedule_frequency is None:
+                    target.next_scheduled_at = None
+                elif target.next_scheduled_at is None:
+                    target.next_scheduled_at = _next_scheduled_at_for_target(target, now)
+                elif target.next_scheduled_at <= now:
+                    jitter_key = f"{getattr(target, 'site_id', 'unknown')}:{getattr(target, 'host', 'unknown')}"
+                    target.next_scheduled_at = next_schedule_time(
+                        target.schedule_frequency,
+                        target.next_scheduled_at,
+                        jitter_key=jitter_key,
+                        max_jitter=_WEEKLY_SCHEDULE_JITTER,
+                        minimum_after=now,
+                        reference_includes_jitter=True,
+                    )
 
             await session.commit()
         await self._publish_scan_event(target_id=target_id, scan_id=scan_id, status=status, payload=payload)
@@ -616,20 +707,32 @@ class SslLabsService:
 
     async def _run_scan(self, *, target_id: int, scan_id: int, force_new: bool) -> None:
         settings = get_settings()
-        session_factory = get_session_factory()
-        async with session_factory() as session:
-            row = await ssllabs_repository.get_target_with_site(session, target_id)
-            if row is None:
-                return
-            target, _site = row
-            host = validate_ssllabs_host(target.host)
-            email = await get_ssllabs_email(session)
-
-        if not email:
-            raise SslLabsServiceError("SSL Labs email is not configured.")
-        client = SslLabsClient(self._client_settings_from(settings, email=email))
+        host = "unknown"
+        client: SslLabsClient | None = None
 
         try:
+            session_factory = get_session_factory()
+            async with session_factory() as session:
+                row = await ssllabs_repository.get_target_with_site(session, target_id)
+                if row is None:
+                    await self._mark_scan_state(
+                        target_id=target_id,
+                        scan_id=scan_id,
+                        payload={"host": host},
+                        status="failed",
+                        completed=True,
+                        error_code="TargetNotFound",
+                        error_message="SSL Labs target not found.",
+                    )
+                    return
+                target, _site = row
+                host = validate_ssllabs_host(target.host)
+                email = await get_ssllabs_email(session)
+
+            if not email:
+                raise SslLabsServiceError("SSL Labs email is not configured.")
+            client = SslLabsClient(self._client_settings_from(settings, email=email))
+
             await self._mark_scan_state(target_id=target_id, scan_id=scan_id, payload={"host": host}, status="queued")
 
             scan_started_at = datetime.now(UTC)
@@ -646,10 +749,6 @@ class SslLabsService:
                         from_cache=from_cache,
                         max_age_hours=max_age_hours,
                     )
-                except SslLabsEmailNotRegisteredError as exc:
-                    raise SslLabsClientError(
-                        "SSL Labs email is not registered. Register it explicitly before starting scans."
-                    ) from exc
                 except SslLabsRetryableError as exc:
                     retry_at = datetime.now(UTC) + timedelta(seconds=exc.retry_after_seconds)
                     await self._mark_scan_state(
@@ -666,13 +765,31 @@ class SslLabsService:
                     max_age_hours = None
                     await self._sleep_or_shutdown(exc.retry_after_seconds)
                     continue
+                except (httpx.TimeoutException, httpx.TransportError) as exc:
+                    retry_seconds = _RUNNING_POLL_SECONDS * 3
+                    retry_at = datetime.now(UTC) + timedelta(seconds=retry_seconds)
+                    logger.warning("Temporary SSL Labs request failure for %s: %s", host, exc)
+                    await self._mark_scan_state(
+                        target_id=target_id,
+                        scan_id=scan_id,
+                        payload={"host": host},
+                        status="rate_limited",
+                        next_poll_at=retry_at,
+                        error_code=exc.__class__.__name__,
+                        error_message="SSL Labs request temporarily failed.",
+                    )
+                    start_new = False
+                    from_cache = False
+                    max_age_hours = None
+                    await self._sleep_or_shutdown(retry_seconds)
+                    continue
 
                 start_new = False
                 from_cache = False
                 max_age_hours = None
 
                 status = _map_remote_status(payload)
-                if status in TERMINAL_SCAN_STATUSES:
+                if is_ssllabs_scan_terminal(status):
                     await self._mark_scan_state(
                         target_id=target_id,
                         scan_id=scan_id,
@@ -702,7 +819,18 @@ class SslLabsService:
                 error_message="SSL Labs scan cancelled during shutdown.",
             )
             raise
-        except (SslLabsClientError, SslLabsServiceError, ValueError, httpx.HTTPError) as exc:
+        except SslLabsEmailNotRegisteredError:
+            logger.warning("SSL Labs email is not registered for %s", host)
+            await self._mark_scan_state(
+                target_id=target_id,
+                scan_id=scan_id,
+                payload={"host": host},
+                status="failed",
+                completed=True,
+                error_code="SslLabsEmailNotRegisteredError",
+                error_message="SSL Labs email is not registered.",
+            )
+        except SslLabsClientError as exc:
             logger.warning("SSL Labs scan failed for %s: %s", host, exc)
             await self._mark_scan_state(
                 target_id=target_id,
@@ -712,6 +840,28 @@ class SslLabsService:
                 completed=True,
                 error_code=exc.__class__.__name__,
                 error_message=str(exc),
+            )
+        except ValueError:
+            logger.warning("SSL Labs scan failed for %s: invalid target", host)
+            await self._mark_scan_state(
+                target_id=target_id,
+                scan_id=scan_id,
+                payload={"host": host},
+                status="failed",
+                completed=True,
+                error_code="ValueError",
+                error_message="Invalid SSL Labs target.",
+            )
+        except httpx.HTTPError:
+            logger.warning("SSL Labs scan failed for %s: request failed", host)
+            await self._mark_scan_state(
+                target_id=target_id,
+                scan_id=scan_id,
+                payload={"host": host},
+                status="failed",
+                completed=True,
+                error_code="HTTPError",
+                error_message="SSL Labs request failed.",
             )
         except Exception as exc:
             logger.exception("Unexpected SSL Labs scan failure for %s", host)
@@ -725,13 +875,26 @@ class SslLabsService:
                 error_message="Unexpected SSL Labs scan failure.",
             )
         finally:
-            await client.aclose()
+            if client is not None:
+                await client.aclose()
+
+    async def prune_rank_history(self, session: AsyncSession, *, now: datetime | None = None) -> int:
+        """Delete rank-history samples beyond the configured retention window."""
+        reference = now or datetime.now(UTC)
+        retention_days = await get_ssllabs_history_retention_days(session)
+        cutoff = reference - timedelta(days=retention_days)
+        removed = await ssllabs_repository.prune_rank_history_older_than(session, cutoff=cutoff)
+        if removed:
+            logger.info("Pruned %d SSL Labs rank-history rows older than %d days.", removed, retention_days)
+        return removed
 
     async def _scheduler_loop(self) -> None:
         while not self._ensure_shutdown_event().is_set():
             try:
                 session_factory = get_session_factory()
                 async with session_factory() as session:
+                    await self.prune_rank_history(session)
+                    await session.commit()
                     email = await get_ssllabs_email(session)
                     if not email:
                         await self._sleep_or_shutdown(_SCHEDULER_POLL_SECONDS)
@@ -754,3 +917,85 @@ class SslLabsService:
 
 
 ssllabs_service = SslLabsService()
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Return *value* as UTC, treating naive datetimes as UTC rather than local time."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _week_bucket(value: datetime) -> str:
+    """Return the ISO date (YYYY-MM-DD) of the Monday that starts the week containing *value*."""
+    utc = _as_utc(value)
+    monday = utc.date() - timedelta(days=utc.isoweekday() - 1)
+    return monday.isoformat()
+
+
+@dataclass(slots=True, frozen=True)
+class SslLabsRankPoint:
+    date: str  # ISO date (UTC) of the week's Monday
+    grade: str
+    rank: int
+
+
+@dataclass(slots=True, frozen=True)
+class SslLabsRankSeries:
+    host: str
+    points: list[SslLabsRankPoint]
+
+
+@dataclass(slots=True, frozen=True)
+class SslLabsRankHistory:
+    range_key: str
+    days: int
+    series: list[SslLabsRankSeries]
+
+
+def resolve_history_range(range_key: str | None) -> tuple[str, int]:
+    """Return a validated ``(range_key, days)`` pair, falling back to the default."""
+    key = (range_key or "").strip()
+    if key not in SSLLABS_HISTORY_RANGES:
+        key = SSLLABS_HISTORY_DEFAULT_RANGE
+    return key, SSLLABS_HISTORY_RANGES[key]
+
+
+async def build_rank_history(
+    session: AsyncSession,
+    *,
+    range_key: str | None = None,
+    now: datetime | None = None,
+) -> SslLabsRankHistory:
+    """Build the per-host weekly SSL Labs rank timeseries for the dashboard chart.
+
+    Samples are bucketed to the Monday of their UTC week; when a host has multiple
+    samples in the same week the latest one wins, giving a clean weekly-resolution series.
+    """
+    key, days = resolve_history_range(range_key)
+    reference = now or datetime.now(UTC)
+    since = reference - timedelta(days=days)
+
+    entries = await ssllabs_repository.list_rank_history_since(session, since=since)
+
+    # host -> {week_monday -> (recorded_at, grade)}; keep the latest sample per week.
+    by_host: dict[str, dict[str, tuple[datetime, str]]] = {}
+    for entry in entries:
+        rank = grade_to_rank(entry.grade)
+        if rank is None:
+            continue
+        week = _week_bucket(entry.recorded_at)
+        week_map = by_host.setdefault(entry.host, {})
+        existing = week_map.get(week)
+        if existing is None or entry.recorded_at >= existing[0]:
+            week_map[week] = (entry.recorded_at, entry.grade)
+
+    series: list[SslLabsRankSeries] = []
+    for host in sorted(by_host):
+        points = [
+            SslLabsRankPoint(date=week, grade=grade, rank=grade_to_rank(grade) or 0)
+            for week, (_recorded_at, grade) in sorted(by_host[host].items())
+        ]
+        series.append(SslLabsRankSeries(host=host, points=points))
+
+    return SslLabsRankHistory(range_key=key, days=days, series=series)

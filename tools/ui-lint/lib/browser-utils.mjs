@@ -16,12 +16,17 @@ const DEFAULT_NAV_TIMEOUT_MS = Number.parseInt(process.env.UILINT_NAV_TIMEOUT_MS
 const DEFAULT_BOOTSTRAP_TIMEOUT_MS = Number.parseInt(process.env.UILINT_BOOTSTRAP_TIMEOUT_MS || '30000', 10);
 const DEFAULT_COLLECTED_EVENT_LIMIT = 500;
 const DEFAULT_MAX_EVENT_TEXT_LENGTH = Number.parseInt(process.env.UILINT_MAX_EVENT_TEXT_LENGTH || '10000', 10);
+const MAX_PNG_BYTES = Number.parseInt(process.env.UILINT_MAX_PNG_BYTES || String(64 * 1024 * 1024), 10);
 const MAX_PNG_DIMENSION = Number.parseInt(process.env.UILINT_MAX_PNG_DIMENSION || '32768', 10);
 const MAX_PNG_PIXELS = Number.parseInt(process.env.UILINT_MAX_PNG_PIXELS || String(32768 * 2048), 10);
 const PIXELMATCH_THRESHOLD = 0.1;
-const LOGIN_ERROR_SELECTOR = '.alert-danger, .login-error, .error-message';
+const LOGIN_ERROR_SELECTOR = '.login-error, [data-testid="login-error"]';
 const POST_LOGIN_SELECTOR = '.app-sidebar, #main-content, .page-title, .metric-card';
+const LOGIN_CSRF_FAILURE_RE = /(?:CSRF token missing or invalid|Invalid CSRF token\.|Security token is missing)/i;
 const SENSITIVE_QUERY_PARAM_RE = /(?:token|secret|key|password|passwd|csrf|session|auth)/i;
+const SENSITIVE_TEXT_RE = /\b(token|secret|password|passwd|csrf|session|authorization)\b\s*[:=]\s*["']?[^"'\s]+/gi;
+const URL_IN_TEXT_RE = /https?:\/\/[^\s"'<>]+/g;
+const MOTION_RESET_STYLE_ID = 'ui-lint-motion-reset';
 
 
 function normalizeTimeout(value, fallback) {
@@ -59,6 +64,15 @@ function redactUrl(rawUrl) {
     }
 }
 
+function redactText(value, maxLength = DEFAULT_MAX_EVENT_TEXT_LENGTH) {
+    return clipText(
+        String(value)
+            .replace(URL_IN_TEXT_RE, (match) => redactUrl(match))
+            .replace(SENSITIVE_TEXT_RE, '$1=[redacted]'),
+        maxLength,
+    );
+}
+
 
 function isSameOrigin(currentUrl, baseUrl) {
     try {
@@ -66,6 +80,10 @@ function isSameOrigin(currentUrl, baseUrl) {
     } catch {
         return false;
     }
+}
+
+function isRetryableLoginCsrfFailure(text) {
+    return typeof text === 'string' && LOGIN_CSRF_FAILURE_RE.test(text);
 }
 
 
@@ -126,8 +144,19 @@ export async function disableMotion(page, motionResetCss, viewName = 'unknown') 
 
     try {
         await page.emulateMedia({ reducedMotion: 'reduce' });
+        await page.evaluate(({ styleId, css }) => {
+            document.getElementById(styleId)?.remove();
+            const style = document.createElement('style');
+            style.id = styleId;
+            const nonce = document.querySelector('meta[name="csp-nonce"]')?.getAttribute('content');
+            if (nonce) {
+                style.setAttribute('nonce', nonce);
+            }
+            style.textContent = css;
+            document.head.append(style);
+        }, { styleId: MOTION_RESET_STYLE_ID, css: motionResetCss });
     } catch (err) {
-        throw new Error(`[${viewName}] Failed to emulate reduced motion: ${err.message}`, { cause: err });
+        throw new Error(`[${viewName}] Failed to disable motion: ${err.message}`, { cause: err });
     }
 }
 
@@ -144,64 +173,127 @@ export async function login(page, { baseUrl, credentialProvider, motionResetCss 
 
     const username = await credentialProvider.getUsername();
     const password = await credentialProvider.getPassword();
-    await page.goto(`${baseUrl}/login`, { waitUntil: 'domcontentloaded', timeout: DEFAULT_NAV_TIMEOUT_MS });
-    await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => { });
-    await disableMotion(page, motionResetCss, 'login');
-
-    await page.fill('#username', username);
-    await page.fill('#password', password);
     // Use flexible selector: prefer form with /login action, fallback to any auth form
     const submitButton = page.locator('form[action$="/login"] button[type="submit"], form.auth-form button[type="submit"]').first();
     const visibleError = page.locator(LOGIN_ERROR_SELECTOR).first();
 
-    try {
-        const buttonCount = await submitButton.count();
-        if (buttonCount === 0) {
-            throw new Error('Submit button not found. Available forms: ' + await page.evaluate(() =>
-                Array.from(document.querySelectorAll('form')).map((form) => `action="${form.action}"`).join(', ')
-            ));
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+        await page.goto(`${baseUrl}/login`, { waitUntil: 'domcontentloaded', timeout: DEFAULT_NAV_TIMEOUT_MS });
+        await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => { });
+        await disableMotion(page, motionResetCss, 'login');
+
+        await page.fill('#username', username);
+        await page.fill('#password', password);
+
+        try {
+            const buttonCount = await submitButton.count();
+            if (buttonCount === 0) {
+                throw new Error('Submit button not found. Available forms: ' + await page.evaluate(() =>
+                    Array.from(document.querySelectorAll('form')).map((form) => `action="${form.action}"`).join(', ')
+                ));
+            }
+            const submission = await page.evaluate(async ({ loginUsername, loginPassword }) => {
+                const form = document.querySelector('form[action$="/login"], form.auth-form');
+                if (!(form instanceof HTMLFormElement)) {
+                    return { ok: false, error: 'Login form not found.' };
+                }
+
+                const csrfInput = form.elements.namedItem('csrf_token');
+                const csrfToken = csrfInput instanceof HTMLInputElement ? csrfInput.value : '';
+                if (!csrfToken) {
+                    return { ok: false, error: 'CSRF token input missing or empty.' };
+                }
+
+                const usernameInput = form.elements.namedItem('username');
+                const passwordInput = form.elements.namedItem('password');
+                if (usernameInput instanceof HTMLInputElement) {
+                    usernameInput.value = loginUsername;
+                }
+                if (passwordInput instanceof HTMLInputElement) {
+                    passwordInput.value = loginPassword;
+                }
+
+                const body = new URLSearchParams();
+                for (const [key, value] of new FormData(form).entries()) {
+                    if (value instanceof File) {
+                        continue;
+                    }
+                    body.append(key, String(value));
+                }
+
+                const response = await fetch(form.action, {
+                    method: (form.method || 'post').toUpperCase(),
+                    body,
+                    credentials: 'same-origin',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                        'X-CSRF-Token': csrfToken,
+                    },
+                    redirect: 'follow',
+                });
+
+                return {
+                    ok: response.ok,
+                    status: response.status,
+                    finalUrl: response.url,
+                    bodyText: (await response.text()).slice(0, 500),
+                };
+            }, { loginUsername: username, loginPassword: password });
+
+            if (!submission || submission.ok !== true) {
+                const message = submission?.error
+                    || `Login request failed with HTTP ${submission?.status ?? 'unknown'}.`;
+                throw new Error(message);
+            }
+
+            const finalPath = (() => {
+                try {
+                    return new URL(submission.finalUrl || `${baseUrl}/login`).pathname.replace(/\/$/, '');
+                } catch {
+                    return '/login';
+                }
+            })();
+            if (finalPath === '/login') {
+                throw new Error(`Login request stayed on /login. Response: ${submission.bodyText || 'empty'}`);
+            }
+
+            await page.goto(submission.finalUrl || `${baseUrl}/`, {
+                waitUntil: 'domcontentloaded',
+                timeout: DEFAULT_NAV_TIMEOUT_MS,
+            });
+            await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => { });
+            await page.waitForSelector(POST_LOGIN_SELECTOR, { timeout: DEFAULT_NAV_TIMEOUT_MS });
+        } catch (err) {
+            const finalUrl = page.url();
+            const pageContent = await page.evaluate(() => document.body.innerText.slice(0, 500)).catch(() => 'unavailable');
+            const errorMessage = err instanceof Error ? err.message : String(err);
+
+            const errorVisible = await visibleError.isVisible().catch(() => false);
+            if (errorVisible) {
+                const errorText = (await visibleError.textContent() || '').trim();
+                throw new Error(`Login failed: ${redactText(errorText)} (URL: ${redactUrl(finalUrl)})`);
+            }
+
+            const failureText = `${redactText(errorMessage, 500)} ${redactText(pageContent, 500)}`;
+            if (attempt === 0 && isRetryableLoginCsrfFailure(failureText)) {
+                continue;
+            }
+
+            throw new Error(
+                `Login did not complete successfully: ${redactText(errorMessage)} `
+                + `(Final URL: ${redactUrl(finalUrl)}, Content: ${redactText(pageContent.replace(/\s+/g, ' '))})`,
+            );
         }
 
-        const redirectPromise = page.waitForURL(
-            (url) => {
-                const pathname = new URL(url.toString()).pathname.replace(/\/$/, '');
-                return pathname !== '/login';
-            },
-            { timeout: DEFAULT_NAV_TIMEOUT_MS },
-        ).then(() => 'redirect');
-        const errorPromise = visibleError.waitFor({ state: 'visible', timeout: DEFAULT_NAV_TIMEOUT_MS }).then(() => 'error');
-
-        await submitButton.click({ force: true });
-
-        const loginOutcome = await Promise.race([redirectPromise, errorPromise]);
-        if (loginOutcome === 'error') {
+        const errorVisible = await visibleError.isVisible().catch(() => false);
+        if (errorVisible) {
             const errorText = (await visibleError.textContent() || '').trim();
             throw new Error(`Login failed: ${errorText}`);
         }
 
-        await page.waitForSelector(POST_LOGIN_SELECTOR, { timeout: DEFAULT_NAV_TIMEOUT_MS });
-    } catch (err) {
-        const finalUrl = page.url();
-        const pageContent = await page.evaluate(() => document.body.innerText.slice(0, 500)).catch(() => 'unavailable');
-
-        // Check for visible error alert
-        const errorVisible = await visibleError.isVisible().catch(() => false);
-        if (errorVisible) {
-            const errorText = (await visibleError.textContent() || '').trim();
-            throw new Error(`Login failed: ${errorText} (URL: ${finalUrl})`);
-        }
-
-        throw new Error(`Login did not complete successfully: ${err.message} (Final URL: ${finalUrl}, Content: ${pageContent.replace(/\s+/g, ' ')})`);
+        await disableMotion(page, motionResetCss, 'login');
+        return;
     }
-
-    // Final check for visible errors
-    const errorVisible = await visibleError.isVisible().catch(() => false);
-    if (errorVisible) {
-        const errorText = (await visibleError.textContent() || '').trim();
-        throw new Error(`Login failed: ${errorText}`);
-    }
-
-    await disableMotion(page, motionResetCss, 'login');
 }
 
 export async function applyTheme(page, { baseUrl, theme, label = 'unknown' }) {
@@ -251,7 +343,7 @@ export function collectConsoleAndNetwork(
 
     function sanitizeEntry(value) {
         if (typeof value === 'string') {
-            return clipText(value, maxBytesPerEntry);
+            return redactText(value, maxBytesPerEntry);
         }
         if (!value || typeof value !== 'object') {
             return value;
@@ -263,7 +355,7 @@ export function collectConsoleAndNetwork(
                 continue;
             }
             sanitized[entryKey] = typeof entryValue === 'string'
-                ? clipText(entryValue, maxBytesPerEntry)
+                ? redactText(entryValue, maxBytesPerEntry)
                 : entryValue;
         }
         return sanitized;
@@ -323,6 +415,10 @@ export function collectConsoleAndNetwork(
 }
 
 async function readPng(filePath) {
+    const stat = await fs.promises.stat(filePath);
+    if (stat.size > MAX_PNG_BYTES) {
+        throw new Error(`PNG file exceeds maximum size: ${filePath}`);
+    }
     try {
         return PNG.sync.read(await readFile(filePath));
     } catch (err) {

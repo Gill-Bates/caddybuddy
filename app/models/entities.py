@@ -14,9 +14,14 @@ from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Integer, JSO
 from sqlalchemy.orm import Mapped, mapped_column, validates
 
 from app.models.base import Base, TimestampMixin, UTCDateTime, utc_now
+from app.schemas.ssllabs import (
+    SSLLABS_EXCLUSIVE_ACTIVE_SCAN_STATUSES,
+    SSLLABS_SCAN_STATUSES,
+    SSLLABS_SCHEDULE_FREQUENCIES,
+)
 from app.utils.caddyfile import normalize_caddy_directives
 from app.utils.domains import normalize_domain_list
-from app.utils.ssllabs import validate_ssllabs_host
+from app.utils.ssllabs import normalize_ssllabs_schedule_frequency, validate_ssllabs_host
 
 
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$", re.ASCII)
@@ -30,17 +35,6 @@ _SYNC_EVENT_STATUSES = (
     "no_change",
     "onboarding_failed",
 )
-_SSLLABS_SCAN_STATUSES = (
-    "queued",
-    "starting",
-    "dns",
-    "in_progress",
-    "ready",
-    "error",
-    "failed",
-    "rate_limited",
-)
-_SSLLABS_SCHEDULE_FREQUENCIES = ("weekly", "monthly")
 _USER_ROLES = ("user", "admin")
 
 
@@ -114,7 +108,7 @@ def _normalize_sync_event_status(value: str) -> str:
 
 def _normalize_ssllabs_scan_status(value: str) -> str:
     normalized = value.strip().lower()
-    if normalized not in _SSLLABS_SCAN_STATUSES:
+    if normalized not in SSLLABS_SCAN_STATUSES:
         raise ValueError("invalid ssllabs scan status")
     return normalized
 
@@ -136,9 +130,7 @@ def _normalize_ssllabs_schedule_frequency(value: str | None) -> str | None:
     normalized = value.strip().lower()
     if not normalized:
         return None
-    if normalized not in _SSLLABS_SCHEDULE_FREQUENCIES:
-        raise ValueError("invalid ssllabs schedule frequency")
-    return normalized
+    return normalize_ssllabs_schedule_frequency(normalized)
 
 
 class User(TimestampMixin, Base):
@@ -298,7 +290,7 @@ class SslLabsTarget(TimestampMixin, Base):
 
     __table_args__ = (
         CheckConstraint(
-            "schedule_frequency IS NULL OR schedule_frequency IN ('weekly', 'monthly')",
+            f"schedule_frequency IS NULL OR schedule_frequency IN ({_sql_string_list(SSLLABS_SCHEDULE_FREQUENCIES)})",
             name="ck_ssllabs_targets_schedule_frequency",
         ),
         UniqueConstraint("site_id", "host", name="uq_ssllabs_targets_site_host"),
@@ -330,7 +322,7 @@ class SslLabsScan(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('queued', 'starting', 'dns', 'in_progress', 'ready', 'error', 'failed', 'rate_limited')",
+            f"status IN ({_sql_string_list(SSLLABS_SCAN_STATUSES)})",
             name="ck_ssllabs_scans_status",
         ),
         CheckConstraint(
@@ -341,7 +333,7 @@ class SslLabsScan(Base):
             "uq_ssllabs_scans_one_active_per_target",
             "target_id",
             unique=True,
-            sqlite_where=text("status IN ('queued', 'starting', 'dns', 'in_progress')"),
+            sqlite_where=text(f"status IN ({_sql_string_list(SSLLABS_EXCLUSIVE_ACTIVE_SCAN_STATUSES)})"),
         ),
     )
 
@@ -386,11 +378,44 @@ class SslLabsScan(Base):
         return value
 
 
+class SslLabsRankHistory(Base):
+    """Append-only daily SSL Labs grade history for the dashboard distribution chart.
+
+    Intentionally has no foreign key so history survives target/site deletion; the
+    retention setting prunes old rows instead.
+    """
+
+    __tablename__ = "ssllabs_rank_history"
+
+    __table_args__ = (
+        Index("ix_ssllabs_rank_history_host_recorded_at", "host", "recorded_at"),
+        Index("ix_ssllabs_rank_history_recorded_at", "recorded_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    host: Mapped[str] = mapped_column(String(253), nullable=False)
+    grade: Mapped[str] = mapped_column(String(8), nullable=False)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, nullable=False)
+
+    @validates("host")
+    def _validate_host(self, _key: str, value: str) -> str:
+        return validate_ssllabs_host(value)
+
+    @validates("grade")
+    def _validate_grade(self, _key: str, value: str) -> str:
+        normalized = _normalize_ssllabs_grade(value)
+        if normalized is None:
+            raise ValueError("ssllabs rank history grade is required")
+        return normalized
+
+
 _APP_SETTING_KEYS = (
     "caddy_api_url",
     "caddyfile_path",
     "rate_limit_enabled",
     "ssllabs_email",
+    "ssllabs_history_retention_days",
 )
 
 

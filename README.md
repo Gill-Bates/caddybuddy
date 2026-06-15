@@ -73,7 +73,6 @@ Release images are built for `giiibates/caddybuddy` on Docker Hub.
 
    ```bash
    export CB_SECRET_KEY="$(head -c 32 /dev/urandom | base64)"
-   export CB_ADMIN_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
    ```
 
 5. Start the container:
@@ -82,11 +81,13 @@ Release images are built for `giiibates/caddybuddy` on Docker Hub.
    docker compose -f docker/docker-compose.yml.example up -d
    ```
 
-6. Open the UI:
+6. Open the UI and complete first-run setup:
 
    ```text
    http://127.0.0.1:8000
    ```
+
+   On first startup with an empty database, the login page shows a setup form where you create the admin account directly in the browser.
 
 ### Local Development
 
@@ -106,8 +107,9 @@ The local server listens on `http://127.0.0.1:8000` by default.
 
 ## First Startup Behavior
 
-- On an empty database, CaddyBuddy creates the initial `admin` user with the password from `CB_ADMIN_PASSWORD`. Startup fails if `CB_ADMIN_PASSWORD` is unset or uses an insecure default.
-- The SQLite database lives in `data/app.db` by default.
+- On an empty database, the login page shows a setup form. Set the admin password there — no environment variable required.
+- The admin account is created with username `admin` and the password you choose. The password must be at least 8 characters and contain uppercase, lowercase, a digit, and a special character.
+- The SQLite database lives in `data/caddybuddy.db` by default.
 - Caddy Admin URL, Caddyfile path, and rate limiting are configured in the Settings page after login.
 - Without Caddy onboarding, the application reports that onboarding is required and you can trigger it from the UI or API.
 
@@ -116,7 +118,6 @@ The local server listens on `http://127.0.0.1:8000` by default.
 | Variable | Meaning |
 | --- | --- |
 | `CB_SECRET_KEY` | Required session secret (generate with `head -c 32 /dev/urandom \| base64`) |
-| `CB_ADMIN_PASSWORD` | Required initial admin password (min 12 chars, must not be `admin`) |
 | `LOG_LEVEL` | Application log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`; default: `INFO`) |
 | `TZ` | Container or process timezone (e.g., `Europe/Berlin`) |
 
@@ -153,25 +154,6 @@ caddy.example.com {
 ```
 
 The `X-Forwarded-Proto` header is required for CSRF protection to work correctly over HTTPS.
-
-## Development
-
-### UI Lint
-
-CaddyBuddy includes a Playwright-based UI lint tool for visual regression testing and accessibility checks:
-
-```bash
-cd tools/ui-lint
-npm install
-npx playwright install chromium firefox webkit
-
-UI_LINT_BASE_URL=http://localhost:8000 \
-UI_LINT_USERNAME=admin \
-UI_LINT_PASSWORD=admin \
-npm run audit
-```
-
-Results are saved to `tools/ui-lint/test-results/`.
 
 ## License
 

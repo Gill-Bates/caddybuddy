@@ -55,6 +55,7 @@ class SiteRepositoryTests(unittest.IsolatedAsyncioTestCase):
     async def test_create_raises_duplicate_site_error_on_unique_collision(self) -> None:
         repository = SiteRepository()
         session = SimpleNamespace(
+            get_bind=lambda: SimpleNamespace(dialect=SimpleNamespace(name="sqlite")),
             execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None, all=lambda: [])),
             add=lambda site: None,
             flush=AsyncMock(
@@ -74,9 +75,51 @@ class SiteRepositoryTests(unittest.IsolatedAsyncioTestCase):
                 caddy_directives="reverse_proxy backend.example.test:443",
             )
 
+    async def test_create_defaults_upstream_for_enabled_non_proxy_site(self) -> None:
+        repository = SiteRepository()
+        session = SimpleNamespace(
+            get_bind=lambda: SimpleNamespace(dialect=SimpleNamespace(name="sqlite")),
+            execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None, all=lambda: [])),
+            add=lambda site: None,
+            flush=AsyncMock(),
+        )
+
+        site = await repository.create(
+            session,
+            site_name="Example Site",
+            domain="Example.COM.",
+            caddy_directives='respond "ok" 200',
+            enabled=True,
+        )
+
+        self.assertEqual(site.upstream_url, "http://example.com")
+        self.assertTrue(site.enabled)
+
+    async def test_create_acquires_domain_lock_before_lookup(self) -> None:
+        repository = SiteRepository()
+        session = SimpleNamespace(
+            get_bind=lambda: SimpleNamespace(dialect=SimpleNamespace(name="sqlite")),
+            execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None, all=lambda: [])),
+            add=lambda site: None,
+            flush=AsyncMock(),
+        )
+
+        await repository.create(
+            session,
+            site_name="Example Site",
+            domain="Example.COM.",
+            caddy_directives="reverse_proxy backend.example.test:443",
+        )
+
+        first_statement = session.execute.await_args_list[0].args[0]
+        first_statement_text = str(first_statement.compile(compile_kwargs={"literal_binds": True}))
+        self.assertIn("caddybuddy_state", first_statement_text)
+        self.assertIn("site_domain_lock", first_statement_text)
+
     async def test_update_normalizes_values_before_flush(self) -> None:
         repository = SiteRepository()
         session = SimpleNamespace(
+            get_bind=lambda: SimpleNamespace(dialect=SimpleNamespace(name="sqlite")),
             execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None, all=lambda: [])),
             flush=AsyncMock(),
         )

@@ -6,7 +6,6 @@ services:
 
     environment:
       CB_SECRET_KEY: ${CB_SECRET_KEY:?Set CB_SECRET_KEY}
-      CB_ADMIN_PASSWORD: ${CB_ADMIN_PASSWORD:?Set CB_ADMIN_PASSWORD to at least 12 characters}
       TZ: ${TZ:-Etc/UTC}
       FORWARDED_ALLOW_IPS: "*"  # Set to your reverse-proxy IP(s) in production, e.g. 172.17.0.1
       CB_CADDY_CERTIFICATES_PATH: /var/lib/caddy/.local/share/caddy/certificates

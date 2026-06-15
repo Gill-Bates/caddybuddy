@@ -26,6 +26,9 @@ from app.schemas.system import (
     CaddyStatusResponse,
     DashboardMetricsResponse,
     HealthResponse,
+    SslLabsRankHistoryResponse,
+    SslLabsRankPointResponse,
+    SslLabsRankSeriesResponse,
 )
 from app.services.build_info import get_build_info
 from app.services.caddyfile_manager import get_caddy_runtime_status
@@ -34,11 +37,12 @@ from app.services.events import ResourceEvent, SubscriberLimitReachedError, even
 from app.services.runtime_settings import get_ssllabs_email
 from app.services.ssllabs import (
     SslLabsClientError,
+    build_rank_history,
     check_email_registration_status,
     clear_registration_status_cache,
     register_email_with_ssllabs,
 )
-from app.utils.ssllabs import mask_email
+from app.utils.ssllabs import GRADE_RANKS, mask_email
 
 
 router = APIRouter(prefix="/api/v1", tags=["system"])
@@ -150,6 +154,34 @@ async def dashboard_metrics(
         caddy_service_status=metrics.caddy_service_status,
         caddy_service_uptime=metrics.caddy_service_uptime,
         caddy_version=metrics.caddy_version,
+    )
+
+
+@router.get("/dashboard/ssllabs-history", response_model=SslLabsRankHistoryResponse)
+@limiter.limit("30/minute")
+async def dashboard_ssllabs_history(
+    request: Request,
+    range_key: str | None = None,
+    _current_user: User = Depends(_require_api_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> SslLabsRankHistoryResponse:
+    """Return the per-host daily SSL Labs rank timeseries for the dashboard chart."""
+    del request
+    history = await build_rank_history(session, range_key=range_key)
+    return SslLabsRankHistoryResponse(
+        range_key=history.range_key,
+        days=history.days,
+        grade_scale=dict(GRADE_RANKS),
+        series=[
+            SslLabsRankSeriesResponse(
+                host=item.host,
+                points=[
+                    SslLabsRankPointResponse(date=point.date, grade=point.grade, rank=point.rank)
+                    for point in item.points
+                ],
+            )
+            for item in history.series
+        ],
     )
 
 

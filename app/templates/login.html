@@ -11,11 +11,58 @@
                     <img src="{{ request.app.url_path_for('static', path='img/caddybuddy_1c.svg') }}" alt=""
                         class="auth-brand__logo auth-brand__logo--wordmark">
                 </div>
+                {% if setup_mode %}
+                <p class="text-muted small">Create your admin account to get started</p>
+                {% else %}
                 <p class="text-muted small">Please sign in to continue</p>
+                {% endif %}
             </div>
 
+            {% if setup_mode %}
+
+            {% if setup_error %}
+            <div class="alert alert-danger" role="alert">{{ setup_error }}</div>
+            {% endif %}
+
+            <form action="{{ request.app.url_path_for('setup_action') }}" method="post" class="auth-form"
+                id="setup-form" data-setup-form data-password-checklist-form>
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+                <div class="mb-3">
+                    <label for="setup-password" class="form-label auth-field-label">Password</label>
+                    <input id="setup-password" name="password" type="password" class="form-control form-control-lg"
+                        autocomplete="new-password" minlength="{{ password_policy_min_length }}"
+                        maxlength="4096" required autofocus
+                        data-setup-password-min-length="{{ password_policy_min_length }}"
+                        data-setup-password data-password-checklist-password>
+                </div>
+
+                <div class="mb-3">
+                    <label for="setup-confirm" class="form-label auth-field-label">Confirm Password</label>
+                    <input id="setup-confirm" name="confirm_password" type="password" class="form-control form-control-lg"
+                        autocomplete="new-password" maxlength="4096" required
+                        data-setup-confirm data-password-checklist-confirm>
+                </div>
+
+                <ul class="setup-checklist mb-4" aria-label="Password requirements" id="setup-checklist">
+                    <li class="setup-check" data-check="length">At least {{ password_policy_min_length }} characters</li>
+                    <li class="setup-check" data-check="upper">Uppercase letter (A–Z)</li>
+                    <li class="setup-check" data-check="lower">Lowercase letter (a–z)</li>
+                    <li class="setup-check" data-check="digit">Digit (0–9)</li>
+                    <li class="setup-check" data-check="special">Special character (!@#…)</li>
+                    <li class="setup-check" data-check="match">Passwords match</li>
+                </ul>
+
+                <button type="submit" class="btn btn-primary btn-lg w-100 auth-form__submit"
+                    id="setup-submit">
+                    Create Admin Account
+                </button>
+            </form>
+
+            {% else %}
+
             {% if auth_error %}
-            <div class="alert alert-danger" role="alert">Invalid credentials.</div>
+            <div class="alert alert-danger login-error" role="alert" data-testid="login-error">Invalid credentials.</div>
             {% endif %}
 
             <form action="{{ request.app.url_path_for('login_action') }}" method="post" class="auth-form"
@@ -26,8 +73,8 @@
                 <div class="mb-3">
                     <label for="username" class="form-label auth-field-label">Username</label>
                     <input id="username" name="username" class="form-control form-control-lg"
-                        placeholder="Enter username" autocomplete="username" autocapitalize="off" autocorrect="off"
-                        spellcheck="false" maxlength="50" required autofocus>
+                        autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false"
+                        maxlength="50" required autofocus>
                 </div>
 
                 <div class="mb-4">
@@ -43,7 +90,10 @@
                     <span data-loading-submit-label>Sign in</span>
                 </button>
             </form>
+
+            {% endif %}
         </div>
     </div>
 </section>
+
 {% endblock %}

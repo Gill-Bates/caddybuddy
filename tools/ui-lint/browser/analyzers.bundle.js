@@ -428,24 +428,36 @@
     }
 
     // ---------------- Interaction ----------------
-    function interactionAnalyzer(constants, selectors) {
+    function interactionAnalyzer(constants, selectors, scope = '') {
         const targets = Array.from(document.querySelectorAll(selectors.clickTarget || 'button'));
         const interactiveTargets = Array.from(document.querySelectorAll(
             selectors.interactive || 'button, [role="button"], a[href], input:not([type="hidden"]), select, textarea'
         ));
         const minSize = Number(constants.CLICK_TARGET_MIN_SIZE_PX);
+        const denseTableMinSize = Number(constants.DENSE_TABLE_CLICK_TARGET_MIN_SIZE_PX ?? minSize);
         const tolerance = Number(constants.OVERFLOW_TOLERANCE_PX || 0);
+        const isDesktopViewport = window.innerWidth >= Number(constants.LG_BREAKPOINT_PX ?? 992);
+        const isDenseSitesTableTarget = (el) => (
+            scope === 'sites'
+            && isDesktopViewport
+            && el.matches('.btn-sm.btn--icon-only')
+            && Boolean(el.closest('.sites-list-scroll'))
+        );
+        const requiredTargetSize = (el) => (isDenseSitesTableTarget(el) ? denseTableMinSize : minSize);
 
         const tooSmall = targets
             .filter(isVisible)
             .filter((el) => !isVisuallyHidden(el))
-            .map((el) => ({ el, rect: rectOf(el) }))
-            .filter(({ rect }) => rect.width < minSize || rect.height < minSize)
+            .map((el) => ({ el, rect: rectOf(el), minimum: requiredTargetSize(el) }))
+            .filter(({ rect, minimum }) => rect.width < minimum || rect.height < minimum)
             .slice(0, 20)
-            .map(({ el, rect }) => ({
+            .map(({ el, rect, minimum }) => ({
                 tag: el.tagName,
-                width: rect.width,
-                height: rect.height,
+                className: el.className || '',
+                text: (el.textContent || el.getAttribute('aria-label') || '').trim().replace(/\s+/g, ' ').slice(0, 80),
+                width: roundTo(rect.width, 2),
+                height: roundTo(rect.height, 2),
+                minimum,
             }));
 
         const collectCenteringIssues = (selector, issueType) => Array.from(document.querySelectorAll(selector))
@@ -502,39 +514,432 @@
 
             const panelRect = rectOf(panel);
             const compactModeMaxPanelWidth = 72 * 16;
-            const sameRowTolerance = 12;
+            const isDesktopViewport = window.innerWidth >= Number(constants.LG_BREAKPOINT_PX ?? 992);
             if (panelRect.width >= compactModeMaxPanelWidth) {
                 return [];
             }
+            if (!isDesktopViewport) {
+                return [];
+            }
 
+            const summaryHeightMax = Number(constants.SSLLABS_DOMAIN_CARD_SUMMARY_HEIGHT_MAX_PX ?? 56);
             return Array.from(document.querySelectorAll('.ssllabs-domain-card'))
                 .filter(isVisible)
                 .map((card) => {
-                    const header = card.querySelector('.ssllabs-domain-card__header');
-                    const result = card.querySelector('.ssllabs-result');
-                    const controls = card.querySelector('.ssllabs-domain-card__controls');
-                    if (!(header instanceof Element) || !(result instanceof Element) || !(controls instanceof Element)) {
+                    const summary = card.querySelector('.ssllabs-domain-card__summary');
+                    if (!(summary instanceof Element)) {
                         return null;
                     }
 
-                    const headerRect = rectOf(header);
-                    const resultRect = rectOf(result);
-                    const controlsRect = rectOf(controls);
-                    const sameRow = Math.abs(headerRect.top - resultRect.top) <= sameRowTolerance
-                        && Math.abs(headerRect.top - controlsRect.top) <= sameRowTolerance;
-                    if (!sameRow) {
+                    const summaryRect = rectOf(summary);
+                    if (summaryRect.height <= summaryHeightMax) {
                         return null;
                     }
 
-                    const host = (header.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+                    const host = (summary.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80);
                     return {
                         host,
                         panelWidth: roundTo(panelRect.width, 2),
                         cardWidth: roundTo(rectOf(card).width, 2),
+                        summaryHeight: roundTo(summaryRect.height, 2),
+                        maximumSummaryHeight: summaryHeightMax,
                     };
                 })
                 .filter(Boolean)
                 .slice(0, 20);
+        })();
+
+        const ssllabsFilterbarHeightIssue = (() => {
+            const filterbar = document.querySelector('.ssllabs-filterbar');
+            if (!(filterbar instanceof Element) || !isVisible(filterbar) || isVisuallyHidden(filterbar)) {
+                return null;
+            }
+            const max = Number(constants.SSLLABS_FILTERBAR_HEIGHT_MAX_PX ?? 52);
+            const height = roundTo(rectOf(filterbar).height, 2);
+            if (height <= max) {
+                return null;
+            }
+            return { height, maximum: max, passesMaximum: false };
+        })();
+
+        const ssllabsInlineSchedulerIssues = (() => {
+            const schedulers = Array.from(document.querySelectorAll('.ssllabs-domain-card__inline-scheduler'));
+            if (schedulers.length === 0) return null;
+            const minWidth = Number(constants.SSLLABS_INLINE_SCHEDULER_MIN_WIDTH_PX ?? 120);
+            const issues = schedulers
+                .filter((el) => isVisible(el) && !isVisuallyHidden(el))
+                .map((el) => {
+                    const width = roundTo(rectOf(el).width, 2);
+                    const hidden = styleOf(el).display === 'none';
+                    return { width, hidden, meetsMinWidth: width >= minWidth };
+                })
+                .filter((r) => !r.meetsMinWidth || r.hidden);
+            return issues.length > 0 ? { issues, minimum: minWidth } : null;
+        })();
+
+        const ssllabsInlineSchedulerLayout = (() => {
+            const schedulers = Array.from(document.querySelectorAll('.ssllabs-domain-card__inline-scheduler'))
+                .filter((el) => isVisible(el) && !isVisuallyHidden(el));
+            const isDesktopViewport = window.innerWidth >= Number(constants.LG_BREAKPOINT_PX ?? 992);
+            if (!isDesktopViewport || schedulers.length === 0) {
+                return null;
+            }
+
+            const minWidth = Number(constants.SSLLABS_INLINE_SCHEDULER_MIN_WIDTH_PX ?? 120);
+            const maxWidth = Number(constants.SSLLABS_INLINE_SCHEDULER_MAX_WIDTH_PX ?? 180);
+            const alignmentTolerance = Number(constants.SSLLABS_INLINE_SCHEDULER_ALIGNMENT_TOLERANCE_PX ?? 2);
+            const samples = schedulers.map((el) => {
+                const rect = rectOf(el);
+                return {
+                    width: roundTo(rect.width, 2),
+                    left: roundTo(rect.left, 2),
+                };
+            });
+            const leftPositions = samples.map((sample) => sample.left);
+            const alignmentVariance = roundTo(Math.max(...leftPositions) - Math.min(...leftPositions), 2);
+
+            return {
+                present: true,
+                count: samples.length,
+                minimum: minWidth,
+                maximum: maxWidth,
+                alignmentTolerance,
+                alignmentVariance,
+                passesAlignment: alignmentVariance <= alignmentTolerance,
+                tooNarrow: samples.filter((sample) => sample.width < minWidth),
+                tooWide: samples.filter((sample) => sample.width > maxWidth),
+            };
+        })();
+
+        const ssllabsRetentionLayout = (() => {
+            const root = document.querySelector('#ssllabs-retention-settings');
+            if (!(root instanceof Element) || !isVisible(root) || isVisuallyHidden(root)) {
+                return null;
+            }
+
+            const scale = root.querySelector('.ssllabs-retention-scale');
+            const slider = root.querySelector('[data-retention-slider]');
+            const labels = Array.from(root.querySelectorAll('.ssllabs-retention-label'))
+                .filter((el) => isVisible(el) && !isVisuallyHidden(el));
+            if (!(scale instanceof HTMLElement) || !(slider instanceof HTMLElement) || labels.length < 2) {
+                return null;
+            }
+
+            const scaleRect = rectOf(scale);
+            const sliderRect = rectOf(slider);
+            const labelRects = labels.map((el) => rectOf(el));
+            const widths = labelRects.map((rect) => roundTo(rect.width, 2));
+            const centers = labelRects.map((rect) => roundTo(rect.left + (rect.width / 2), 2));
+            const spacing = centers.slice(1).map((center, index) => roundTo(center - centers[index], 2));
+            const spacingVariance = spacing.length > 1 ? roundTo(Math.max(...spacing) - Math.min(...spacing), 2) : 0;
+            const leftDelta = roundTo(Math.abs(labelRects[0].left - scaleRect.left), 2);
+            const rightDelta = roundTo(Math.abs(scaleRect.right - labelRects[labelRects.length - 1].right), 2);
+            const widthDelta = roundTo(Math.abs(rectOf(slider).width - scaleRect.width), 2);
+            const edgeDelta = roundTo(Math.max(leftDelta, rightDelta), 2);
+            const widthTolerance = Number(constants.SSLLABS_RETENTION_SCALE_WIDTH_TOLERANCE_PX ?? 2);
+            const edgeTolerance = Number(constants.SSLLABS_RETENTION_EDGE_ALIGNMENT_TOLERANCE_PX ?? 2);
+            const spacingTolerance = Number(constants.SSLLABS_RETENTION_SPACING_VARIANCE_TOLERANCE_PX ?? 2);
+            const passesAlignment = widthDelta <= widthTolerance
+                && edgeDelta <= edgeTolerance
+                && spacingVariance <= spacingTolerance;
+
+            return {
+                present: true,
+                count: labels.length,
+                widthDelta,
+                edgeDelta,
+                leftDelta,
+                rightDelta,
+                spacingVariance,
+                widthTolerance,
+                edgeTolerance,
+                spacingTolerance,
+                labelWidths: widths,
+                sliderWidth: roundTo(sliderRect.width, 2),
+                passesAlignment,
+            };
+        })();
+
+        const ssllabsHistoryLoadingShell = (() => {
+            const root = document.querySelector('[data-ssllabs-history]');
+            if (!(root instanceof Element) || !isVisible(root) || isVisuallyHidden(root)) {
+                return null;
+            }
+
+            const hasShellMarker = root.getAttribute('data-ssllabs-history-loading-shell') === 'true';
+            const emptyState = root.querySelector('#ssllabs-history-empty');
+            const toolbar = root.querySelector('.ssllabs-history-toolbar');
+            const inspector = root.querySelector('#ssllabs-history-inspector');
+            const canvas = root.querySelector('#ssllabs-history-chart');
+            const periodList = root.querySelector('#ssllabs-history-periods');
+
+            return {
+                present: true,
+                hasShellMarker,
+                hasEmptyState: emptyState instanceof HTMLElement,
+                hasToolbar: toolbar instanceof HTMLElement,
+                hasInspector: inspector instanceof HTMLElement,
+                hasCanvas: canvas instanceof HTMLElement,
+                hasPeriodList: periodList instanceof HTMLElement,
+                passesShell: hasShellMarker
+                    && emptyState instanceof HTMLElement
+                    && toolbar instanceof HTMLElement
+                    && inspector instanceof HTMLElement
+                    && canvas instanceof HTMLElement
+                    && periodList instanceof HTMLElement,
+            };
+        })();
+
+        const dashboardHeroMetricHeights = (() => {
+            const heroCards = Array.from(document.querySelectorAll('.hero-metric'))
+                .filter((el) => isVisible(el) && !isVisuallyHidden(el));
+            if (heroCards.length === 0) {
+                return null;
+            }
+
+            const isMobileViewport = window.innerWidth < Number(constants.LG_BREAKPOINT_PX ?? 992);
+            const maximum = Number(
+                isMobileViewport
+                    ? (constants.KPI_HEIGHT_MAX_MOBILE_PX ?? 106)
+                    : (constants.KPI_HEIGHT_MAX_DESKTOP_PX ?? 145)
+            );
+            const heights = heroCards.map((card) => roundTo(rectOf(card).height, 2));
+            return {
+                present: true,
+                maximum,
+                heights,
+                tooTall: heights
+                    .map((height, index) => ({ index, height }))
+                    .filter((entry) => entry.height > maximum),
+            };
+        })();
+
+        const dashboardHeroMetricInsets = (() => {
+            const heroCards = Array.from(document.querySelectorAll('.hero-metric'))
+                .filter((el) => isVisible(el) && !isVisuallyHidden(el));
+            const isDesktopViewport = window.innerWidth >= Number(constants.LG_BREAKPOINT_PX ?? 992);
+            if (!isDesktopViewport || heroCards.length < 3) {
+                return null;
+            }
+
+            const appContainer = heroCards[0].closest('.app-container');
+            if (!(appContainer instanceof HTMLElement)) {
+                return null;
+            }
+
+            const containerRect = rectOf(appContainer);
+            const firstRect = rectOf(heroCards[0]);
+            const lastRect = rectOf(heroCards[heroCards.length - 1]);
+            const leftInset = roundTo(firstRect.left - containerRect.left, 2);
+            const rightInset = roundTo(containerRect.right - lastRect.right, 2);
+            const variance = roundTo(Math.abs(leftInset - rightInset), 2);
+            const maximum = Number(constants.KPI_SIDE_INSET_VARIANCE_MAX_PX ?? 2);
+
+            return {
+                present: true,
+                leftInset,
+                rightInset,
+                variance,
+                maximum,
+                passesVariance: variance <= maximum,
+            };
+        })();
+
+        const onboardingWizardStepDimming = (() => {
+            const stepButtons = Array.from(document.querySelectorAll('.cb-onboarding-wizard__step-button'))
+                .filter((el) => isVisible(el) && !isVisuallyHidden(el));
+            if (stepButtons.length < 2) {
+                return null;
+            }
+
+            const activeButtons = stepButtons.filter((button) =>
+                button.classList.contains('is-active') || button.getAttribute('aria-current') === 'step'
+            );
+            const inactiveButtons = stepButtons.filter((button) => !activeButtons.includes(button));
+            if (activeButtons.length !== 1 || inactiveButtons.length === 0) {
+                return {
+                    present: true,
+                    activeButtons: activeButtons.length,
+                    inactiveButtons: inactiveButtons.length,
+                    activeOpacity: null,
+                    inactiveOpacityMin: null,
+                    inactiveOpacityMax: null,
+                    expectedActiveMinimum: Number(constants.ONBOARDING_WIZARD_ACTIVE_OPACITY_MIN ?? 0.95),
+                    expectedInactiveMaximum: Number(constants.ONBOARDING_WIZARD_INACTIVE_OPACITY_MAX ?? 0.8),
+                    passesDimming: false,
+                };
+            }
+
+            const opacities = stepButtons.map((button) => {
+                const style = styleOf(button);
+                return roundTo(Number.parseFloat(style.opacity || '1') || 1, 2);
+            });
+            const activeOpacity = opacities[activeButtons.length ? stepButtons.indexOf(activeButtons[0]) : 0];
+            const inactiveOpacities = stepButtons
+                .map((button, index) => ({ button, opacity: opacities[index] }))
+                .filter(({ button }) => !activeButtons.includes(button))
+                .map(({ opacity }) => opacity);
+            const inactiveOpacityMin = roundTo(Math.min(...inactiveOpacities), 2);
+            const inactiveOpacityMax = roundTo(Math.max(...inactiveOpacities), 2);
+            const expectedActiveMinimum = Number(constants.ONBOARDING_WIZARD_ACTIVE_OPACITY_MIN ?? 0.95);
+            const expectedInactiveMaximum = Number(constants.ONBOARDING_WIZARD_INACTIVE_OPACITY_MAX ?? 0.8);
+
+            return {
+                present: true,
+                activeButtons: activeButtons.length,
+                inactiveButtons: inactiveButtons.length,
+                activeOpacity,
+                inactiveOpacityMin,
+                inactiveOpacityMax,
+                expectedActiveMinimum,
+                expectedInactiveMaximum,
+                passesDimming: activeOpacity >= expectedActiveMinimum && inactiveOpacityMax <= expectedInactiveMaximum,
+            };
+        })();
+
+        const onboardingWizardStepAccent = (() => {
+            const stepButtons = Array.from(document.querySelectorAll('.cb-onboarding-wizard__step-button'))
+                .filter((el) => isVisible(el) && !isVisuallyHidden(el));
+            if (stepButtons.length < 2) {
+                return null;
+            }
+
+            const activeButtons = stepButtons.filter((button) =>
+                button.classList.contains('is-active') || button.getAttribute('aria-current') === 'step'
+            );
+            const inactiveButtons = stepButtons.filter((button) => !activeButtons.includes(button));
+            if (activeButtons.length !== 1 || inactiveButtons.length === 0) {
+                return {
+                    present: true,
+                    activeButtons: activeButtons.length,
+                    inactiveButtons: inactiveButtons.length,
+                    activeBoxShadow: null,
+                    passesAccent: false,
+                };
+            }
+
+            const activeStyle = styleOf(activeButtons[0]);
+            const activeBoxShadow = String(activeStyle.boxShadow || '').trim();
+            const hasInsetAccent = /\binset\b/i.test(activeBoxShadow);
+
+            return {
+                present: true,
+                activeButtons: 1,
+                inactiveButtons: inactiveButtons.length,
+                activeBoxShadow,
+                passesAccent: hasInsetAccent,
+            };
+        })();
+
+        const onboardingWizardStepIndexPalette = (() => {
+            const stepButtons = Array.from(document.querySelectorAll('.cb-onboarding-wizard__step-button'))
+                .filter((el) => isVisible(el) && !isVisuallyHidden(el));
+            if (stepButtons.length < 2) {
+                return null;
+            }
+
+            const activeButtons = stepButtons.filter((button) =>
+                button.classList.contains('is-active') || button.getAttribute('aria-current') === 'step'
+            );
+            const inactiveButtons = stepButtons.filter((button) => !activeButtons.includes(button));
+            if (activeButtons.length !== 1 || inactiveButtons.length === 0) {
+                return {
+                    present: true,
+                    activeButtons: activeButtons.length,
+                    inactiveButtons: inactiveButtons.length,
+                    activeBackground: null,
+                    inactiveBackground: null,
+                    activeColor: null,
+                    inactiveColor: null,
+                    passesPalette: false,
+                };
+            }
+
+            const activeIndex = activeButtons[0].querySelector('.cb-onboarding-wizard__step-index');
+            const inactiveIndex = inactiveButtons[0].querySelector('.cb-onboarding-wizard__step-index');
+            if (!(activeIndex instanceof HTMLElement) || !(inactiveIndex instanceof HTMLElement)) {
+                return null;
+            }
+
+            const activeStyle = styleOf(activeIndex);
+            const inactiveStyle = styleOf(inactiveIndex);
+            const activeBackground = String(activeStyle.backgroundColor || '').trim();
+            const inactiveBackground = String(inactiveStyle.backgroundColor || '').trim();
+            const activeColor = String(activeStyle.color || '').trim();
+            const inactiveColor = String(inactiveStyle.color || '').trim();
+
+            return {
+                present: true,
+                activeButtons: activeButtons.length,
+                inactiveButtons: inactiveButtons.length,
+                activeBackground,
+                inactiveBackground,
+                activeColor,
+                inactiveColor,
+                passesPalette: activeBackground !== inactiveBackground && activeColor !== inactiveColor,
+            };
+        })();
+
+        const badgeStyleMismatches = (() => {
+            // Every app pill must share the unified compact geometry
+            // (the --cb-pill-* tokens). Flag any pill whose rendered
+            // min-height / font-size / inline padding drifts from it.
+            const selector = [
+                '.cb-pill',
+                '.status-pill',
+                '.site-domain-badge',
+                '.site-handler-badge',
+                '.ssllabs-site-domain-badge',
+                '.site-cert__status',
+                '.site-cert__days',
+                '.ssllabs-result__grade',
+                '.ssllabs-result__status-badge',
+                '.ssllabs-endpoint-chip__grade',
+            ].join(',');
+            const pills = Array.from(document.querySelectorAll(selector))
+                .filter((el) => isVisible(el) && !isVisuallyHidden(el));
+            if (pills.length === 0) return null;
+
+            const expectedMinHeight = Number(constants.PILL_MIN_HEIGHT_EXPECTED_PX ?? 21.6);
+            const expectedFontSize = Number(constants.PILL_FONT_SIZE_EXPECTED_PX ?? 11.84);
+            const expectedPaddingInline = Number(constants.PILL_PADDING_INLINE_EXPECTED_PX ?? 7.2);
+            const minHeightTolerance = Number(constants.PILL_MIN_HEIGHT_TOLERANCE_PX ?? 1);
+            const fontSizeTolerance = Number(constants.BADGE_FONT_SIZE_TOLERANCE_PX ?? 0.5);
+            const paddingTolerance = Number(constants.BADGE_PADDING_TOLERANCE_PX ?? 1);
+
+            const issues = pills
+                .map((el) => {
+                    const style = styleOf(el);
+                    const minHeight = parseFloat(style.minHeight) || 0;
+                    const fontSize = parseFloat(style.fontSize) || 0;
+                    const paddingLeft = parseFloat(style.paddingLeft) || 0;
+                    const paddingRight = parseFloat(style.paddingRight) || 0;
+                    const deviations = [];
+                    if (Math.abs(minHeight - expectedMinHeight) > minHeightTolerance) {
+                        deviations.push({ prop: 'min-height', actual: roundTo(minHeight, 2), expected: expectedMinHeight });
+                    }
+                    if (Math.abs(fontSize - expectedFontSize) > fontSizeTolerance) {
+                        deviations.push({ prop: 'font-size', actual: roundTo(fontSize, 2), expected: expectedFontSize });
+                    }
+                    if (Math.abs(paddingLeft - expectedPaddingInline) > paddingTolerance
+                        || Math.abs(paddingRight - expectedPaddingInline) > paddingTolerance) {
+                        deviations.push({
+                            prop: 'padding-inline',
+                            actual: `${roundTo(paddingLeft, 2)} / ${roundTo(paddingRight, 2)}`,
+                            expected: expectedPaddingInline,
+                        });
+                    }
+                    if (deviations.length === 0) return null;
+                    return {
+                        className: el.className || '',
+                        text: (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40),
+                        deviations,
+                    };
+                })
+                .filter(Boolean)
+                .slice(0, 20);
+
+            return issues;
         })();
 
         const viewportClippedInteractiveElements = interactiveTargets
@@ -572,6 +977,17 @@
             buttonAlignmentIssues,
             badgeAlignmentIssues,
             ssllabsPrematureDesktopLayoutIssues,
+            ssllabsFilterbarHeightIssue,
+            ssllabsInlineSchedulerIssues,
+            ssllabsInlineSchedulerLayout,
+            ssllabsRetentionLayout,
+            ssllabsHistoryLoadingShell,
+            dashboardHeroMetricHeights,
+            dashboardHeroMetricInsets,
+            onboardingWizardStepDimming,
+            onboardingWizardStepAccent,
+            onboardingWizardStepIndexPalette,
+            badgeStyleMismatches,
             viewportClippedInteractiveElements,
         };
     }
@@ -1207,6 +1623,9 @@
     function sitesFormControlHeightAnalyzer(constants = {}, scope = '') {
         const expectedHeight = Number(constants.SITES_FORM_CONTROL_HEIGHT_EXPECTED_PX ?? 50);
         const tolerance = Number(constants.SITES_FORM_CONTROL_HEIGHT_TOLERANCE_PX ?? 2);
+        const maximumEditorBottomGap = Number(constants.SITES_FORM_CONFIG_EDITOR_BOTTOM_GAP_MAX_PX ?? 16);
+        const maximumActionsGap = Number(constants.SITES_FORM_CONFIG_ACTIONS_GAP_MAX_PX ?? 20);
+        const isDesktopViewport = window.innerWidth >= Number(constants.XL_BREAKPOINT_PX ?? 1200);
         const fallback = {
             present: false,
             expectedHeight,
@@ -1216,24 +1635,85 @@
             passesSiteName: true,
             passesDomainControl: true,
         };
+        const layoutFallback = {
+            present: false,
+            maximumEditorBottomGap,
+            maximumActionsGap,
+            editorBottomGapPx: null,
+            actionsGapPx: null,
+            passesEditorBottomGap: true,
+            passesActionsGap: true,
+        };
 
         if (scope !== 'sites') {
-            return { sitesFormControlHeights: fallback };
+            return {
+                sitesFormControlHeights: fallback,
+                sitesFormLayout: layoutFallback,
+            };
         }
 
         const siteNameInput = document.getElementById('site-name');
         const domainControl = document.querySelector('[data-domain-tag-shell]');
         if (!(siteNameInput instanceof Element) || !(domainControl instanceof Element)) {
-            return { sitesFormControlHeights: fallback };
+            return {
+                sitesFormControlHeights: fallback,
+                sitesFormLayout: layoutFallback,
+            };
         }
         if (!isVisible(siteNameInput) || isVisuallyHidden(siteNameInput) || !isVisible(domainControl) || isVisuallyHidden(domainControl)) {
-            return { sitesFormControlHeights: fallback };
+            return {
+                sitesFormControlHeights: fallback,
+                sitesFormLayout: layoutFallback,
+            };
         }
 
         const siteNameHeightPx = rectOf(siteNameInput).height;
         const domainControlHeightPx = rectOf(domainControl).height;
         const passesSiteName = Math.abs(siteNameHeightPx - expectedHeight) <= tolerance;
         const passesDomainControl = Math.abs(domainControlHeightPx - expectedHeight) <= tolerance;
+        let sitesFormLayout = layoutFallback;
+
+        if (isDesktopViewport) {
+            const configSection = document.querySelector('.sites-form-panel__config');
+            const actions = document.querySelector('.sites-form-panel__actions');
+            const configEditor = configSection instanceof Element
+                ? (() => {
+                    const cmEditor = configSection.querySelector('.cm-editor');
+                    if (cmEditor instanceof Element && isVisible(cmEditor) && !isVisuallyHidden(cmEditor)) {
+                        return cmEditor;
+                    }
+                    return Array.from(configSection.querySelectorAll('textarea[name="caddy_directives"]'))
+                        .find((element) => element instanceof Element && isVisible(element) && !isVisuallyHidden(element))
+                        || null;
+                })()
+                : null;
+
+            if (
+                configSection instanceof Element
+                && actions instanceof Element
+                && configEditor instanceof Element
+                && isVisible(configSection)
+                && !isVisuallyHidden(configSection)
+                && isVisible(actions)
+                && !isVisuallyHidden(actions)
+            ) {
+                const configRect = rectOf(configSection);
+                const editorRect = rectOf(configEditor);
+                const actionsRect = rectOf(actions);
+                const editorBottomGapPx = Math.max(0, configRect.bottom - editorRect.bottom);
+                const actionsGapPx = Math.max(0, actionsRect.top - configRect.bottom);
+
+                sitesFormLayout = {
+                    present: true,
+                    maximumEditorBottomGap,
+                    maximumActionsGap,
+                    editorBottomGapPx: roundTo(editorBottomGapPx, 2),
+                    actionsGapPx: roundTo(actionsGapPx, 2),
+                    passesEditorBottomGap: editorBottomGapPx <= maximumEditorBottomGap,
+                    passesActionsGap: actionsGapPx <= maximumActionsGap,
+                };
+            }
+        }
 
         return {
             sitesFormControlHeights: {
@@ -1245,6 +1725,168 @@
                 passesSiteName,
                 passesDomainControl,
             },
+            sitesFormLayout,
+        };
+    }
+
+    function sitesTableDensityAnalyzer(constants = {}, scope = '') {
+        const maximumRowHeight = Number(constants.SITES_TABLE_ROW_MAX_HEIGHT_PX ?? 64);
+        const targetRowHeight = Number(constants.SITES_TABLE_DENSE_ROW_TARGET_PX ?? 52);
+        const isDesktopViewport = window.innerWidth >= Number(constants.LG_BREAKPOINT_PX ?? 992);
+        const fallback = {
+            present: false,
+            maximumRowHeight,
+            targetRowHeight,
+            rowCount: 0,
+            medianRowHeightPx: null,
+            maxRowHeightPx: null,
+            oversizedRows: [],
+        };
+
+        if (scope !== 'sites' || !isDesktopViewport) {
+            return { sitesTableDensity: fallback };
+        }
+
+        const table = document.querySelector('.sites-list-panel table, .sites-list-scroll table');
+        if (!(table instanceof Element) || !isVisible(table) || isVisuallyHidden(table)) {
+            return { sitesTableDensity: fallback };
+        }
+
+        const rows = Array.from(table.querySelectorAll('tbody tr'))
+            .filter((row) => row instanceof Element && isVisible(row) && !isVisuallyHidden(row));
+        if (!rows.length) {
+            return { sitesTableDensity: { ...fallback, present: true } };
+        }
+
+        const rowHeights = rows
+            .map((row) => {
+                const rowRect = rectOf(row);
+                return rowRect.height;
+            })
+            .filter((height) => Number.isFinite(height) && height > 0)
+            .sort((a, b) => a - b);
+        if (!rowHeights.length) {
+            return { sitesTableDensity: { ...fallback, present: true } };
+        }
+
+        const middle = Math.floor(rowHeights.length / 2);
+        const medianRowHeightPx = rowHeights.length % 2 === 0
+            ? (rowHeights[middle - 1] + rowHeights[middle]) / 2
+            : rowHeights[middle];
+        const maxRowHeightPx = rowHeights[rowHeights.length - 1];
+        const oversizedRows = rows
+            .map((row, index) => {
+                const rowRect = rectOf(row);
+                return {
+                    index,
+                    text: (row.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80),
+                    height: rowRect.height,
+                };
+            })
+            .filter((row) => row.height > maximumRowHeight)
+            .slice(0, 20)
+            .map((row) => ({
+                index: row.index,
+                text: row.text,
+                height: roundTo(row.height, 2),
+            }));
+
+        return {
+            sitesTableDensity: {
+                present: true,
+                maximumRowHeight,
+                targetRowHeight,
+                rowCount: rows.length,
+                medianRowHeightPx: roundTo(medianRowHeightPx, 2),
+                maxRowHeightPx: roundTo(maxRowHeightPx, 2),
+                oversizedRows,
+            },
+        };
+    }
+
+    // ---------------- Mobile spacing checks ----------------
+    // Verifies:
+    //   1. mobileTopbarClearance — the top of page content clears the fixed topbar/toggle
+    //   2. mobileCardEdgeAlignment — .app-page__header left edge aligns with .panel-card content left edge
+    function mobileSpacingAnalyzer(constants = {}) {
+        const isMobileViewport = window.innerWidth < Number(constants.LG_BREAKPOINT_PX ?? 992);
+        const clearanceMin = Number(constants.MOBILE_TOPBAR_CLEARANCE_MIN_PX ?? 56);
+        const alignmentTolerance = Number(constants.MOBILE_CARD_HEADING_ALIGNMENT_TOLERANCE_PX ?? 2);
+
+        const topbarClearanceFallback = {
+            present: false,
+            topbarHeightPx: null,
+            contentTopPx: null,
+            clearancePx: null,
+            minimum: clearanceMin,
+            passesClearance: true,
+        };
+
+        const cardEdgeAlignmentFallback = null;
+
+        if (!isMobileViewport) {
+            return {
+                mobileTopbarClearance: topbarClearanceFallback,
+                mobileCardEdgeAlignment: cardEdgeAlignmentFallback,
+            };
+        }
+
+        // --- topbar clearance ---
+        let mobileTopbarClearance = topbarClearanceFallback;
+        const topbar = document.querySelector('.mobile-topbar');
+        const appPage = document.querySelector('.app-page');
+        if (
+            topbar instanceof Element
+            && isVisible(topbar)
+            && appPage instanceof Element
+            && isVisible(appPage)
+        ) {
+            const topbarRect = rectOf(topbar);
+            const topbarHeightPx = roundTo(topbarRect.height, 2);
+            const contentTopPx = roundTo(rectOf(appPage).top, 2);
+            const clearancePx = roundTo(contentTopPx, 2);
+            mobileTopbarClearance = {
+                present: true,
+                topbarHeightPx,
+                contentTopPx,
+                clearancePx,
+                minimum: clearanceMin,
+                passesClearance: clearancePx >= clearanceMin,
+            };
+        }
+
+        // --- heading / panel-card content left-edge alignment ---
+        let mobileCardEdgeAlignment = cardEdgeAlignmentFallback;
+        const header = document.querySelector('.app-page__header');
+        const panelCard = document.querySelector('.app-page .panel-card');
+        if (
+            header instanceof Element
+            && isVisible(header)
+            && panelCard instanceof Element
+            && isVisible(panelCard)
+        ) {
+            const headerLeft = roundTo(rectOf(header).left, 2);
+            const cardRect = rectOf(panelCard);
+            const cardStyle = styleOf(panelCard);
+            const cardPaddingLeft = Number.parseFloat(cardStyle?.paddingLeft || '0');
+            const cardContentLeft = roundTo(cardRect.left + cardPaddingLeft, 2);
+            const leftDelta = roundTo(Math.abs(headerLeft - cardContentLeft), 2);
+            mobileCardEdgeAlignment = {
+                present: true,
+                headerLeft,
+                cardContentLeft,
+                leftDelta,
+                tolerance: alignmentTolerance,
+                matchesLeft: leftDelta <= alignmentTolerance,
+                // right-edge check: header right vs card right edge minus padding
+                rightDelta: 0,
+                matchesRight: true,
+            };
+        }
+
+        return {
+            mobileTopbarClearance,
+            mobileCardEdgeAlignment,
         };
     }
 
@@ -1254,7 +1896,7 @@
         const accessibility = accessibilityAnalyzer(constants);
         const layout = layoutAnalyzer(constants);
         const scrollContainment = scrollContainmentAnalyzer(constants, scope);
-        const interaction = interactionAnalyzer(constants, selectors);
+        const interaction = interactionAnalyzer(constants, selectors, scope);
         const contrast = contrastAnalyzer(constants);
         const footerGap = footerGapAnalyzer(constants);
         const sidebarFooterGap = mobileSidebarFooterAnalyzer(constants);
@@ -1263,6 +1905,8 @@
         const primaryPanelPadding = primaryPanelPaddingAnalyzer(constants);
         const pageStructure = pageStructureAnalyzer();
         const sitesFormControlHeights = sitesFormControlHeightAnalyzer(constants, scope);
+        const sitesTableDensity = sitesTableDensityAnalyzer(constants, scope);
+        const mobileSpacing = mobileSpacingAnalyzer(constants);
         const state = stateAnalyzer();
         const components = componentAnalyzer();
         const modalTheme = modalThemeAnalyzer(constants);
@@ -1289,7 +1933,14 @@
             ...primaryPanelPadding,
             ...pageStructure,
             ...sitesFormControlHeights,
+            ...sitesTableDensity,
             ...modalTheme,
+            ...mobileSpacing,
+
+            spacing: {
+                mobileTopbarClearance: mobileSpacing.mobileTopbarClearance,
+                mobileCardEdgeAlignment: mobileSpacing.mobileCardEdgeAlignment,
+            },
 
             state,
             components,

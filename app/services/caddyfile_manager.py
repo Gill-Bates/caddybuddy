@@ -20,6 +20,7 @@ except ImportError:
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,8 +34,18 @@ from app.models.entities import (
 )
 from app.repositories.sites import DuplicateSiteError, site_repository
 from app.services.caddy import CaddyAdminClient, CaddyServiceError, caddy_service
-from app.services.runtime_settings import get_caddy_config
-from app.utils.caddyfile import build_domain_site_preview, parse_caddyfile
+from app.services.runtime_settings import get_caddy_config, get_ssllabs_email
+from app.utils.caddyfile import (
+    build_generated_site_block,
+    directives_have_import,
+    directives_have_log_block,
+    directives_have_security_header_block,
+    inject_global_options,
+    parse_caddyfile,
+    snippet_is_defined,
+    SNIPPET_DEFAULT_LOG,
+    SNIPPET_SECURITY_HEADERS,
+)
 from app.utils.domains import split_domain_names
 
 
@@ -51,7 +62,14 @@ _STATE_KEY_ONBOARDING_STATUS = "onboarding_status"
 _STATE_KEY_RENDERED_CONFIG_SHA256 = "rendered_config_sha256"
 _STATE_KEY_SNAPSHOT_SHA256 = "snapshot_sha256"
 _STATUS_MANAGED = "managed"
+_STATUS_ONBOARDED = "onboarded"
+_STATUS_ALREADY_MANAGED = "already_managed"
+_STATUS_SYNCED = "synced"
+_STATUS_NO_CHANGE = "no_change"
 _STATUS_ONBOARDING_FAILED = "onboarding_failed"
+_SYNC_SUCCESS_STATUSES = frozenset({_STATUS_SYNCED, _STATUS_NO_CHANGE})
+_ONBOARDING_SUCCESS_STATUSES = frozenset({_STATUS_ONBOARDED, _STATUS_ALREADY_MANAGED})
+_ONBOARDING_COMMIT_STATUSES = _ONBOARDING_SUCCESS_STATUSES | _SYNC_SUCCESS_STATUSES
 _MAX_CADDYFILE_BYTES = 2 * 1024 * 1024
 _LOCK_RETRY_SECONDS = 0.1
 _LOCK_TIMEOUT_SECONDS = 30.0
@@ -86,6 +104,18 @@ class CaddySyncResult:
     synced: bool = False
     error: str | None = None
     error_code: str | None = None
+
+
+def sync_succeeded(status: str) -> bool:
+    return status in _SYNC_SUCCESS_STATUSES
+
+
+def onboarding_succeeded(status: str) -> bool:
+    return status in _ONBOARDING_SUCCESS_STATUSES
+
+
+def onboarding_result_should_commit(status: str) -> bool:
+    return status in _ONBOARDING_COMMIT_STATUSES
 
 
 def _get_operation_lock() -> asyncio.Lock:
@@ -143,7 +173,7 @@ async def _acquire_operation_guard():
 
     async with _get_operation_lock():
         if fcntl is None:
-            # Windows: rely on asyncio lock only
+            logger.warning("fcntl unavailable; Caddy operation locking is process-local only.")
             yield
             return
 
@@ -205,12 +235,16 @@ def _inspect_caddyfile_sync(path: Path | None) -> tuple[str | None, str | None, 
         with path.open("r+", encoding="utf-8"):
             pass
     except OSError:
+        try:
+            mode = oct(path.stat().st_mode & 0o777)
+        except OSError:
+            mode = "unknown"
         logger.warning(
             "Caddyfile not writable: path=%s uid=%s gid=%s mode=%s",
             path,
             os.getuid() if hasattr(os, "getuid") else "unknown",
             os.getgid() if hasattr(os, "getgid") else "unknown",
-            oct(path.stat().st_mode & 0o777),
+            mode,
         )
         return "caddyfile_not_writable", content, marker_present
 
@@ -332,21 +366,36 @@ def _write_caddyfile_sync(path: Path, content: str) -> None:
             tmp_path.unlink()
         if exc.errno not in _BIND_MOUNT_RENAME_ERRNOS:
             raise
-        with path.open("w", encoding="utf-8") as handle:
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
+        original_content = None
+        try:
+            original_content = path.read_text(encoding="utf-8")
+        except OSError:
+            pass
+        try:
+            with path.open("w", encoding="utf-8") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except OSError:
+            if original_content is not None:
+                with suppress(OSError):
+                    with path.open("w", encoding="utf-8") as restore_handle:
+                        restore_handle.write(original_content)
+                        restore_handle.flush()
+                        os.fsync(restore_handle.fileno())
+            raise
         return
 
-    dir_fd = os.open(path.parent, os.O_RDONLY)
+    # The replace already succeeded; a failing directory fsync only weakens the
+    # durability guarantee and must not turn a completed write into an error.
     try:
-        os.fsync(dir_fd)
-    finally:
-        os.close(dir_fd)
-
-
-def replace_caddyfile_with_marker(path: Path) -> None:
-    _write_caddyfile_sync(path, _marker_text())
+        dir_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except OSError:
+        logger.warning("Could not fsync Caddyfile directory after replace: %s", path.parent)
 
 
 async def get_baseline_caddyfile(session: AsyncSession) -> str:
@@ -373,6 +422,27 @@ async def get_baseline_caddyfile(session: AsyncSession) -> str:
 async def set_baseline_caddyfile(session: AsyncSession, caddyfile: str) -> None:
     await _set_state_value(session, _STATE_KEY_GLOBAL_CADDYFILE, caddyfile)
     await session.flush()
+
+
+def _admin_endpoint_from_url(admin_url: str) -> str:
+    """Return the ``host:port`` Caddy admin endpoint from a normalized admin URL."""
+    return urlsplit(admin_url).netloc
+
+
+async def _apply_managed_global_options(session: AsyncSession, baseline: str) -> str:
+    """Inject the Settings-managed admin endpoint and ACME email into the baseline.
+
+    The Caddy admin endpoint is derived from the Caddy Admin URL setting and the ACME
+    contact email from the configured SSL Labs email, keeping Settings the single source
+    of truth instead of hardcoding them in the stored baseline.
+    """
+    config = await get_caddy_config(session)
+    email = await get_ssllabs_email(session)
+    return inject_global_options(
+        baseline,
+        admin=_admin_endpoint_from_url(config.admin_url),
+        email=email,
+    )
 
 
 async def _admin_api_reachable(session: AsyncSession) -> bool:
@@ -407,57 +477,142 @@ async def get_caddy_runtime_status(session: AsyncSession, *, check_admin_api: bo
     )
 
 
-def _render_generated_site_block(site) -> str:
-    return build_domain_site_preview(
+def _render_generated_site_block(
+    site,
+    *,
+    has_security_headers_snippet: bool,
+    has_default_log_snippet: bool,
+) -> str:
+    directives = site.caddy_directives
+    return build_generated_site_block(
         name=site.domain,
         upstream=site.upstream_url.strip() if site.upstream_url else None,
-        caddy_directives=site.caddy_directives,
+        caddy_directives=directives,
         ssl_enabled=True,
+        import_security_headers=(
+            has_security_headers_snippet
+            and not directives_have_import(directives, "security_headers")
+            and not directives_have_security_header_block(directives)
+        ),
+        import_default_log=(
+            has_default_log_snippet
+            and not directives_have_import(directives, "default_log")
+            and not directives_have_log_block(directives)
+        ),
     )
+
+
+async def build_site_validation_caddyfile(
+    session: AsyncSession,
+    *,
+    domain: str,
+    caddy_directives: str,
+) -> str:
+    """Build the full generated Caddyfile used for validating one site form."""
+    baseline = await _apply_managed_global_options(session, (await get_baseline_caddyfile(session)).strip())
+    parts: list[str] = []
+
+    if not snippet_is_defined(baseline, "security_headers"):
+        parts.append(SNIPPET_SECURITY_HEADERS)
+    if not snippet_is_defined(baseline, "default_log"):
+        parts.append(SNIPPET_DEFAULT_LOG)
+    if baseline:
+        parts.append(baseline)
+
+    parts.append(
+        build_generated_site_block(
+            name=domain,
+            upstream=None,
+            caddy_directives=caddy_directives,
+            ssl_enabled=True,
+            import_security_headers=not directives_have_import(caddy_directives, "security_headers")
+            and not directives_have_security_header_block(caddy_directives),
+            import_default_log=not directives_have_import(caddy_directives, "default_log")
+            and not directives_have_log_block(caddy_directives),
+        )
+    )
+    return "\n\n".join(parts)
 
 
 async def build_full_caddyfile(session: AsyncSession) -> str:
     """Build the final Caddyfile from SQLite state only."""
     parts: list[str] = []
 
-    baseline = (await get_baseline_caddyfile(session)).strip()
+    baseline = await _apply_managed_global_options(session, (await get_baseline_caddyfile(session)).strip())
+
+    # Prepend standard snippets that are not already defined in the baseline
+    if not snippet_is_defined(baseline, "security_headers"):
+        parts.append(SNIPPET_SECURITY_HEADERS)
+    if not snippet_is_defined(baseline, "default_log"):
+        parts.append(SNIPPET_DEFAULT_LOG)
+
     if baseline:
         parts.append(baseline)
 
+    # Snippets are now guaranteed to be present in the output
+    has_security_snippet = True
+    has_log_snippet = True
+
     sites = await site_repository.list_all(session, enabled_only=True)
     for site in sorted(sites, key=lambda item: item.domain):
-        parts.append(_render_generated_site_block(site))
+        parts.append(_render_generated_site_block(
+            site,
+            has_security_headers_snippet=has_security_snippet,
+            has_default_log_snippet=has_log_snippet,
+        ))
 
     return "\n\n".join(parts)
 
 
 async def validate_rendered_caddy_configuration(session: AsyncSession) -> CaddySyncResult:
-    rendered_config = await build_full_caddyfile(session)
-    rendered_config_sha256 = _sha256_text(rendered_config)
+    async with _acquire_operation_guard():
+        rendered_config = await build_full_caddyfile(session)
+        rendered_config_sha256 = _sha256_text(rendered_config)
 
-    if not rendered_config.strip():
+        if not rendered_config.strip():
+            return CaddySyncResult(
+                status="no_change",
+                config_sha256=rendered_config_sha256,
+                synced=False,
+            )
+
+        config = await get_caddy_config(session)
+        settings = get_settings()
+        try:
+            await caddy_service.adapt_caddyfile_to_json(
+                rendered_config,
+                admin_url=config.admin_url,
+                timeout_seconds=settings.caddy_admin_timeout_seconds,
+            )
+        except CaddyServiceError as exc:
+            logger.warning("Rendered Caddy configuration validation failed: %s", exc)
+            return CaddySyncResult(
+                status="validation_failed",
+                config_sha256=rendered_config_sha256,
+                synced=False,
+                error=_error_message("caddy_config_invalid"),
+                error_code="caddy_config_invalid",
+            )
+
         return CaddySyncResult(
-            status="no_change",
+            status="validated",
             config_sha256=rendered_config_sha256,
             synced=False,
         )
 
+
+async def _auto_reformat_baseline(session: AsyncSession) -> None:
+    """Reformat the stored baseline in-place when Caddy reports a format warning."""
+    baseline = await get_baseline_caddyfile(session)
+    if not baseline.strip():
+        return
     try:
-        await caddy_service.adapt_caddyfile_to_json(rendered_config)
-    except CaddyServiceError as exc:
-        return CaddySyncResult(
-            status="validation_failed",
-            config_sha256=rendered_config_sha256,
-            synced=False,
-            error=str(exc),
-            error_code="caddy_config_invalid",
-        )
-
-    return CaddySyncResult(
-        status="validated",
-        config_sha256=rendered_config_sha256,
-        synced=False,
-    )
+        formatted = await caddy_service.format_caddyfile(baseline)
+    except Exception:
+        return
+    if formatted.strip() != baseline.strip():
+        await set_baseline_caddyfile(session, formatted.strip())
+        logger.info("Baseline auto-reformatted to fix Caddyfile formatting warning.")
 
 
 async def _sync_caddy_configuration_locked(
@@ -466,7 +621,7 @@ async def _sync_caddy_configuration_locked(
     force: bool = False,
     require_marker: bool = True,
 ) -> CaddySyncResult:
-    file_error, _content, marker_present = await _inspect_caddyfile(session)
+    file_error, content, marker_present = await _inspect_caddyfile(session)
     if require_marker and (file_error is not None or not marker_present):
         return CaddySyncResult(
             status="onboarding_required",
@@ -476,6 +631,7 @@ async def _sync_caddy_configuration_locked(
 
     rendered_config = await build_full_caddyfile(session)
     rendered_config_sha256 = _sha256_text(rendered_config)
+    caddyfile_content = _marker_text() + rendered_config
     await _set_state_value(session, _STATE_KEY_RENDERED_CONFIG_SHA256, rendered_config_sha256)
     version = await _ensure_config_version(
         session,
@@ -483,8 +639,16 @@ async def _sync_caddy_configuration_locked(
         sha256=rendered_config_sha256,
     )
     last_synced_config_sha256 = await _get_state_value(session, _STATE_KEY_LAST_SYNCED_CONFIG_SHA256)
+    last_error = await _get_state_value(session, _STATE_KEY_LAST_ERROR)
 
-    if not force and rendered_config_sha256 == last_synced_config_sha256:
+    if (
+        not force
+        and last_error is None
+        and rendered_config_sha256 == last_synced_config_sha256
+        and file_error is None
+        and marker_present
+        and content == caddyfile_content
+    ):
         await _clear_state_value(session, _STATE_KEY_LAST_ERROR)
         _record_sync_event(
             session,
@@ -499,61 +663,63 @@ async def _sync_caddy_configuration_locked(
 
     await session.flush()
 
+    config = await get_caddy_config(session)
+    settings = get_settings()
+
     if rendered_config.strip():
         try:
-            config_payload = await caddy_service.adapt_caddyfile_to_json(rendered_config)
+            config_payload, has_format_warning = await caddy_service.adapt_caddyfile_to_json_with_format_check(
+                rendered_config,
+                admin_url=config.admin_url,
+                timeout_seconds=settings.caddy_admin_timeout_seconds,
+            )
         except CaddyServiceError as exc:
+            logger.warning("Rendered Caddy configuration validation failed: %s", exc)
             await _set_state_value(session, _STATE_KEY_LAST_ERROR, "caddy_config_invalid")
             _record_sync_event(
                 session,
                 status="validation_failed",
                 config_sha256=rendered_config_sha256,
-                error=str(exc),
+                error=_error_message("caddy_config_invalid"),
             )
             return CaddySyncResult(
                 status="validation_failed",
                 config_sha256=rendered_config_sha256,
-                error=str(exc),
+                error=_error_message("caddy_config_invalid"),
                 error_code="caddy_config_invalid",
             )
     else:
         config_payload = _empty_caddy_config()
+        has_format_warning = False
 
-    config = await get_caddy_config(session)
-    settings = get_settings()
-    try:
-        async with CaddyAdminClient(
-            config.admin_url,
-            settings.caddy_admin_timeout_seconds,
-        ) as client:
-            await client.load_config_force(config_payload, force_reload=force)
-    except (CaddyServiceError, ValueError) as exc:
+    if not config.admin_url:
         await _set_state_value(session, _STATE_KEY_LAST_ERROR, "caddy_admin_unavailable")
         _record_sync_event(
             session,
             status="sync_failed",
             config_sha256=rendered_config_sha256,
-            error=str(exc),
+            error=_error_message("caddy_admin_unavailable"),
         )
         return CaddySyncResult(
             status="sync_failed",
             config_sha256=rendered_config_sha256,
-            error=str(exc),
+            error=_error_message("caddy_admin_unavailable"),
             error_code="caddy_admin_unavailable",
         )
 
-    # Persist the full rendered config to the Caddyfile so Caddy can reload
-    # it correctly on restart (preserving admin address and all site blocks).
-    # A persistence failure must fail the sync: otherwise runtime, database and
-    # filesystem state diverge and a restart can load a stale configuration.
+    # Persist the full rendered config before loading it into Caddy so a later
+    # restart can recover the same config even if the Admin API write fails.
+    previous_caddyfile_content: str | None = None
     if config.caddyfile_path is not None:
-        caddyfile_content = _marker_text() + rendered_config
         try:
+            previous_caddyfile_content = await asyncio.to_thread(
+                config.caddyfile_path.read_text,
+                encoding="utf-8",
+            )
             await asyncio.to_thread(_write_caddyfile_sync, config.caddyfile_path, caddyfile_content)
         except OSError as exc:
             logger.error(
-                "Config pushed to Caddy but Caddyfile could not be persisted "
-                "(restart-resilience lost): %s",
+                "Caddyfile could not be persisted before Admin API load (restart-resilience lost): %s",
                 exc,
             )
             await _set_state_value(session, _STATE_KEY_LAST_ERROR, "caddyfile_write_failed")
@@ -561,14 +727,48 @@ async def _sync_caddy_configuration_locked(
                 session,
                 status="sync_failed",
                 config_sha256=rendered_config_sha256,
-                error=str(exc),
+                error=_error_message("caddyfile_write_failed"),
             )
             return CaddySyncResult(
                 status="sync_failed",
                 config_sha256=rendered_config_sha256,
-                error="Caddy runtime was updated, but the Caddyfile could not be persisted.",
+                error="Caddy runtime was not updated because the Caddyfile could not be persisted.",
                 error_code="caddyfile_write_failed",
             )
+
+    try:
+        async with CaddyAdminClient(
+            config.admin_url,
+            settings.caddy_admin_timeout_seconds,
+        ) as client:
+            await client.load_config_force(config_payload, force_reload=force)
+    except (CaddyServiceError, ValueError) as exc:
+        logger.warning("Caddy Admin API load failed: %s", exc)
+        if config.caddyfile_path is not None and previous_caddyfile_content is not None:
+            try:
+                await asyncio.to_thread(
+                    _write_caddyfile_sync,
+                    config.caddyfile_path,
+                    previous_caddyfile_content,
+                )
+            except OSError as restore_exc:
+                logger.warning(
+                    "Caddyfile restore failed after Admin API load failure: %s",
+                    restore_exc,
+                )
+        await _set_state_value(session, _STATE_KEY_LAST_ERROR, "caddy_admin_unavailable")
+        _record_sync_event(
+            session,
+            status="sync_failed",
+            config_sha256=rendered_config_sha256,
+            error=_error_message("caddy_admin_unavailable"),
+        )
+        return CaddySyncResult(
+            status="sync_failed",
+            config_sha256=rendered_config_sha256,
+            error=_error_message("caddy_admin_unavailable"),
+            error_code="caddy_admin_unavailable",
+        )
 
     version.synced_at = datetime.now(UTC)
     await _set_state_value(session, _STATE_KEY_LAST_SYNCED_CONFIG_SHA256, rendered_config_sha256)
@@ -578,6 +778,10 @@ async def _sync_caddy_configuration_locked(
         status="synced",
         config_sha256=rendered_config_sha256,
     )
+
+    if has_format_warning:
+        await _auto_reformat_baseline(session)
+
     return CaddySyncResult(
         status="synced",
         config_sha256=rendered_config_sha256,
@@ -599,7 +803,7 @@ async def onboard_caddy(session: AsyncSession) -> CaddyOnboardingResult:
     async with _acquire_operation_guard():
         file_error, content, marker_present = await _inspect_caddyfile(session)
         if marker_present:
-            return CaddyOnboardingResult(status="already_managed", synced=False)
+            return CaddyOnboardingResult(status=_STATUS_ALREADY_MANAGED, synced=False)
         if file_error is not None:
             await _set_state_value(session, _STATE_KEY_LAST_ERROR, file_error)
             await _set_state_value(session, _STATE_KEY_ONBOARDING_STATUS, _STATUS_ONBOARDING_FAILED)
@@ -670,8 +874,15 @@ async def onboard_caddy(session: AsyncSession) -> CaddyOnboardingResult:
             len(parsed.snippets),
         )
 
-        # Store only the global block (without sites) as baseline
+        # Store global block + snippets as baseline; fall back to the built-in
+        # default when the original Caddyfile has no meaningful content so that
+        # a fresh installation gets a sensible starting configuration.
         baseline = parsed.global_block.strip() if parsed.global_block else ""
+        if not baseline and not parsed.snippets and imported_count == 0:
+            default_baseline = get_settings().caddy_baseline_caddyfile.strip()
+            if default_baseline:
+                baseline = default_baseline
+                logger.info("No existing Caddyfile content found; applying default baseline.")
         await set_baseline_caddyfile(session, baseline)
 
         await _set_state_value(session, _STATE_KEY_ORIGINAL_CADDYFILE_SHA256, snapshot_sha256)
@@ -683,7 +894,7 @@ async def onboard_caddy(session: AsyncSession) -> CaddyOnboardingResult:
             force=True,
             require_marker=False,
         )
-        if sync_result.status not in {"synced", "no_change"}:
+        if not sync_succeeded(sync_result.status):
             await _set_state_value(session, _STATE_KEY_ONBOARDING_STATUS, _STATUS_ONBOARDING_FAILED)
             _record_sync_event(
                 session,
@@ -724,21 +935,30 @@ async def onboard_caddy(session: AsyncSession) -> CaddyOnboardingResult:
         await _clear_state_value(session, _STATE_KEY_LAST_ERROR)
         logger.info("Onboarding complete: imported %d sites", imported_count)
         return CaddyOnboardingResult(
-            status="onboarded",
+            status=_STATUS_ONBOARDED,
             snapshot_sha256=snapshot_sha256,
             synced=sync_result.synced,
         )
 
 
 async def import_mounted_caddyfile_if_needed(session: AsyncSession) -> bool:
+    """Onboard a mounted Caddyfile, managing the transaction symmetrically.
+
+    On success the transaction is committed; on failure it is rolled back, so
+    callers do not need to manage commit/rollback themselves.
+    """
     result = await onboard_caddy(session)
-    return result.status == "onboarded"
+    if onboarding_succeeded(result.status):
+        await session.commit()
+        return True
+    await session.rollback()
+    return False
 
 
 async def validate_and_deploy_full_caddyfile(session: AsyncSession) -> tuple[bool, str]:
     result = await sync_caddy_configuration(session)
-    if result.status == "synced":
+    if sync_succeeded(result.status) and result.status == _STATUS_SYNCED:
         return True, "Configuration deployed successfully"
-    if result.status == "no_change":
+    if sync_succeeded(result.status) and result.status == _STATUS_NO_CHANGE:
         return True, "Configuration unchanged"
     return False, result.error or "Caddy configuration sync failed."

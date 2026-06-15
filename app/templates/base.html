@@ -12,12 +12,16 @@
     {% if csrf_token is defined %}
     <meta name="csrf-token" content="{{ csrf_token }}">
     {% endif %}
+    {% if csp_nonce is defined %}
+    <meta name="csp-nonce" content="{{ csp_nonce }}">
+    {% endif %}
     <link href="{{ request.app.url_path_for('static', path='vendor/bootstrap/bootstrap.min.css') }}" rel="stylesheet">
     <link href="{{ request.app.url_path_for('static', path='css/app.css') }}" rel="stylesheet" fetchpriority="high">
     <link rel="icon" href="{{ request.app.url_path_for('static', path='img/favicon.svg') }}" type="image/svg+xml">
 </head>
 
-<body class="app-body{% if not current_user %} app-body--public{% endif %}">
+<body class="app-body{% if not current_user %} app-body--public{% endif %}"
+    {% if live_updates_enabled is defined %}data-live-updates-enabled="{{ 'true' if live_updates_enabled else 'false' }}"{% endif %}>
     {% macro nav_icon(icon) -%}
     <svg class="app-nav__icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
         {% if icon == 'dashboard' %}
@@ -48,7 +52,7 @@
     </a>
     {%- endmacro %}
     <a class="app-skip-link" href="#main-content" data-ui-lint-ignore-click-target>Skip to main content</a>
-    {% if current_user %}
+    {% if current_user and not hide_sidebar %}
     <button type="button" class="mobile-menu-toggle" id="mobileMenuToggle" aria-label="Open menu" aria-expanded="false"
         aria-controls="appSidebar">
         <svg class="mobile-menu-toggle__icon mobile-menu-toggle__icon--open" viewBox="0 0 24 24" fill="none"
@@ -72,8 +76,8 @@
         </a>
     </header>
     {% endif %}
-    <div class="app-shell {% if not current_user %}app-shell--public{% endif %}">
-        {% if current_user %}
+    <div class="app-shell {% if not current_user or hide_sidebar %}app-shell--public{% endif %}">
+        {% if current_user and not hide_sidebar %}
         <aside class="app-sidebar" id="appSidebar" aria-label="Application navigation">
             <div>
                 <a href="{{ request.app.url_path_for('home_page') }}" class="brand-mark text-decoration-none">
@@ -176,6 +180,7 @@
     {% endif %}
 
     <script src="{{ request.app.url_path_for('static', path='vendor/bootstrap/bootstrap.bundle.min.js') }}"></script>
+    <script src="{{ request.app.url_path_for('static', path='vendor/codemirror/caddybuddy-codemirror.js') }}"></script>
     <script src="{{ request.app.url_path_for('static', path='js/app-core.js') }}"></script>
     <script src="{{ request.app.url_path_for('static', path='js/app-forms.js') }}"></script>
     <script src="{{ request.app.url_path_for('static', path='js/app-status.js') }}"></script>

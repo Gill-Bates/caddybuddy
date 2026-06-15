@@ -1,61 +1,67 @@
+# Build documentation and local tooling
+.dockerignore
+.gitignore
+.trivyignore
+CHANGELOG.md
+README.md
+docker/README_docker.md
+docker/docker-compose.yml.example
+setup.conf
+tests/
+tools/
+
 # VCS / GitHub metadata
 .git/
 .github/
 
 # Python caches
-__pycache__/
 *.py[cod]
-*.pyo
 *.pyd
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
+*.pyo
 .coverage
 .coverage.*
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
 coverage.xml
 htmlcov/
 
 # Virtual environments
 .venv/
 .venv-*/
-venv/
-env/
 ENV/
 __pypackages__/
+env/
+venv/
 
 # Local secrets / environment
+*.crt
+*.key
+*.pem
 .env
 .env.*
 .envrc
-*.pem
-*.key
-*.crt
 
 # Runtime data
-data/
 *.db
 *.db-*
 *.sqlite
 *.sqlite-*
+data/
 
-# Node / UI lint artifacts
-node_modules/
-tools/ui-lint/node_modules/
-tools/ui-lint/test-results/
-tools/ui-lint/playwright-report/
-tools/ui-lint/ui-lint-summary.json
-tools/ui-lint/visual/artifacts/
-
-# Tests and local generated bundles / scratch
-tests/
-full_codebase*
-_caddymanager-main/
-.omx/
-.cache/
+# Local scratch and runtime noise
 *.log
 *.tmp
 .DS_Store
+.cache/
+.omx/
+.codex/
+_caddymanager-main/
+full_codebase*
 
 # Local dev files
 Caddyfile
-setup.conf
+
+# Node dependencies
+node_modules/

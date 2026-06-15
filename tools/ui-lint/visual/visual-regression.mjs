@@ -36,12 +36,26 @@ const GLOBAL_DYNAMIC_SELECTORS = [
 ];
 
 const VIEW_DYNAMIC_SELECTORS = {
+    dashboard: [
+        '#ssllabs-history-chart',
+        '[data-dashboard-metric]',
+    ],
     caddyfile: [
         '#global-caddyfile',
     ],
     sites: [
         '#site-caddy-directives',
         '#site-caddyfile',
+    ],
+    ssllabs: [
+        '[data-ssllabs-last-updated]',
+        '.ssllabs-result__timestamp',
+    ],
+    settings: [
+        '[data-ssllabs-retention-badge]',
+    ],
+    onboarding: [
+        '[data-runtime-status]',
     ],
     'login-error': [
         '.toast',
@@ -86,8 +100,12 @@ export const inferViewScope = (name) => {
     const safeName = sanitizeVisualName(name);
     if (!safeName) return null;
     const scopes = [
+        'dashboard',
         'caddyfile',
         'sites',
+        'ssllabs',
+        'settings',
+        'onboarding',
         'login-error',
     ];
     return scopes.find((scope) => {
@@ -173,8 +191,19 @@ export async function stabilizeVisualSnapshot(page, config = getVisualRegression
         document.getElementById(styleId)?.remove();
     }, STABILIZE_STYLE_ID);
 
-    const styleHandle = await page.addStyleTag({
-        content: `
+    await page.evaluate(({ styleId, css }) => {
+        document.getElementById(styleId)?.remove();
+        const style = document.createElement('style');
+        style.id = styleId;
+        const nonce = document.querySelector('meta[name="csp-nonce"]')?.getAttribute('content');
+        if (nonce) {
+            style.setAttribute('nonce', nonce);
+        }
+        style.textContent = css;
+        document.head.append(style);
+    }, {
+        styleId: STABILIZE_STYLE_ID,
+        css: `
             html {
                 scrollbar-gutter: stable;
             }
@@ -226,12 +255,6 @@ export async function stabilizeVisualSnapshot(page, config = getVisualRegression
             }
         `,
     });
-
-    await styleHandle.evaluate((node, styleId) => {
-        if (node instanceof HTMLStyleElement) {
-            node.id = styleId;
-        }
-    }, STABILIZE_STYLE_ID);
 
     await page.evaluate(async ({ disableResizeObserver, fixedNowIso }) => {
         window.__UI_LINT__ = true;
@@ -427,6 +450,7 @@ export async function compareVisualSnapshot(name, config = getVisualRegressionCo
     if (!safeName) {
         throw new Error('Invalid screenshot name for visual regression');
     }
+    await ensureVisualRegressionDirs(config);
     const baselinePath = path.join(config.baselineDir, `${safeName}.png`);
     const currentPath = path.join(config.currentDir, `${safeName}.png`);
     const diffPath = path.join(config.diffDir, `${safeName}.diff.png`);
@@ -525,7 +549,7 @@ export async function compareVisualSnapshot(name, config = getVisualRegressionCo
     const pass = roundedPercent <= config.thresholdPercent;
 
     if (!pass) {
-        await fs.writeFile(diffPath, PNG.sync.write(diff));
+        await fs.writeFile(diffPath, PNG.sync.write(diff), { mode: 0o600 });
     }
 
     return {

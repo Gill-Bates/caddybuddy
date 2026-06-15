@@ -39,22 +39,23 @@
                 <div class="panel-card__header ssllabs-panel__header">
                     <div class="d-flex flex-wrap gap-2 align-items-center justify-content-between w-100">
                         <h2 class="h5 mb-0">Configured domains</h2>
-                        <div class="small text-body-secondary" aria-live="polite">
+                        <div class="small text-body-secondary" aria-live="polite" aria-atomic="true">
                             <span data-ssllabs-visible-count {% if counts.visible_cards==0 %}hidden{% endif %}>{{
                                 counts.visible_cards }}</span>
-                            <span data-ssllabs-visible-label>{% if counts.visible_cards == 0 %}No Domains found!{% else
+                            <span data-ssllabs-visible-label>{% if counts.visible_cards == 0 %}No domains found{% else
                                 %}Domains found{% endif %}</span>
                         </div>
                     </div>
                 </div>
                 <div class="ssllabs-filterbar">
                     <div>
-                        <input id="ssllabs-search-input" type="search" class="form-control"
+                        <input id="ssllabs-search-input" type="search" class="form-control form-control-sm"
                             placeholder="Search domains..." autocomplete="off" aria-label="Search domains"
+                            autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="search"
                             data-ssllabs-search>
                     </div>
                     <div>
-                        <select id="ssllabs-grade-filter" class="form-select" aria-label="Rating filter"
+                        <select id="ssllabs-grade-filter" class="form-select form-select-sm" aria-label="Rating filter"
                             data-ssllabs-grade-filter>
                             <option value="">All ratings</option>
                             <option value="a+">A+</option>
@@ -70,7 +71,9 @@
                             <option value="failed">Failed/Error</option>
                         </select>
                     </div>
-                    <button type="button" class="btn btn-outline-secondary" data-ssllabs-clear-filters>Clear</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-ssllabs-clear-filters disabled>
+                        Clear
+                    </button>
                 </div>
                 <div class="ssllabs-scrollbox">
                     <div class="table-responsive ssllabs-table-wrap">
@@ -95,137 +98,97 @@
                                 {% for site_row in site_rows %}
                                 <tr data-ssllabs-site-row>
                                     <td data-label="Site">
-                                        <div class="site-row-title">
+                                        <div class="site-row-title" aria-label="{{ site_row.site.site_name }} - {% if site_row.site.enabled %}Enabled{% else %}Disabled{% endif %}">
                                             <span
                                                 class="status-dot site-status-dot {% if site_row.site.enabled %}status-dot--online{% else %}status-dot--offline{% endif %}"
                                                 aria-hidden="true"></span>
                                             <div class="fw-semibold">{{ site_row.site.site_name }}</div>
-                                            <span class="visually-hidden">{% if site_row.site.enabled %}Enabled{% else
-                                                %}Disabled{% endif %}</span>
                                         </div>
                                     </td>
                                     <td data-label="Domains">
                                         <div class="ssllabs-domain-list">
                                             {% for row in site_row.domains %}
-                                            {% set filter_grade = 'not-scanned' %}
+                                            {% set scan_time = None %}
+                                            {% set scan_status = "Not scanned yet" %}
                                             {% if row.scan %}
-                                            {% if row.scan.grade %}
-                                            {% set filter_grade = row.scan.grade | trim | lower %}
-                                            {% elif row.scan.error_message or row.scan.status in ['failed', 'error',
-                                            'scan_failed'] %}
-                                            {% set filter_grade = 'failed' %}
+                                            {% set scan_time = row.scan.completed_at or row.scan.started_at %}
+                                            {% set scan_status = (row.scan.status or 'unknown') | replace('_', ' ') | title %}
                                             {% endif %}
-                                            {% endif %}
-                                            <section class="ssllabs-domain-card" data-ssllabs-filter-card
+                                            {% set schedule_select_id = "ssllabs-schedule-" ~ row.target.id %}
+                                            <details class="ssllabs-domain-card" data-ssllabs-filter-card
                                                 aria-label="SSL Labs results for {{ row.target.host }}"
-                                                data-ssllabs-grade="{{ filter_grade }}"
+                                                data-ssllabs-grade="{{ row.filter_grade }}"
                                                 data-ssllabs-search="{{ (site_row.site.site_name ~ ' ' ~ site_row.site.domain ~ ' ' ~ row.target.host) | lower }}">
-                                                <div class="ssllabs-domain-card__header">
-                                                    <div>
-                                                        <div class="fw-semibold">{{ row.target.host }}</div>
-                                                        {% if row.host_error %}
-                                                        <div class="small text-danger mt-1">{{ row.host_error }}</div>
+                                                <summary class="ssllabs-domain-card__summary">
+                                                    <div class="ssllabs-domain-card__main">
+                                                        <span class="ssllabs-domain-card__host">{{ row.target.host }}</span>
+                                                        {% if row.scan %}
+                                                        {% if row.scan.grade %}
+                                                        <span class="badge {{ row.grade_badge_class }} ssllabs-result__grade ssllabs-result__grade--compact">{{ row.scan.grade }}</span>
+                                                        <span class="status-pill {{ row.badge_class }} ssllabs-result__status-badge ssllabs-result__status-badge--compact">{{
+                                                            scan_status }}</span>
+                                                        {% else %}
+                                                        <span
+                                                            class="status-pill {{ row.badge_class }} ssllabs-result__status-badge ssllabs-result__status-badge--compact">{{
+                                                            scan_status }}</span>
                                                         {% endif %}
-                                                    </div>
-                                                    {% if row.target.next_scheduled_at %}
-                                                    <div class="small text-body-secondary">Next run {{
-                                                        row.target.next_scheduled_at|datetimeformat }}</div>
-                                                    {% endif %}
-                                                </div>
-                                                {% if row.scan %}
-                                                {% set scan_time = row.scan.completed_at or row.scan.started_at %}
-                                                <div class="ssllabs-result">
-                                                    {% if row.scan.grade %}
-                                                    <a href="https://www.ssllabs.com/ssltest/analyze.html?d={{ row.target.host }}"
-                                                        target="_blank" rel="noopener"
-                                                        class="badge {{ row.grade_badge_class }} ssllabs-result__grade"
-                                                        title="View full SSL Labs report">{{ row.scan.grade }}</a>
-                                                    {% else %}
-                                                    <span
-                                                        class="status-pill {{ row.badge_class }} ssllabs-result__status-badge">{{
-                                                        row.scan.status.replace('_', ' ')|title }}</span>
-                                                    {% endif %}
-                                                    <div class="ssllabs-result__body">
-                                                        <div class="ssllabs-result__headline">
-                                                            {% if row.scan.grade %}
-                                                            <span class="status-pill {{ row.badge_class }}">{{
-                                                                row.scan.status.replace('_', ' ')|title }}</span>
-                                                            {% else %}
-                                                            {{ row.scan.status.replace('_', ' ')|title }}
-                                                            {% endif %}
-                                                        </div>
                                                         {% if scan_time %}
-                                                        <div class="ssllabs-result__time">{{ scan_time|datetimeformat }}
-                                                        </div>
+                                                        <span class="ssllabs-domain-card__muted" data-ui-lint-dynamic>{{ scan_time|datetimeformat }}</span>
                                                         {% endif %}
-                                                        {% if row.endpoints %}
-                                                        <div class="ssllabs-result__endpoints">
-                                                            {% for ep in row.endpoints %}
-                                                            <span class="ssllabs-endpoint-chip" title="{{ ep.ip }}">
-                                                                <span class="ssllabs-endpoint-chip__label">{{
-                                                                    ep.ip_version
-                                                                    }}</span>
-                                                                <span
-                                                                    class="badge {{ ep.badge_class }} ssllabs-endpoint-chip__grade">{{
-                                                                    ep.grade or 'N/A' }}</span>
-                                                            </span>
-                                                            {% endfor %}
-                                                        </div>
+                                                        {% if row.scan.endpoint_count is not none %}
+                                                        <span class="ssllabs-domain-card__muted" data-ui-lint-dynamic>{{ row.scan.endpoint_count }} endpoint{% if row.scan.endpoint_count != 1 %}s{% endif %}</span>
                                                         {% endif %}
-                                                        <div class="ssllabs-result__meta">
-                                                            {% if row.scan.endpoint_count is not none %}
-                                                            <span>{{ row.scan.endpoint_count }} endpoint{% if
-                                                                row.scan.endpoint_count != 1 %}s{% endif %}</span>
-                                                            {% endif %}
-                                                        </div>
-                                                        {% if row.scan.error_message %}
-                                                        <div class="ssllabs-result__error">{{ row.scan.error_message }}
-                                                        </div>
+                                                        {% else %}
+                                                        <span class="ssllabs-domain-card__muted">Not scanned yet</span>
                                                         {% endif %}
                                                     </div>
-                                                </div>
-                                                {% else %}
-                                                <div class="ssllabs-result ssllabs-result--empty">
-                                                    <div class="ssllabs-result__empty-title">Not scanned yet</div>
-                                                    <div class="ssllabs-result__time">Run an SSL Labs check to see the
-                                                        current grade.</div>
-                                                </div>
-                                                {% endif %}
-                                                <div class="ssllabs-domain-card__controls">
-                                                    <form
-                                                        action="{{ request.app.url_path_for('update_ssllabs_schedule', target_id=row.target.id) }}"
-                                                        method="post"
-                                                        class="d-flex gap-2 align-items-center ssllabs-schedule-form"
-                                                        data-loading-submit-form data-auto-submit-form>
-                                                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                                        <select class="form-select form-select-sm"
-                                                            name="schedule_frequency" data-auto-submit-field {% if
-                                                            row.host_error %}disabled{% endif %}>
-                                                            <option value="" {% if not row.target.schedule_frequency
-                                                                %}selected{% endif %}>Off</option>
-                                                            <option value="weekly" {% if
-                                                                row.target.schedule_frequency=='weekly' %}selected{%
-                                                                endif %}>Weekly</option>
-                                                            <option value="monthly" {% if
-                                                                row.target.schedule_frequency=='monthly' %}selected{%
-                                                                endif %}>Every 30 days</option>
-                                                        </select>
-                                                    </form>
-                                                    <div class="cell-actions ssllabs-actions justify-content-end">
+                                                    <span class="ssllabs-domain-card__chevron" aria-hidden="true">▾</span>
+                                                </summary>
+                                                <div class="ssllabs-domain-card__actions">
+                                                    <div class="ssllabs-domain-card__inline-scheduler">
+                                                        <form
+                                                            action="{{ request.app.url_path_for('update_ssllabs_schedule', target_id=row.target.id) }}"
+                                                            method="post"
+                                                            class="ssllabs-schedule-form"
+                                                            data-require-csrf
+                                                            data-ssllabs-inline-scheduler>
+                                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                                            <label class="visually-hidden" for="{{ schedule_select_id }}">
+                                                                Weekly SSL Labs scan schedule for {{ row.target.host }}
+                                                            </label>
+                                                            <select id="{{ schedule_select_id }}" class="form-select form-select-sm"
+                                                                name="schedule_frequency"
+                                                                aria-label="Weekly SSL Labs scan schedule"
+                                                                data-ssllabs-autosave
+                                                                {% if row.host_error %}disabled{% endif %}>
+                                                                <option value="" {% if not row.target.schedule_frequency %}selected{% endif %}>Off</option>
+                                                                <option value="weekly" {% if row.target.schedule_frequency %}selected{% endif %}>On (weekly)</option>
+                                                            </select>
+                                                        </form>
+                                                    </div>
+                                                    <div class="ssllabs-domain-card__quick-actions">
+                                                        {% if row.scan_report_available %}
+                                                        <a href="https://www.ssllabs.com/ssltest/analyze.html?d={{ row.target.host | urlencode }}"
+                                                            target="_blank" rel="noopener"
+                                                            class="btn btn-sm btn-outline-secondary"
+                                                            title="Open the latest SSL Labs report for {{ row.target.host }}"
+                                                            aria-label="Open the latest SSL Labs report for {{ row.target.host }}"
+                                                            data-ui-lint-ignore-click-target>Report</a>
+                                                        {% else %}
+                                                        <button type="button"
+                                                            class="btn btn-sm btn-outline-secondary"
+                                                            title="No SSL Labs report available yet for {{ row.target.host }}"
+                                                            aria-label="No SSL Labs report available yet for {{ row.target.host }}"
+                                                            data-ui-lint-ignore-click-target disabled>Report</button>
+                                                        {% endif %}
                                                         <form
                                                             action="{{ request.app.url_path_for('start_ssllabs_scan', target_id=row.target.id) }}"
                                                             method="post"
-                                                            class="d-flex flex-wrap justify-content-end gap-2"
-                                                            data-loading-submit-form>
+                                                            class="d-inline-flex"
+                                                            data-loading-submit-form
+                                                            data-ui-lint-ignore-click-target>
                                                             <input type="hidden" name="csrf_token"
                                                                 value="{{ csrf_token }}">
-                                                            {% if row.scan_report_available %}
-                                                            <a href="https://www.ssllabs.com/ssltest/analyze.html?d={{ row.target.host }}"
-                                                                target="_blank" rel="noopener"
-                                                                class="btn btn-sm btn-outline-secondary"
-                                                                title="Open the latest SSL Labs report for {{ row.target.host }}"
-                                                                aria-label="Open the latest SSL Labs report for {{ row.target.host }}">Report</a>
-                                                            {% endif %}
                                                             <button type="submit" name="mode" value="fresh"
                                                                 class="btn btn-sm btn-outline-primary js-confirm"
                                                                 data-loading-submit-button
@@ -234,13 +197,34 @@
                                                                 data-confirm="Start a new external SSL Labs assessment for {{ row.target.host }} now?"
                                                                 data-confirm-accept="Start scan"
                                                                 title="Start a new SSL Labs scan for {{ row.target.host }}"
-                                                                data-confirm-btn-class="btn-primary" {% if
-                                                                row.host_error or row.scan_active %}disabled{% endif
-                                                                %}>Scan</button>
+                                                                data-confirm-btn-class="btn-primary"
+                                                                data-ui-lint-ignore-click-target {% if row.host_error or row.scan_active %}disabled{% endif %}>Scan</button>
                                                         </form>
                                                     </div>
                                                 </div>
-                                            </section>
+                                                <div class="ssllabs-domain-card__details">
+                                                    {% if row.target.next_scheduled_at %}
+                                                    <div class="small text-body-secondary" data-ui-lint-dynamic>Next run {{
+                                                        row.target.next_scheduled_at|datetimeformat }}</div>
+                                                    {% endif %}
+                                                    {% if row.host_error %}
+                                                    <div class="small text-danger" data-ui-lint-dynamic>{{ row.host_error }}</div>
+                                                    {% endif %}
+                                                    {% if row.endpoints %}
+                                                    <div class="ssllabs-result__endpoints">
+                                                        {% for ep in row.endpoints %}
+                                                        <span class="ssllabs-endpoint-chip" title="{{ ep.ip }}">
+                                                            <span class="ssllabs-endpoint-chip__label">{{ ep.ip_version }}</span>
+                                                            <span class="badge {{ ep.badge_class }} ssllabs-endpoint-chip__grade">{{ ep.grade or 'N/A' }}</span>
+                                                        </span>
+                                                        {% endfor %}
+                                                    </div>
+                                                    {% endif %}
+                                                    {% if row.scan and row.scan.error_message %}
+                                                    <div class="ssllabs-result__error" data-ui-lint-dynamic>{{ row.scan.error_message }}</div>
+                                                    {% endif %}
+                                                </div>
+                                            </details>
                                             {% endfor %}
                                         </div>
                                     </td>

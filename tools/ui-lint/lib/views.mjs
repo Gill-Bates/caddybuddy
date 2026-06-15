@@ -25,9 +25,11 @@ export const LOGIN_FAILURE_VIEW_DEFS = [
 ];
 
 export const VIEW_DEFS = [
+    { name: 'dashboard', url: '/', scope: 'dashboard' },
     { name: 'caddyfile', url: '/caddyfile', scope: 'caddyfile' },
     { name: 'sites', url: '/sites', scope: 'sites' },
     { name: 'ssllabs', url: '/ssl-labs', scope: 'ssllabs' },
+    { name: 'settings', url: '/settings', scope: 'settings' },
 ];
 
 /**

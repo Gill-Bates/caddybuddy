@@ -201,3 +201,58 @@ encode gzip
         assert errors == []
         errors = _validate_custom_directives(None)
         assert errors == []
+
+
+class TestInjectGlobalOptions:
+    """Tests for inject_global_options — Settings-managed admin/email injection."""
+
+    def test_inserts_admin_and_email_into_existing_global_block(self) -> None:
+        from app.utils.caddyfile import inject_global_options
+
+        baseline = "{\n    log {\n        level info\n    }\n}"
+        result = inject_global_options(baseline, admin="10.30.0.1:2019", email="a@b.com")
+
+        assert "admin 10.30.0.1:2019" in result
+        assert "email a@b.com" in result
+        # Managed directives precede the existing log block.
+        assert result.index("admin 10.30.0.1:2019") < result.index("log {")
+
+    def test_replaces_existing_admin_and_email_lines(self) -> None:
+        from app.utils.caddyfile import inject_global_options
+
+        baseline = "{\n    admin 127.0.0.1:2019\n    email old@x.com\n    auto_https off\n}"
+        result = inject_global_options(baseline, admin="10.30.0.1:2019", email="new@x.com")
+
+        assert "127.0.0.1:2019" not in result
+        assert "old@x.com" not in result
+        assert result.count("admin ") == 1
+        assert result.count("email ") == 1
+        assert "auto_https off" in result
+
+    def test_creates_global_block_when_absent(self) -> None:
+        from app.utils.caddyfile import inject_global_options
+
+        baseline = "(security_headers) {\n    header {\n    }\n}"
+        result = inject_global_options(baseline, admin="10.30.0.1:2019", email="a@b.com")
+
+        assert result.startswith("{\n    admin 10.30.0.1:2019\n    email a@b.com\n}")
+        assert "(security_headers)" in result
+
+    def test_omits_email_line_when_email_is_none(self) -> None:
+        from app.utils.caddyfile import inject_global_options
+
+        baseline = "{\n    admin 127.0.0.1:2019\n    email old@x.com\n}"
+        result = inject_global_options(baseline, admin="10.30.0.1:2019", email=None)
+
+        assert "admin 10.30.0.1:2019" in result
+        assert "email" not in result
+
+    def test_does_not_touch_admin_email_inside_site_blocks(self) -> None:
+        from app.utils.caddyfile import inject_global_options
+
+        baseline = "{\n    auto_https off\n}\n\nexample.com {\n    respond \"admin email here\"\n}"
+        result = inject_global_options(baseline, admin="10.30.0.1:2019", email="a@b.com")
+
+        # The site block's literal string must survive untouched.
+        assert 'respond "admin email here"' in result
+        assert "admin 10.30.0.1:2019" in result

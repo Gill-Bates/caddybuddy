@@ -60,6 +60,10 @@ test('inferViewScope matches whole scope tokens only', () => {
     assert.equal(inferViewScope('mobile-sites-overview'), 'sites');
     assert.equal(inferViewScope('desktop-websites-overview'), null);
     assert.equal(inferViewScope('login-error-desktop'), 'login-error');
+    assert.equal(inferViewScope('desktop-dashboard-light'), 'dashboard');
+    assert.equal(inferViewScope('mobile-ssllabs-dark'), 'ssllabs');
+    assert.equal(inferViewScope('desktop-settings-light'), 'settings');
+    assert.equal(inferViewScope('mobile-onboarding-dark'), 'onboarding');
 });
 
 test('buildMaskSelectors includes current sites textarea selector and login error masks', () => {
@@ -119,4 +123,23 @@ test('compareVisualSnapshot rejects invalid screenshot names', async (t) => {
     });
 
     await assert.rejects(compareVisualSnapshot('   ', config), /Invalid screenshot name/);
+});
+
+test('compareVisualSnapshot writes diff artifacts with private permissions', async (t) => {
+    const { root, config } = await makeTempConfig();
+    t.after(async () => {
+        await fs.rm(root, { recursive: true, force: true });
+    });
+
+    const baselinePath = path.join(config.baselineDir, 'sites.png');
+    const currentPath = path.join(config.currentDir, 'sites.png');
+    await writeSolidPng(baselinePath, [255, 0, 0, 255]);
+    await writeSolidPng(currentPath, [0, 128, 0, 255]);
+
+    const result = await compareVisualSnapshot('sites', config);
+    const stat = await fs.stat(result.diffPath);
+
+    assert.equal(result.pass, false);
+    assert.equal(result.reason, 'compared');
+    assert.equal(stat.mode & 0o777, 0o600);
 });

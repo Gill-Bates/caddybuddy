@@ -36,7 +36,7 @@ _INSECURE_ADMIN_PASSWORD_VALUES = frozenset(
     }
 )
 _MIN_SECRET_LENGTH = 32
-_MIN_ADMIN_PASSWORD_LENGTH = 12
+_MIN_ADMIN_PASSWORD_LENGTH = 8
 _SIMPLE_EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 _SESSION_COOKIE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
@@ -105,7 +105,7 @@ class Settings(BaseSettings):
         ),
     )
     database_url: str = Field(
-        default="sqlite+aiosqlite:///data/app.db",
+        default="sqlite+aiosqlite:///data/caddybuddy.db",
         validation_alias=AliasChoices("DATABASE_URL", "database_url"),
     )
     config_template_revision_retry_limit: int = Field(
@@ -149,17 +149,44 @@ class Settings(BaseSettings):
     session_inactivity_timeout_seconds: int = Field(default=60 * 60, ge=1)  # 60 min inactivity timeout
     session_absolute_timeout_seconds: int = Field(default=60 * 60 * 24, ge=1)  # 24h absolute lifetime
     default_admin_username: str = Field(default="admin", min_length=1)
-    default_admin_password: SecretStr = Field(
-        default=SecretStr("admin"),
-        validation_alias=AliasChoices(
-            "CB_ADMIN_PASSWORD",
-            "CADDYBUDDY_ADMIN_PASSWORD",
-            "ADMIN_PASSWORD",
-        ),
-    )
     default_admin_email: str = Field(default="admin@example.com")
 
     # Single Caddy server configuration
+    caddy_control_mode: Literal["disabled", "systemd", "docker", "script"] = Field(
+        default="disabled",
+        validation_alias=AliasChoices("CB_CADDY_CONTROL_MODE", "caddy_control_mode"),
+    )
+    caddy_systemd_unit: str = Field(
+        default="caddy",
+        validation_alias=AliasChoices("CB_CADDY_SYSTEMD_UNIT", "caddy_systemd_unit"),
+    )
+    caddy_docker_container: str = Field(
+        default="caddy",
+        validation_alias=AliasChoices("CB_CADDY_DOCKER_CONTAINER", "caddy_docker_container"),
+    )
+    caddy_control_script: str = Field(
+        default="/app/caddy-control.sh",
+        validation_alias=AliasChoices("CB_CADDY_CONTROL_SCRIPT", "caddy_control_script"),
+    )
+    caddy_control_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        validation_alias=AliasChoices("CB_CADDY_CONTROL_TIMEOUT_SECONDS", "caddy_control_timeout_seconds"),
+    )
+    caddy_restart_confirmation_required: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("CB_CADDY_RESTART_CONFIRMATION_REQUIRED", "caddy_restart_confirmation_required"),
+    )
+    cert_renewal_monitor_timeout_seconds: float = Field(
+        default=180.0,
+        gt=0,
+        validation_alias=AliasChoices("CB_CERT_RENEWAL_MONITOR_TIMEOUT_SECONDS", "cert_renewal_monitor_timeout_seconds"),
+    )
+    cert_renewal_poll_interval_seconds: float = Field(
+        default=2.0,
+        gt=0,
+        validation_alias=AliasChoices("CB_CERT_RENEWAL_POLL_INTERVAL_SECONDS", "cert_renewal_poll_interval_seconds"),
+    )
     caddy_api_url: str = Field(
         default=DEFAULT_CADDY_ADMIN_URL,
         validation_alias="CB_CADDY_API_URL",
@@ -212,7 +239,52 @@ class Settings(BaseSettings):
         ),
     )
     caddy_baseline_caddyfile: str = Field(
-        default="",
+        default="""\
+{
+    log {
+        level info
+        format json
+        output stdout
+    }
+
+    # Only enable when Caddy runs behind a trusted proxy/CDN.
+    #
+    # servers {
+    #     trusted_proxies static private_ranges
+    #     trusted_proxies_strict
+    # }
+}
+
+(security_headers) {
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options "nosniff"
+        # X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+
+        -Server
+        -X-Powered-By
+    }
+}
+
+(security_headers_strict) {
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+
+        -Server
+        -X-Powered-By
+    }
+}
+
+(default_log) {
+    log {
+        output stdout
+        format json
+    }
+}""",
         validation_alias=AliasChoices(
             "CADDYBUDDY_CADDY_BASELINE",
             "CADDY_BASELINE",
@@ -447,9 +519,6 @@ class Settings(BaseSettings):
                     f"Set a strong password pepper of at least {_MIN_SECRET_LENGTH} characters via "
                     "CADDYBUDDY_PASSWORD_PEPPER or PASSWORD_PEPPER."
                 )
-
-        admin_password = self.default_admin_password.get_secret_value().strip()
-        # Admin password strength is validated at first-startup time in auth_service.ensure_default_admin.
 
         if self.session_cookie_samesite == "none" and not self.session_https_only:
             raise ValueError("session_cookie_samesite='none' requires session_https_only=true.")

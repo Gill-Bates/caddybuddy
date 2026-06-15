@@ -21,22 +21,21 @@
                 </div>
                 <form action="{{ request.app.url_path_for('save_site') }}" method="post"
                     class="d-grid gap-3 sites-form-panel__form" id="site-form" data-loading-submit-form
-                    data-site-config-form>
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    data-site-config-form data-require-csrf>
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" data-csrf-token>
                     {% if selected_site %}
                     <input type="hidden" name="site_id" value="{{ selected_site.id }}">
                     {% endif %}
 
-                    <div>
+                    <div class="sites-form-panel__field">
                         <label class="form-label" for="site-name">Site</label>
                         <input type="text" id="site-name" name="site_name" class="form-control"
                             value="{{ selected_site.site_name if selected_site else '' }}" maxlength="255"
-                            autocomplete="off" required>
-                        <div class="form-text">Stable site label for grouping this configuration and its domains.</div>
+                            autocomplete="off" inputmode="text" required>
                     </div>
 
                     <div class="tag-input" data-domain-tag-input data-existing-domains='{{ domain_catalog | tojson }}'
-                        data-selected-site-id='{{ selected_site.id if selected_site else "" }}'>
+                        data-selected-site-id='{{ selected_site.id if selected_site else "" }}' data-max-domains="25">
                         <label class="form-label" for="site-domain">Domains</label>
                         <input type="hidden" id="site-domain" name="domain"
                             value="{{ selected_site.domain if selected_site else '' }}">
@@ -44,70 +43,65 @@
                             <div class="tag-input__list" data-domain-tag-list aria-live="polite"></div>
                             <input id="site-domain-entry" class="tag-input__field" data-domain-tag-entry
                                 placeholder="example.com, www.example.com" autocomplete="off" autocapitalize="off"
-                                autocorrect="off" spellcheck="false" maxlength="2048" aria-label="Add domain"
-                                aria-describedby="site-domain-help site-domain-error">
+                                autocorrect="off" spellcheck="false" inputmode="url" maxlength="2048"
+                                aria-label="Add domain" aria-describedby="site-domain-error">
                         </div>
                         <div class="invalid-feedback d-block tag-input__error d-none" id="site-domain-error"
                             data-domain-tag-error></div>
-                        <div class="form-text" id="site-domain-help">One or more domains for this site. Separate them
-                            with commas, spaces, or
-                            tabs. Domains already assigned to another site configuration cannot be added here.</div>
                     </div>
 
-                    <div>
+                    <div class="sites-form-panel__config">
                         <label class="form-label" for="site-caddy-directives">Config</label>
-                        <textarea id="site-caddy-directives" name="caddy_directives" rows="14"
+                        <textarea id="site-caddy-directives" name="caddy_directives" rows="18"
                             class="form-control font-monospace" spellcheck="false" autocapitalize="off"
-                            autocomplete="off" wrap="off" data-responsive-code-textarea maxlength="524288"
+                            autocomplete="off" wrap="off" data-responsive-code-textarea maxlength="262144"
                             required>{{ selected_site.caddy_directives if selected_site and selected_site.caddy_directives else '' }}</textarea>
-                        <div class="form-text">Site-specific Caddy directives. Paste the inner config for this domain,
-                            like in the Caddyfile editor.</div>
+                        <div class="form-text">Press Escape, then Tab to leave the editor.</div>
                     </div>
 
-                    <div>
-                        <div class="form-check form-switch d-flex align-items-center justify-content-start gap-3 ps-0">
+                    <div class="d-flex align-items-center flex-wrap gap-2 sites-form-panel__actions">
+                        <div class="form-check form-switch d-flex align-items-center gap-2 ps-0">
                             <input class="form-check-input m-0" type="checkbox" role="switch" value="true"
                                 id="site-enabled" name="enabled" {% if not selected_site or selected_site.enabled
                                 %}checked{% endif %}>
                             <label class="form-check-label fw-semibold site-enabled-label"
                                 for="site-enabled">Enabled</label>
                         </div>
-                    </div>
-
-                    <div class="d-grid d-sm-flex gap-2 sites-form-panel__actions">
-                        <button type="button" class="btn btn-outline-secondary" id="validate-btn"
-                            data-validate-form-button
-                            data-validate-url="{{ request.app.url_path_for('validate_site') }}"
-                            data-validate-success-prefix="Site configuration valid"
-                            data-validate-error-prefix="Site configuration invalid" disabled aria-disabled="true">
-                            <span data-validate-button-label>Validate</span>
-                            <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"
-                                data-validate-button-spinner></span>
-                        </button>
-                        <button type="submit" class="btn btn-primary flex-grow-1 js-confirm" id="save-btn"
-                            data-loading-submit-button
-                            data-loading-label="{% if selected_site %}Saving &amp; Deploying...{% else %}Creating &amp; Deploying...{% endif %}"
-                            data-loading-label-deploy="{% if selected_site %}Saving &amp; Deploying...{% else %}Creating &amp; Deploying...{% endif %}"
-                            data-loading-label-safe="{% if selected_site %}Saving...{% else %}Creating...{% endif %}"
-                            data-site-save-button
-                            data-confirm-title="{% if selected_site %}Deploy site changes{% else %}Create site{% endif %}"
-                            data-confirm="{% if selected_site %}Validate, save, and deploy changes for {{ selected_site.site_name }}?{% else %}Create this site and deploy the updated Caddy configuration?{% endif %}"
-                            data-confirm-accept="{% if selected_site %}Deploy changes{% else %}Create &amp; Deploy{% endif %}"
-                            data-confirm-title-deploy="{% if selected_site %}Deploy site changes{% else %}Create site{% endif %}"
-                            data-confirm-deploy="{% if selected_site %}Validate, save, and deploy changes for {{ selected_site.site_name }}?{% else %}Create this site and deploy the updated Caddy configuration?{% endif %}"
-                            data-confirm-accept-deploy="{% if selected_site %}Deploy changes{% else %}Create &amp; Deploy{% endif %}"
-                            data-confirm-title-safe="{% if selected_site %}Save site name{% else %}Create site{% endif %}"
-                            data-confirm-safe="{% if selected_site %}Save the updated site name without redeploying Caddy?{% else %}Create this site.{% endif %}"
-                            data-confirm-accept-safe="{% if selected_site %}Save{% else %}Create{% endif %}"
-                            data-confirm-btn-class="btn-primary" disabled aria-disabled="true">
-                            <span class="save-text" data-loading-submit-label>Save &amp; Deploy</span>
-                            <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"
-                                data-loading-submit-spinner></span>
-                        </button>
-                        {% if selected_site %}
-                        <a href="{{ request.app.url_path_for('sites_page') }}"
-                            class="btn btn-outline-secondary">Cancel</a>
-                        {% endif %}
+                        <div class="d-flex gap-2 ms-auto flex-nowrap">
+                            <button type="button" class="btn btn-outline-secondary" id="validate-btn"
+                                data-validate-form-button
+                                data-validate-url="{{ request.app.url_path_for('validate_site') }}"
+                                data-validate-success-prefix="Site configuration valid"
+                                data-validate-error-prefix="Site configuration invalid" disabled aria-disabled="true">
+                                <span data-validate-button-label>Validate</span>
+                                <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"
+                                    data-validate-button-spinner></span>
+                            </button>
+                            <button type="submit" class="btn btn-primary js-confirm" id="save-btn"
+                                data-loading-submit-button
+                                data-loading-label="{% if selected_site %}Saving &amp; Deploying...{% else %}Creating &amp; Deploying...{% endif %}"
+                                data-loading-label-deploy="{% if selected_site %}Saving &amp; Deploying...{% else %}Creating &amp; Deploying...{% endif %}"
+                                data-loading-label-safe="{% if selected_site %}Saving...{% else %}Creating...{% endif %}"
+                                data-site-save-button
+                                data-confirm-title="{% if selected_site %}Deploy site changes{% else %}Create site{% endif %}"
+                                data-confirm="{% if selected_site %}Validate, save, and deploy changes for {{ selected_site.site_name }}?{% else %}Create this site and deploy the updated Caddy configuration?{% endif %}"
+                                data-confirm-accept="{% if selected_site %}Deploy changes{% else %}Create &amp; Deploy{% endif %}"
+                                data-confirm-title-deploy="{% if selected_site %}Deploy site changes{% else %}Create site{% endif %}"
+                                data-confirm-deploy="{% if selected_site %}Validate, save, and deploy changes for {{ selected_site.site_name }}?{% else %}Create this site and deploy the updated Caddy configuration?{% endif %}"
+                                data-confirm-accept-deploy="{% if selected_site %}Deploy changes{% else %}Create &amp; Deploy{% endif %}"
+                                data-confirm-title-safe="{% if selected_site %}Save site name{% else %}Create site{% endif %}"
+                                data-confirm-safe="{% if selected_site %}Save the updated site name without redeploying Caddy?{% else %}Create this site.{% endif %}"
+                                data-confirm-accept-safe="{% if selected_site %}Save{% else %}Create{% endif %}"
+                                data-confirm-btn-class="btn-primary" disabled aria-disabled="true">
+                                <span class="save-text" data-loading-submit-label>Save &amp; Deploy</span>
+                                <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"
+                                    data-loading-submit-spinner></span>
+                            </button>
+                            {% if selected_site %}
+                            <a href="{{ request.app.url_path_for('sites_page') }}"
+                                class="btn btn-outline-secondary">Cancel</a>
+                            {% endif %}
+                        </div>
                     </div>
                 </form>
             </div>
@@ -117,16 +111,21 @@
             <div class="panel-card panel-card--table sites-list-panel">
                 <div class="panel-card__header sites-list-panel__header">
                     <h2 class="h5 mb-0">All Sites</h2>
-                    <p class="sites-list-panel__count mb-0">{{ sites | length }} configured</p>
-                    <button type="button" class="btn btn-primary btn-sm sites-add-btn" data-site-form-modal-open>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
-                            focusable="false">
-                            <path d="M12 5v14"></path>
-                            <path d="M5 12h14"></path>
-                        </svg>
-                        Add site
-                    </button>
+                    <p class="sites-list-panel__count mb-0" data-sites-count>{{ sites | length }} configured</p>
+                    <div class="sites-search">
+                        <span class="sites-search__icon" aria-hidden="true">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <path d="m21 21-4.35-4.35"></path>
+                            </svg>
+                        </span>
+                        <input type="search" class="sites-search__input"
+                            placeholder="Search sites &amp; domains…"
+                            aria-label="Search sites and domains"
+                            data-sites-search-input
+                            autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+                    </div>
                 </div>
                 <div class="sites-list-scroll">
                     <div class="table-responsive">
@@ -148,8 +147,9 @@
                             <tbody>
                                 {% for site in sites %}
                                 {% set primary_domain = primary_domains_by_site_id.get(site.id) %}
+                                {% set site_domains = site_domains_by_site_id.get(site.id, []) %}
+                                {% set site_cert = site_certificate_info_by_site_id.get(site.id) %}
                                 {% set site_handler = handler_by_site_id.get(site.id) %}
-                                {% set cert = cert_info.get(primary_domain) if primary_domain else none %}
                                 <tr {% if selected_site and selected_site.id==site.id %}class="table-active" {% endif
                                     %}>
                                     <td data-label="Site">
@@ -158,54 +158,48 @@
                                                 class="status-dot site-status-dot {% if site.enabled %}status-dot--online{% else %}status-dot--offline{% endif %}"
                                                 aria-hidden="true"></span>
                                             <div class="fw-semibold">{{ site.site_name }}</div>
-                                            <span class="visually-hidden">{% if site.enabled %}Enabled{% else
-                                                %}Disabled{% endif %}</span>
-                                        </div>
-                                        <div class="site-row-badges">
                                             {% if site_handler %}
-                                            <span
-                                                class="badge bg-secondary bg-opacity-25 text-body-secondary site-handler-badge">{{
+                                            <span class="badge site-handler-badge">{{
                                                 site_handler
                                                 }}</span>
                                             {% endif %}
+                                            <span class="visually-hidden">{% if site.enabled %}Enabled{% else
+                                                %}Disabled{% endif %}</span>
                                         </div>
                                     </td>
                                     <td data-label="Domain">
                                         <div class="site-domain-badges" aria-label="Domains for {{ site.site_name }}">
-                                            {% for domain_name in site.domain.split(',') %}
-                                            <span
-                                                class="badge bg-secondary bg-opacity-25 text-body-secondary site-domain-badge">{{
-                                                domain_name.strip()
+                                            {% for normalized_domain in site_domains %}
+                                            <span class="badge site-domain-badge">{{
+                                                normalized_domain
                                                 }}</span>
                                             {% endfor %}
                                         </div>
                                     </td>
                                     <td data-label="Certificate">
-                                        <div class="site-cert"
-                                            data-site-certificate-domain="{{ primary_domain or '' }}">
-                                            {% if cert and cert.exists %}
-                                            <div
-                                                class="site-cert__summary {% if cert.valid %}site-cert__summary--valid{% else %}site-cert__summary--expired{% endif %}">
-                                                <span
-                                                    class="status-dot {% if cert.valid %}status-dot--online{% else %}status-dot--offline{% endif %}"
+                                        <div class="site-cert" aria-live="polite" aria-atomic="true"
+                                            data-site-certificate-domain="{{ primary_domain or '' }}"
+                                            data-site-certificate-domains='{{ site_domains | tojson }}'>
+                                            {% if site_cert and site_cert.exists %}
+                                            <div class="site-cert__summary {% if site_cert.valid %}site-cert__summary--valid{% else %}site-cert__summary--expired{% endif %}">
+                                                <span class="status-dot {% if site_cert.valid %}status-dot--online{% else %}status-dot--offline{% endif %}"
                                                     aria-hidden="true"></span>
-                                                <span class="site-cert__status">{% if cert.valid %}Valid{% else
+                                                <span class="site-cert__status">{% if site_cert.valid %}Valid{% else
                                                     %}Expired{% endif %}</span>
-                                                {% if cert.days_remaining is not none and cert.days_remaining > 0 %}
-                                                <span class="site-cert__days">{{ cert.days_remaining }}d
-                                                    remaining</span>
+                                                {% if site_cert.days_remaining is not none and site_cert.days_remaining > 0 %}
+                                                <span class="site-cert__days">{{ site_cert.days_remaining }}d</span>
                                                 {% endif %}
                                             </div>
                                             <div class="site-cert__meta">
-                                                {% if cert.issued_at %}
+                                                {% if site_cert.issued_at %}
                                                 <div class="site-cert__issued">Issued {{
-                                                    cert.issued_at.strftime('%Y-%m-%d') }}</div>
+                                                    site_cert.issued_at.strftime('%Y-%m-%d') }}</div>
                                                 {% endif %}
                                             </div>
-                                            {% elif cert and cert.error_message %}
+                                            {% elif site_cert and site_cert.error_message %}
                                             <div class="site-cert__error">
                                                 <div class="site-cert__error-title">Certificate check failed</div>
-                                                <div class="site-cert__error-message">{{ cert.error_message }}</div>
+                                                <div class="site-cert__error-message">{{ site_cert.error_message }}</div>
                                             </div>
                                             {% elif primary_domain %}
                                             <span class="site-cert__pending">Checking certificate...</span>
@@ -230,18 +224,53 @@
                                                 <span class="visually-hidden">Edit site</span>
                                             </a>
                                             {% if primary_domain %}
+                                            {% set renewal = renewals.get(site.id) %}
+                                            {% set renewal_scope_name = renewal.scope_name if renewal and renewal.scope_name else primary_domain %}
+                                            {% set renewal_scope_type = renewal.scope_type if renewal else 'domain' %}
+                                            {% set renewal_wait_domains = renewal.wait_domains if renewal else () %}
+                                            {% set certificate_action_disabled = not renewal or renewal.mode in ("unavailable", "storage_unavailable", "wildcard_scope_required") %}
+                                            {% set confirm_msg = "Trigger certificate renewal for " ~ site.site_name ~ "? Caddy will request a new certificate if the current one is within the renewal window." %}
+                                            {% if renewal and renewal.mode == "restart_repair" %}
+                                                {% set confirm_msg = "Trigger certificate renewal for " ~ site.site_name ~ "? This requires a full Caddy restart to repair local artifacts." %}
+                                            {% endif %}
+                                            {% set renewal_hint = none %}
+                                            {% if renewal and certificate_action_disabled %}
+                                                {% if renewal.mode == "wildcard_scope_required" %}
+                                                    {% set renewal_hint = "Wildcard certificate renewal requires the scope " ~ (renewal_scope_name or primary_domain) ~ "." %}
+                                                {% elif renewal.mode == "storage_unavailable" %}
+                                                    {% set renewal_hint = "Certificate storage is currently unavailable." %}
+                                                {% elif renewal.mode == "unavailable" and renewal.reason == "control_mode_disabled" %}
+                                                    {% set renewal_hint = "Configure a Caddy control mode (systemd, Docker, or script) in Settings to enable forced renewal." %}
+                                                {% elif renewal.mode == "unavailable" and renewal.reason == "no_domains" %}
+                                                    {% set renewal_hint = "No domains configured for this site." %}
+                                                {% elif renewal.mode == "unavailable" and renewal.reason == "check_failed" %}
+                                                    {% set renewal_hint = "Certificate status could not be determined." %}
+                                                {% endif %}
+                                            {% endif %}
                                             <form
                                                 action="{{ request.app.url_path_for('renew_certificate', site_id=site.id) }}"
-                                                method="post" class="d-inline-flex" data-loading-submit-form>
-                                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                                method="post" class="d-inline-flex" data-loading-submit-form
+                                                data-require-csrf>
+                                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}"
+                                                    data-csrf-token>
+                                                <input type="hidden" name="confirmed" value="false" data-renewal-confirmed-input>
                                                 <button type="submit"
-                                                    class="btn btn-sm btn-outline-secondary btn--icon-only js-confirm"
+                                                    class="btn btn-sm btn-outline-secondary btn--icon-only"
+                                                    data-renew-certificate-button
+                                                    data-site-renew-btn="{{ primary_domain }}"
                                                     data-loading-submit-button data-loading-label="Renewing..."
                                                     data-confirm-title="Renew certificate"
-                                                    data-confirm="Trigger certificate renewal for {{ site.site_name }}? Caddy will request a new certificate if the current one is within the renewal window."
+                                                    data-confirm="{{ confirm_msg }}"
                                                     data-confirm-accept="Renew" data-confirm-btn-class="btn-secondary"
+                                                    data-renewal-mode="{{ renewal.mode if renewal else 'unavailable' }}"
+                                                    data-renewal-reason="{{ renewal.reason if renewal else '' }}"
+                                                    data-renewal-scope="{{ renewal_scope_name or '' }}"
+                                                    data-renewal-scope-type="{{ renewal_scope_type }}"
+                                                    data-renewal-wait-domains='{{ renewal_wait_domains | list | tojson }}'
+                                                    data-requires-confirmation="{{ 'true' if renewal and renewal.requires_confirmation else 'false' }}"
                                                     aria-label="Renew certificate for {{ site.site_name }}"
-                                                    title="Renew certificate for {{ site.site_name }}">
+                                                    title="{{ renewal_hint or ('Renew certificate for ' ~ site.site_name) }}" {% if
+                                                    certificate_action_disabled %}disabled aria-disabled="true"{% endif %}>
                                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
                                                         stroke="currentColor" stroke-width="2" stroke-linecap="round"
                                                         stroke-linejoin="round" aria-hidden="true" focusable="false">
@@ -258,13 +287,15 @@
                                             {% endif %}
                                             <form
                                                 action="{{ request.app.url_path_for('delete_site', site_id=site.id) }}"
-                                                method="post" class="d-inline-flex" data-loading-submit-form>
-                                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                                method="post" class="d-inline-flex" data-loading-submit-form
+                                                data-require-csrf>
+                                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}"
+                                                    data-csrf-token>
                                                 <button type="submit"
                                                     class="btn btn-sm btn-outline-danger btn--icon-only js-confirm"
                                                     data-loading-submit-button data-loading-label="Deleting..."
                                                     data-confirm-title="Delete site"
-                                                    data-confirm="Delete site {{ site.site_name }}? The configuration will be removed from Caddy."
+                                                    data-confirm="Delete site {{ site.site_name }}{% if primary_domain %} ({{ primary_domain }}){% endif %}? The configuration will be removed from Caddy."
                                                     data-confirm-accept="Delete site"
                                                     data-confirm-btn-class="btn-danger"
                                                     aria-label="Delete {{ site.site_name }}"

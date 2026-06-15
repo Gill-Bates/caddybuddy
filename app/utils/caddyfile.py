@@ -64,6 +64,19 @@ _SITE_LABEL_FORBIDDEN_RE = re.compile(r"[\r\n{}]", re.ASCII)
 _DIRECTIVE_WRAPPER_TEMPLATE = r"^{directive}(?:\s+|\s*\{{)"
 _DENIED_CUSTOM_DIRECTIVES = frozenset({"import"})
 _NESTED_IMPORT_RE = re.compile(r"(?m)^\s*import(?:\s+|$)")
+_SECURITY_HEADER_NAMES = frozenset(
+    {
+        "content-security-policy",
+        "permissions-policy",
+        "referrer-policy",
+        "server",
+        "strict-transport-security",
+        "x-content-type-options",
+        "x-frame-options",
+        "x-permitted-cross-domain-policies",
+        "x-powered-by",
+    }
+)
 
 CADDY_DIRECTIVES_EXAMPLE = """reverse_proxy 10.30.0.140:8000 {
     transport http {
@@ -185,6 +198,33 @@ def _normalize_inline_directive_args(raw_value: str, directive_name: str) -> str
 def _is_comment_or_empty(value: str) -> bool:
     stripped = value.strip()
     return not stripped or stripped.startswith("#")
+
+
+def _strip_caddy_comment(line: str) -> str:
+    in_quote = False
+    escaped = False
+    result: list[str] = []
+    for character in line:
+        if escaped:
+            result.append(character)
+            escaped = False
+            continue
+        if character == "\\" and in_quote:
+            result.append(character)
+            escaped = True
+            continue
+        if character == '"':
+            in_quote = not in_quote
+            result.append(character)
+            continue
+        if character == "#" and not in_quote:
+            break
+        result.append(character)
+    return "".join(result).rstrip()
+
+
+def _strip_caddy_comments(raw_value: str) -> str:
+    return "\n".join(_strip_caddy_comment(line) for line in raw_value.splitlines())
 
 
 def _is_closing_brace_line(line: str) -> bool:
@@ -584,6 +624,126 @@ def build_domain_site_preview(
     return f"{site_label} {{\n{indented}\n}}"
 
 
+# ---------------------------------------------------------------------------
+# Standard snippets and smart-import helpers
+# ---------------------------------------------------------------------------
+
+SNIPPET_SECURITY_HEADERS = """\
+(security_headers) {
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+        -X-Powered-By
+    }
+}"""
+
+SNIPPET_DEFAULT_LOG = """\
+(default_log) {
+    log {
+        output stdout
+        format json
+    }
+}"""
+
+_IMPORT_RE = re.compile(r"(?im)^\s*import\s+(\S+)")
+
+
+def snippet_is_defined(text: str, snippet_name: str) -> bool:
+    """Return True if (snippet_name) { ... } is defined anywhere in text."""
+    return bool(
+        re.search(
+            r"(?m)^\s*\(\s*" + re.escape(snippet_name) + r"\s*\)\s*\{",
+            text,
+        )
+    )
+
+
+def directives_have_import(directives: str | None, import_name: str) -> bool:
+    """Return True if directives contain `import import_name`."""
+    if not directives:
+        return False
+    normalized_import_name = import_name.lower()
+    for match in _IMPORT_RE.finditer(_strip_caddy_comments(directives)):
+        if match.group(1).lower() == normalized_import_name:
+            return True
+    return False
+
+
+def directives_have_log_block(directives: str | None) -> bool:
+    """Return True if directives contain a top-level log block."""
+    if not directives:
+        return False
+    try:
+        chunks = _split_top_level_directives(_strip_caddy_comments(directives))
+    except ValueError:
+        return False
+    for chunk in chunks:
+        header, _body = _split_block_header_and_body(chunk)
+        if header.split(maxsplit=1)[0].lower() == "log":
+            return True
+    return False
+
+
+def directives_have_security_header_block(directives: str | None) -> bool:
+    """Return True if directives contain a header block with at least one security header."""
+    if not directives:
+        return False
+    try:
+        chunks = _split_top_level_directives(_strip_caddy_comments(directives))
+    except ValueError:
+        return False
+    for chunk in chunks:
+        header, body = _split_block_header_and_body(chunk)
+        if header.split(maxsplit=1)[0].lower() != "header":
+            continue
+        if body is None and header.startswith("header "):
+            token = header.removeprefix("header ").strip().lstrip("+-?").split(maxsplit=1)[0].lower()
+            if token in _SECURITY_HEADER_NAMES:
+                return True
+            continue
+        if body is None:
+            continue
+        for raw_line in body.splitlines():
+            token = raw_line.strip().lstrip("+-?").split(maxsplit=1)[0].lower()
+            if token in _SECURITY_HEADER_NAMES:
+                return True
+    return False
+
+
+def build_generated_site_block(
+    *,
+    name: str,
+    upstream: str | None,
+    caddy_directives: str | None,
+    ssl_enabled: bool,
+    import_security_headers: bool = False,
+    import_default_log: bool = False,
+) -> str:
+    """Build a site block for the generated Caddyfile, optionally prepending standard imports."""
+    preview = build_domain_site_preview(
+        name=name,
+        upstream=upstream,
+        caddy_directives=caddy_directives,
+        ssl_enabled=ssl_enabled,
+    )
+    if not import_security_headers and not import_default_log:
+        return preview
+
+    imports = []
+    if import_security_headers:
+        imports.append("    import security_headers")
+    if import_default_log:
+        imports.append("    import default_log")
+
+    first_newline = preview.index("\n")
+    header_line = preview[:first_newline]
+    body = preview[first_newline:]
+    return header_line + "\n" + "\n".join(imports) + "\n" + body
+
+
 @dataclass(slots=True)
 class ParsedCaddyfile:
     """Result of parsing a Caddyfile into its components."""
@@ -725,3 +885,63 @@ def parse_caddyfile(content: str) -> ParsedCaddyfile:
         snippets=snippets,
         sites=sites,
     )
+
+
+# The Caddy admin endpoint and ACME email are owned by CaddyBuddy settings, not the
+# stored baseline, so any baseline-level admin/email lines are stripped and replaced.
+_MANAGED_GLOBAL_DIRECTIVE_RE = re.compile(r"^\s*(?:admin|email)\b")
+
+
+def inject_global_options(baseline: str, *, admin: str | None, email: str | None) -> str:
+    """Return ``baseline`` with CaddyBuddy-managed admin/email directives in the global block.
+
+    ``admin`` and ``email`` are sourced from Settings (Caddy Admin URL and the SSL Labs
+    contact email). Existing ``admin``/``email`` lines in the global options block are
+    removed first so Settings remains the single source of truth. A global options block
+    is created when the baseline does not already define one.
+    """
+    managed: list[str] = []
+    if admin:
+        managed.append(f"    admin {admin}")
+    if email:
+        managed.append(f"    email {email}")
+
+    if not managed:
+        return baseline.strip()
+
+    lines = baseline.splitlines()
+
+    # The global options block opens with a bare top-level "{" (snippets are "(name) {"
+    # and sites are "domain {"), so locate the first such line at brace depth zero.
+    depth = 0
+    open_idx: int | None = None
+    for idx, line in enumerate(lines):
+        if depth == 0 and line.strip() == "{":
+            open_idx = idx
+            break
+        depth += line.count("{") - line.count("}")
+        if depth < 0:
+            depth = 0
+
+    if open_idx is None:
+        block = "\n".join(["{", *managed, "}"])
+        rest = baseline.strip()
+        return f"{block}\n\n{rest}".strip() if rest else block
+
+    # Find the matching closing brace for the global block.
+    depth = 0
+    close_idx = len(lines) - 1
+    for idx in range(open_idx, len(lines)):
+        depth += lines[idx].count("{") - lines[idx].count("}")
+        if depth == 0:
+            close_idx = idx
+            break
+
+    body = [
+        line
+        for line in lines[open_idx + 1:close_idx]
+        if not _MANAGED_GLOBAL_DIRECTIVE_RE.match(line)
+    ]
+
+    new_lines = lines[: open_idx + 1] + managed + body + lines[close_idx:]
+    return "\n".join(new_lines).strip()

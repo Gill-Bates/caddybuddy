@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import threading
 import tempfile
+import json
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -38,7 +39,11 @@ class DatabaseSessionLazyInitTests(_SessionModuleStateMixin, unittest.TestCase):
         for thread in threads:
             thread.start()
         for thread in threads:
-            thread.join()
+            thread.join(timeout=2)
+
+        alive_threads = [thread for thread in threads if thread.is_alive()]
+        if alive_threads:
+            raise AssertionError("worker thread did not finish within timeout")
 
         if errors:
             raise AssertionError("worker thread failed") from errors[0]
@@ -131,14 +136,14 @@ class DatabaseSessionLazyInitTests(_SessionModuleStateMixin, unittest.TestCase):
 
     def test_resolve_database_url_keeps_sqlite_database_inside_data_directory(self) -> None:
         settings = SimpleNamespace(
-            database_url="sqlite+aiosqlite:///data/app.db",
+            database_url="sqlite+aiosqlite:///data/caddybuddy.db",
             base_dir=Path("/opt/caddybuddy"),
             data_dir=Path("/opt/caddybuddy/data"),
         )
 
         resolved = session_module._resolve_database_url(settings)
 
-        self.assertEqual(resolved.database, "/opt/caddybuddy/data/app.db")
+        self.assertEqual(resolved.database, "/opt/caddybuddy/data/caddybuddy.db")
 
     def test_resolve_database_url_rejects_sqlite_database_outside_data_directory(self) -> None:
         settings = SimpleNamespace(
@@ -171,23 +176,65 @@ class DatabaseSessionInitTests(_SessionModuleStateMixin, unittest.IsolatedAsynci
 
     async def test_init_database_uses_process_lock_for_file_sqlite(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            database_path = Path(temp_dir) / "app.db"
-            execute_database_init = AsyncMock()
+            database_path = Path(temp_dir) / "caddybuddy.db"
+            execution_order: list[str] = []
 
             with (
                 patch.object(session_module, "get_settings", return_value=SimpleNamespace()),
                 patch.object(session_module, "_resolve_sqlite_database_path", return_value=database_path),
-                patch.object(session_module, "_execute_database_init", execute_database_init),
-                patch.object(session_module, "_ensure_sqlite_wal_mode", new=AsyncMock()),
-                patch.object(session_module.fcntl, "flock") as flock,
+                patch.object(
+                    session_module,
+                    "_ensure_sqlite_wal_mode",
+                    side_effect=lambda: execution_order.append("wal"),
+                ),
+                patch.object(
+                    session_module,
+                    "_execute_database_init",
+                    side_effect=lambda *a, **k: execution_order.append("init"),
+                ),
+                patch.object(
+                    session_module,
+                    "_acquire_sqlite_init_lock",
+                    side_effect=lambda _lock_file: execution_order.append("acquire"),
+                ),
+                patch.object(
+                    session_module,
+                    "_release_sqlite_init_lock",
+                    side_effect=lambda _lock_file: execution_order.append("release"),
+                ),
             ):
                 await session_module.init_database()
 
             self.assertTrue(session_module._sqlite_init_lock_path(database_path).exists())
-            execute_database_init.assert_awaited_once()
-            self.assertEqual(flock.call_count, 2)
-            self.assertEqual(flock.call_args_list[0].args[1], session_module.fcntl.LOCK_EX)
-            self.assertEqual(flock.call_args_list[1].args[1], session_module.fcntl.LOCK_UN)
+            self.assertEqual(execution_order, ["acquire", "wal", "init", "release"])
+
+    async def test_ensure_sqlite_wal_mode_fails_when_journal_mode_is_not_wal(self) -> None:
+        class FakeResult:
+            @staticmethod
+            def scalar_one_or_none() -> str | None:
+                return "delete"
+
+        class FakeConnection:
+            def __init__(self) -> None:
+                self.statements: list[str] = []
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def exec_driver_sql(self, statement: str):
+                self.statements.append(statement)
+                return FakeResult()
+
+        class FakeEngine:
+            def connect(self):
+                return FakeConnection()
+
+        with patch.object(session_module, "get_engine", return_value=FakeEngine()):
+            with self.assertRaisesRegex(RuntimeError, "journal_mode='delete'"):
+                await session_module._ensure_sqlite_wal_mode()
 
     async def test_dispose_engine_closes_engine_and_resets_lazy_state(self) -> None:
         fake_engine = AsyncMock()
@@ -229,6 +276,7 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
                     "caddy_sites",
                     "ssllabs_targets",
                     "ssllabs_scans",
+                    "ssllabs_rank_history",
                     "caddyfile_snapshots",
                     "caddy_config_versions",
                     "caddy_sync_events",
@@ -246,6 +294,7 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
             patch.object(session_module.Base.metadata.tables["app_settings"], "create") as create_app_settings,
             patch.object(session_module.Base.metadata.tables["ssllabs_targets"], "create") as create_targets,
             patch.object(session_module.Base.metadata.tables["ssllabs_scans"], "create") as create_scans,
+            patch.object(session_module.Base.metadata.tables["ssllabs_rank_history"], "create") as create_history,
         ):
             migrated = session_module._apply_known_table_migrations(
                 fake_connection,
@@ -263,6 +312,7 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
         create_app_settings.assert_called_once_with(fake_connection, checkfirst=True)
         create_targets.assert_called_once_with(fake_connection, checkfirst=True)
         create_scans.assert_called_once_with(fake_connection, checkfirst=True)
+        create_history.assert_called_once_with(fake_connection, checkfirst=True)
 
     def test_apply_known_schema_migrations_adds_caddy_sites_columns(self) -> None:
         executed_sql: list[str] = []
@@ -293,6 +343,31 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
             ],
         )
 
+    def test_apply_known_schema_migrations_disables_unsupported_ssllabs_schedules(self) -> None:
+        executed_sql: list[str] = []
+
+        class FakeResult:
+            rowcount = 1
+
+        class FakeConnection:
+            dialect = SimpleNamespace(name="sqlite")
+
+            def exec_driver_sql(self, statement: str):
+                executed_sql.append(statement)
+                return FakeResult()
+
+        migrated = session_module._apply_known_schema_migrations(
+            FakeConnection(),
+            {"ssllabs_targets": {"id", "host", "schedule_frequency"}},
+        )
+
+        self.assertTrue(migrated)
+        self.assertIn(
+            "UPDATE ssllabs_targets SET schedule_frequency = NULL "
+            "WHERE schedule_frequency IS NOT NULL AND schedule_frequency != 'weekly'",
+            executed_sql,
+        )
+
     def test_apply_known_schema_migrations_repairs_empty_upstream_url_values(self) -> None:
         executed_sql: list[str] = []
 
@@ -321,6 +396,72 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
                 "UPDATE caddy_sites SET site_name = trim(CASE WHEN instr(domain, ',') > 0 THEN substr(domain, 1, instr(domain, ',') - 1) ELSE domain END) WHERE site_name IS NULL OR site_name = ''",
             ],
         )
+
+    def test_apply_known_schema_migrations_uses_tuple_parameters_for_onboarding_state_insert(self) -> None:
+        captured: list[tuple[str, tuple[object, ...]]] = []
+
+        class FakeInsertResult:
+            rowcount = 1
+
+        class FakeDdlResult:
+            rowcount = 0
+
+            @staticmethod
+            def first():
+                return (
+                    "CREATE TABLE app_settings (id INTEGER NOT NULL, key VARCHAR(64) NOT NULL, "
+                    "value TEXT NOT NULL, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, "
+                    "CONSTRAINT ck_app_settings_key CHECK (key IN "
+                    "('caddy_api_url', 'caddyfile_path', 'rate_limit_enabled', "
+                    "'ssllabs_email', 'ssllabs_history_retention_days')))",
+                )
+
+        class FakeConnection:
+            dialect = SimpleNamespace(name="sqlite")
+
+            def exec_driver_sql(self, statement: str, params: tuple[object, ...] | None = None):
+                captured.append((statement, params))
+                if statement == "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'app_settings'":
+                    return FakeDdlResult()
+                return FakeInsertResult()
+
+        migrated = session_module._apply_known_schema_migrations(
+            FakeConnection(),
+            {
+                "caddybuddy_state": {"key", "value", "updated_at"},
+                "app_settings": {"id", "key", "value", "created_at", "updated_at"},
+                "caddy_sites": {"id", "domain", "upstream_url", "caddy_directives", "enabled", "site_name"},
+                "caddy_sync_events": {"id"},
+            },
+        )
+
+        self.assertTrue(migrated)
+        param_calls = [(statement, params) for statement, params in captured if params is not None]
+        self.assertEqual(len(param_calls), 1)
+        statement, params = param_calls[0]
+        self.assertIn("INSERT INTO caddybuddy_state (key, value, updated_at)", statement)
+        self.assertIn("EXISTS (SELECT 1 FROM app_settings)", statement)
+        self.assertIn("EXISTS (SELECT 1 FROM caddy_sites)", statement)
+        self.assertIsInstance(params, tuple)
+        self.assertEqual(len(params), 2)
+        payload = json.loads(params[0])
+        self.assertEqual(payload["status"], "completed")
+        self.assertRegex(payload["completed_at"], r"^\d{4}-\d{2}-\d{2}T")
+        self.assertRegex(params[1], r"^\d{4}-\d{2}-\d{2}T")
+
+    def test_apply_known_schema_migrations_skips_onboarding_state_for_empty_factory_default(self) -> None:
+        class FakeConnection:
+            dialect = SimpleNamespace(name="sqlite")
+
+            def exec_driver_sql(self, statement: str, params: tuple[object, ...] | None = None):
+                raise AssertionError(f"Unexpected SQL executed: {statement}")
+
+        migrated = session_module._apply_known_schema_migrations(
+            FakeConnection(),
+            {"caddybuddy_state": {"key", "value", "updated_at"}},
+        )
+
+        self.assertFalse(migrated)
 
     def test_apply_known_schema_migrations_does_not_report_repairs_when_no_rows_change(self) -> None:
         class FakeConnection:
@@ -387,6 +528,7 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
         self.assertEqual(
             executed_sql,
             [
+                'DROP TABLE IF EXISTS "app_settings_backup_test"',
                 'CREATE TABLE "app_settings_backup_test" AS SELECT id, "key", value, created_at, updated_at FROM app_settings',
                 "DROP TABLE app_settings",
                 'INSERT INTO app_settings (id, "key", value, created_at, updated_at) SELECT id, "key", value, created_at, updated_at FROM "app_settings_backup_test"',
@@ -394,6 +536,35 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
             ],
         )
         create_app_settings.assert_called_once_with(connection, checkfirst=True)
+
+    def test_app_settings_allows_current_keys_detects_all_keys(self) -> None:
+        table_sql = """
+            CREATE TABLE app_settings (
+                id INTEGER NOT NULL,
+                "key" VARCHAR(64) NOT NULL,
+                value TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                CONSTRAINT ck_app_settings_key CHECK (key IN ('caddy_api_url', 'caddyfile_path', 'rate_limit_enabled', 'ssllabs_email', 'ssllabs_history_retention_days'))
+            )
+        """
+
+        self.assertTrue(session_module._app_settings_allows_current_keys(table_sql))
+
+    def test_app_settings_allows_current_keys_requires_retention_key(self) -> None:
+        # DDL predating the retention key must trigger an app_settings rebuild.
+        table_sql = """
+            CREATE TABLE app_settings (
+                id INTEGER NOT NULL,
+                "key" VARCHAR(64) NOT NULL,
+                value TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                CONSTRAINT ck_app_settings_key CHECK (key IN ('caddy_api_url', 'caddyfile_path', 'rate_limit_enabled', 'ssllabs_email'))
+            )
+        """
+
+        self.assertFalse(session_module._app_settings_allows_current_keys(table_sql))
 
     def test_apply_known_schema_migrations_is_noop_for_non_sqlite(self) -> None:
         class FakeConnection:

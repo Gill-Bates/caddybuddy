@@ -74,12 +74,18 @@ class EventBusConfigTests(unittest.TestCase):
 
 
 class EventBusTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    async def _wait_for_subscriber_count(bus: EventBus, expected: int) -> None:
+        async with asyncio.timeout(1):
+            while bus.subscriber_count != expected:
+                await asyncio.sleep(0)
+
     async def test_shutdown_discards_pending_events_and_closes_subscriber(self) -> None:
         bus = EventBus()
         events = bus.subscribe()
 
         first_event = asyncio.create_task(anext(events))
-        await asyncio.sleep(0)
+        await self._wait_for_subscriber_count(bus, 1)
         await bus.publish(ResourceEvent(resource_type="site", action="created", resource_id="1"))
         received = await first_event
         self.assertEqual(received.action, "created")
@@ -95,7 +101,7 @@ class EventBusTests(unittest.IsolatedAsyncioTestCase):
         events = bus.subscribe()
 
         first_event = asyncio.create_task(anext(events))
-        await asyncio.sleep(0)
+        await self._wait_for_subscriber_count(bus, 1)
         await bus.publish(ResourceEvent(resource_type="site", action="created", resource_id="1"))
         await first_event
         await bus.publish(ResourceEvent(resource_type="site", action="updated", resource_id="1"))
@@ -110,11 +116,11 @@ class EventBusTests(unittest.IsolatedAsyncioTestCase):
         events = bus.subscribe()
 
         wait_task = asyncio.create_task(anext(events))
-        await asyncio.sleep(0)
+        await self._wait_for_subscriber_count(bus, 1)
         bus.request_shutdown()
-        await asyncio.sleep(0)
         with suppress(StopAsyncIteration):
-            await wait_task
+            async with asyncio.timeout(1):
+                await wait_task
 
         with self.assertRaises(StopAsyncIteration):
             await anext(events)
@@ -126,14 +132,32 @@ class EventBusTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bus.subscriber_count, 0)
 
         wait_task = asyncio.create_task(anext(events))
-        await asyncio.sleep(0)
+        await self._wait_for_subscriber_count(bus, 1)
 
         self.assertEqual(bus.subscriber_count, 1)
 
         bus.request_shutdown()
-        await asyncio.sleep(0)
         with suppress(StopAsyncIteration):
+            async with asyncio.timeout(1):
+                await wait_task
+
+    async def test_cancelled_iteration_releases_active_subscriber(self) -> None:
+        bus = EventBus()
+        events = bus.subscribe()
+
+        wait_task = asyncio.create_task(anext(events))
+        await self._wait_for_subscriber_count(bus, 1)
+
+        self.assertEqual(bus.subscriber_count, 1)
+
+        wait_task.cancel()
+        with suppress(asyncio.CancelledError):
             await wait_task
+
+        self.assertEqual(bus.subscriber_count, 0)
+
+        with self.assertRaises(StopAsyncIteration):
+            await anext(events)
 
 
 class EventPublishingTests(unittest.IsolatedAsyncioTestCase):

@@ -30,6 +30,11 @@
             if (tokenInput instanceof HTMLInputElement && typeof tokenInput.value === "string") {
                 return tokenInput.value;
             }
+
+            const markedToken = form.querySelector("[data-csrf-token]");
+            if (markedToken instanceof HTMLInputElement && typeof markedToken.value === "string") {
+                return markedToken.value;
+            }
         }
 
         const metaToken = document.querySelector("meta[name='csrf-token']");
@@ -38,6 +43,17 @@
         }
 
         return document.body?.dataset.csrfToken || "";
+    };
+
+    App.markInitialized = (element, datasetKey) => {
+        if (!(element instanceof HTMLElement)) {
+            return false;
+        }
+        if (element.dataset[datasetKey] === "true") {
+            return false;
+        }
+        element.dataset[datasetKey] = "true";
+        return true;
     };
 
     App.resolveSameOriginUrl = (rawUrl) => {
@@ -95,6 +111,19 @@
             }
         }
 
+        for (const form of document.querySelectorAll("form[data-auto-save-form]")) {
+            if (!(form instanceof HTMLFormElement)) {
+                continue;
+            }
+
+            const initialState = form.dataset.lastSavedSerializedState
+                || form.dataset.initialSerializedState
+                || "";
+            if (initialState !== "" && App.serializeComparableFormState(form) !== initialState) {
+                return true;
+            }
+        }
+
         return false;
     };
 
@@ -112,6 +141,11 @@
     };
 
     App.initializeLiveUpdates = () => {
+        const body = document.body;
+        if (!(body instanceof HTMLElement) || body.dataset.liveUpdatesEnabled === "false") {
+            return;
+        }
+
         const relevantResources = {
             "/caddyfile": ["caddyfile"],
             "/sites": ["site"],
@@ -136,6 +170,7 @@
         let reconnectTimeoutId = null;
         let reloadTimeoutId = null;
         let reconnectAttempts = 0;
+        const MAX_RECONNECT_ATTEMPTS = 5;
         let reloadPendingWhileHidden = false;
         let unsavedReloadNoticeShown = false;
 
@@ -151,6 +186,19 @@
                 window.clearTimeout(reloadTimeoutId);
                 reloadTimeoutId = null;
             }
+        };
+
+        const scheduleReconnect = () => {
+            if (document.hidden || reconnectTimeoutId !== null || reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                return;
+            }
+
+            reconnectAttempts += 1;
+            const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 30000);
+            reconnectTimeoutId = window.setTimeout(() => {
+                reconnectTimeoutId = null;
+                connect();
+            }, delay);
         };
 
         const triggerReload = () => {
@@ -193,23 +241,27 @@
                 return;
             }
 
-            eventSource = new EventSource(App.resolveSameOriginUrl("/api/v1/events"));
+            try {
+                eventSource = new EventSource(App.resolveSameOriginUrl("/api/v1/events"));
+            } catch (error) {
+                console.error("Could not initialize live updates:", error);
+                scheduleReconnect();
+                return;
+            }
             eventSource.onopen = () => {
                 reconnectAttempts = 0;
                 clearReconnectTimeout();
             };
 
             const handleResourceEvent = (event) => {
-                // Notify all registered listeners first
                 for (const listener of sseEventListeners) {
                     try {
                         listener(event);
-                    } catch {
-                        // Ignore listener errors
+                    } catch (error) {
+                        console.error("SSE event listener failed:", error);
                     }
                 }
 
-                // Then handle reload logic
                 try {
                     const payload = JSON.parse(event.data);
                     if (hasRelevantTypes && relevantTypes.has(payload.type)) {
@@ -225,15 +277,7 @@
 
             eventSource.onerror = () => {
                 disconnect();
-                if (document.hidden) {
-                    return;
-                }
-                reconnectAttempts += 1;
-                const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 30000);
-                reconnectTimeoutId = window.setTimeout(() => {
-                    reconnectTimeoutId = null;
-                    connect();
-                }, delay);
+                scheduleReconnect();
             };
         };
 
@@ -285,12 +329,10 @@
         if (
             !(toggle instanceof HTMLButtonElement) ||
             !(sidebar instanceof HTMLElement) ||
-            !(backdrop instanceof HTMLElement) ||
-            toggle.dataset.mobileMenuInitialized === "true"
+            !(backdrop instanceof HTMLElement)
         ) {
             return;
         }
-        toggle.dataset.mobileMenuInitialized = "true";
 
         const getFocusableSidebarElements = () => Array.from(
             sidebar.querySelectorAll("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")
@@ -317,7 +359,7 @@
             document.body.classList.remove("app-body--menu-open");
             setPageInert(false);
             if (restoreFocus) {
-                toggle.focus();
+                toggle.focus({ preventScroll: true });
             }
         };
 
@@ -333,27 +375,37 @@
 
             const firstFocusable = getFocusableSidebarElements()[0];
             if (firstFocusable instanceof HTMLElement) {
-                firstFocusable.focus();
+                firstFocusable.focus({ preventScroll: true });
             }
         };
 
-        toggle.addEventListener("click", () => {
+        if (typeof toggle.mobileMenuCleanup === "function") {
+            toggle.mobileMenuCleanup();
+        }
+        if (!App.markInitialized(toggle, "mobileMenuInitialized")) {
+            return;
+        }
+
+        const handleToggleClick = () => {
             if (sidebar.classList.contains("is-open")) {
                 closeMenu();
             } else {
                 openMenu();
             }
-        });
-        backdrop.addEventListener("click", () => closeMenu(true));
-        sidebar.addEventListener("click", (event) => {
+        };
+
+        const handleBackdropClick = () => closeMenu(true);
+
+        const handleSidebarClick = (event) => {
             if (!(event.target instanceof HTMLElement)) {
                 return;
             }
             if (event.target.closest("a.app-nav__link, button[type='submit']") !== null) {
                 closeMenu();
             }
-        });
-        document.addEventListener("keydown", (event) => {
+        };
+
+        const handleKeydown = (event) => {
             if (!sidebar.classList.contains("is-open")) {
                 return;
             }
@@ -370,7 +422,7 @@
             const focusable = getFocusableSidebarElements();
             if (focusable.length === 0) {
                 event.preventDefault();
-                toggle.focus();
+                toggle.focus({ preventScroll: true });
                 return;
             }
 
@@ -382,18 +434,18 @@
 
             if (!sidebar.contains(document.activeElement)) {
                 event.preventDefault();
-                first.focus();
+                first.focus({ preventScroll: true });
                 return;
             }
 
             if (event.shiftKey && document.activeElement === first) {
                 event.preventDefault();
-                last.focus();
+                last.focus({ preventScroll: true });
             } else if (!event.shiftKey && document.activeElement === last) {
                 event.preventDefault();
-                first.focus();
+                first.focus({ preventScroll: true });
             }
-        });
+        };
 
         const desktopMediaQuery = window.matchMedia("(min-width: 992px)");
         const handleDesktopChange = (event) => {
@@ -402,34 +454,41 @@
             }
         };
 
+        const cleanupMobileMenu = () => {
+            toggle.removeEventListener("click", handleToggleClick);
+            backdrop.removeEventListener("click", handleBackdropClick);
+            sidebar.removeEventListener("click", handleSidebarClick);
+            document.removeEventListener("keydown", handleKeydown);
+            if (typeof desktopMediaQuery.removeEventListener === "function") {
+                desktopMediaQuery.removeEventListener("change", handleDesktopChange);
+            } else if (typeof desktopMediaQuery.removeListener === "function") {
+                desktopMediaQuery.removeListener(handleDesktopChange);
+            }
+            window.removeEventListener("beforeunload", cleanupMobileMenu);
+            delete toggle.dataset.mobileMenuInitialized;
+            if (toggle.mobileMenuCleanup === cleanupMobileMenu) {
+                toggle.mobileMenuCleanup = null;
+            }
+        };
+
+        toggle.mobileMenuCleanup = cleanupMobileMenu;
+
+        toggle.addEventListener("click", handleToggleClick);
+        backdrop.addEventListener("click", handleBackdropClick);
+        sidebar.addEventListener("click", handleSidebarClick);
+        document.addEventListener("keydown", handleKeydown);
+
         if (typeof desktopMediaQuery.addEventListener === "function") {
             desktopMediaQuery.addEventListener("change", handleDesktopChange);
         } else if (typeof desktopMediaQuery.addListener === "function") {
             desktopMediaQuery.addListener(handleDesktopChange);
         }
+
+        window.addEventListener("beforeunload", cleanupMobileMenu, { once: true });
     };
 
     App.initializeResponsiveCodeTextareas = () => {
-        const textareas = Array.from(document.querySelectorAll("textarea[data-responsive-code-textarea]"))
-            .filter((textarea) => textarea instanceof HTMLTextAreaElement);
-        if (textareas.length === 0 || document.body.dataset.responsiveCodeTextareasInitialized === "true") {
-            return;
-        }
-        document.body.dataset.responsiveCodeTextareasInitialized = "true";
-
-        const mobileMediaQuery = window.matchMedia("(max-width: 767.98px)");
-        const applyTextareaWrapMode = () => {
-            for (const textarea of textareas) {
-                textarea.setAttribute("wrap", mobileMediaQuery.matches ? "soft" : "off");
-            }
-        };
-
-        applyTextareaWrapMode();
-        if (typeof mobileMediaQuery.addEventListener === "function") {
-            mobileMediaQuery.addEventListener("change", applyTextareaWrapMode);
-        } else if (typeof mobileMediaQuery.addListener === "function") {
-            mobileMediaQuery.addListener(applyTextareaWrapMode);
-        }
+        window.CaddyBuddyCodeMirror?.initialize?.();
     };
 
     App.initializeLoadingSubmitForms = () => {
@@ -441,6 +500,12 @@
 
             form.addEventListener("submit", (event) => {
                 if (event.defaultPrevented) {
+                    return;
+                }
+
+                if (form.hasAttribute("data-require-csrf") && !App.readCsrfToken(form)) {
+                    event.preventDefault();
+                    App.pushInlineFlash?.("danger", "Security token is missing. Reload the page and try again.");
                     return;
                 }
 
@@ -576,6 +641,7 @@
     let confirmActionModal = null;
     let pendingConfirmElement = null;
     let previousActiveConfirmElement = null;
+    let pendingConfirmSubmit = false;
 
     const getConfirmActionModal = () => {
         if (!(confirmModalElement instanceof HTMLElement) || !window.bootstrap?.Modal) {
@@ -588,6 +654,7 @@
     };
 
     const resetPendingConfirm = () => {
+        pendingConfirmSubmit = false;
         pendingConfirmElement = null;
         previousActiveConfirmElement = null;
         if (confirmModalTitleElement instanceof HTMLElement) {
@@ -626,9 +693,28 @@
         return element.classList.contains("disabled");
     };
 
+    const resolveConfirmedHref = (anchor) => {
+        if (!(anchor instanceof HTMLAnchorElement) || !anchor.href) {
+            return null;
+        }
+        return App.resolveSameOriginUrl(anchor.href);
+    };
+
+    const navigateConfirmedAnchor = (anchor) => {
+        const href = resolveConfirmedHref(anchor);
+        if (href === null) {
+            App.pushInlineFlash?.("danger", "Invalid action URL.");
+            return false;
+        }
+
+        window.location.assign(href);
+        return true;
+    };
+
     const submitConfirmedElement = () => {
         const target = pendingConfirmElement;
-        if (!(target instanceof HTMLElement)) {
+        if (!(target instanceof HTMLElement) || isDisabledConfirmTarget(target)) {
+            pendingConfirmElement = null;
             return;
         }
 
@@ -638,7 +724,7 @@
 
         try {
             if (target instanceof HTMLAnchorElement && target.href) {
-                window.location.assign(target.href);
+                navigateConfirmedAnchor(target);
                 return;
             }
 
@@ -664,6 +750,11 @@
     if (confirmModalElement instanceof HTMLElement) {
         confirmModalElement.addEventListener("hidden.bs.modal", () => {
             const focusTarget = previousActiveConfirmElement;
+            if (pendingConfirmSubmit) {
+                submitConfirmedElement();
+                resetPendingConfirm();
+                return;
+            }
             resetPendingConfirm();
             if (focusTarget instanceof HTMLElement && focusTarget.isConnected) {
                 focusTarget.focus();
@@ -674,8 +765,8 @@
     if (confirmModalAcceptButton instanceof HTMLButtonElement) {
         confirmModalAcceptButton.addEventListener("click", () => {
             const modal = getConfirmActionModal();
+            pendingConfirmSubmit = true;
             modal?.hide();
-            submitConfirmedElement();
         });
     }
 
@@ -699,7 +790,7 @@
             }
 
             if (button instanceof HTMLAnchorElement && button.href) {
-                window.location.assign(button.href);
+                navigateConfirmedAnchor(button);
                 return;
             }
             const form = button.closest("form");
@@ -730,5 +821,86 @@
         }
 
         modal.show();
+    });
+})();
+
+(() => {
+    "use strict";
+
+    const App = window.CaddyBuddyApp || (window.CaddyBuddyApp = {});
+
+    App.initializePasswordChecklistValidation = (formSelector) => {
+        const form = document.querySelector(formSelector);
+        if (!(form instanceof HTMLFormElement) || form.dataset.passwordChecklistInitialized === "true") return;
+
+        const passwordInput = form.querySelector("[data-password-checklist-password]");
+        const confirmInput = form.querySelector("[data-password-checklist-confirm]");
+        const submitBtn = form.querySelector("[type='submit']");
+        if (!passwordInput || !confirmInput || !submitBtn) return;
+
+        form.dataset.passwordChecklistInitialized = "true";
+
+        const passwordLengthHint = passwordInput.getAttribute("minlength")
+            || form.dataset.setupPasswordMinLength
+            || "8";
+        const requiredMinLength = Number.parseInt(passwordLengthHint, 10);
+        const normalizedMinLength = Number.isFinite(requiredMinLength) && requiredMinLength > 0
+            ? requiredMinLength
+            : 8;
+
+        const rules = {
+            length: (p) => p.length >= normalizedMinLength,
+            upper:   (p) => /[A-Z]/.test(p),
+            lower:   (p) => /[a-z]/.test(p),
+            digit:   (p) => /[0-9]/.test(p),
+            special: (p) => /[^A-Za-z0-9]/.test(p),
+        };
+
+        const checkEls = {};
+        for (const key of Object.keys(rules)) {
+            checkEls[key] = form.querySelector(`[data-check="${key}"]`);
+        }
+        const matchEl = form.querySelector('[data-check="match"]');
+
+        const validate = () => {
+            const pw = passwordInput.value;
+            const confirm = confirmInput.value;
+
+            let allPassed = true;
+            for (const [key, fn] of Object.entries(rules)) {
+                const passed = fn(pw);
+                if (checkEls[key]) {
+                    checkEls[key].classList.toggle("setup-check--pass", passed);
+                    checkEls[key].classList.toggle("setup-check--fail", pw.length > 0 && !passed);
+                }
+                if (!passed) allPassed = false;
+            }
+
+            const matchPassed = pw.length > 0 && confirm.length > 0 && pw === confirm;
+            if (matchEl) {
+                matchEl.classList.toggle("setup-check--pass", matchPassed);
+                matchEl.classList.toggle("setup-check--fail", confirm.length > 0 && !matchPassed);
+            }
+
+            submitBtn.disabled = !(allPassed && matchPassed);
+        };
+
+        passwordInput.addEventListener("input", validate);
+        confirmInput.addEventListener("input", validate);
+        validate();
+    };
+
+    App.initializeSetupPasswordValidation = (formSelector) => {
+        App.initializePasswordChecklistValidation(formSelector);
+    };
+
+    document.addEventListener("DOMContentLoaded", () => {
+        for (const form of document.querySelectorAll("[data-password-checklist-form]")) {
+            if (!(form instanceof HTMLFormElement) || !form.id) {
+                continue;
+            }
+
+            App.initializePasswordChecklistValidation(`#${form.id}`);
+        }
     });
 })();

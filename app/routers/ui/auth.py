@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.limiter import limiter
+from app.config.settings import get_settings
 from app.database.session import get_db_session
 from app.dependencies.web import (
     get_session_user,
@@ -20,7 +21,8 @@ from app.dependencies.web import (
     render_template,
     validate_csrf_token,
 )
-from app.services.auth import auth_service
+from app.repositories.users import user_repository
+from app.services.auth import PASSWORD_MIN_LENGTH, PASSWORD_POLICY_MESSAGE, WeakPasswordError, auth_service
 
 from ._common import commit_and_flash, logger, safe_next, validated_form
 
@@ -36,7 +38,12 @@ def _render_login_failure(request: Request, *, next_path: str, status_code: int 
         request,
         "login.html",
         current_user=None,
-        context={"safe_next_url": safe_next(next_path), "auth_error": True},
+        context={
+            "safe_next_url": safe_next(next_path),
+            "auth_error": True,
+            "password_policy_min_length": PASSWORD_MIN_LENGTH,
+            "password_policy_message": PASSWORD_POLICY_MESSAGE,
+        },
         status_code=status_code,
     )
 
@@ -52,13 +59,70 @@ async def login_page(request: Request, session: AsyncSession = Depends(get_db_se
     current_user = await get_session_user(request, session)
     if current_user is not None:
         return redirect_to("/")
+    setup_mode = not await user_repository.exists_any(session)
     safe_next_url = safe_next(str(request.query_params.get("next", "/")) or "/")
     return render_template(
         request,
         "login.html",
         current_user=None,
-        context={"safe_next_url": safe_next_url},
+        context={
+            "safe_next_url": safe_next_url,
+            "setup_mode": setup_mode,
+            "password_policy_min_length": PASSWORD_MIN_LENGTH,
+            "password_policy_message": PASSWORD_POLICY_MESSAGE,
+        },
     )
+
+
+@router.post("/setup")
+@limiter.limit("10/minute")
+async def setup_action(request: Request, session: AsyncSession = Depends(get_db_session)) -> Response:
+    if await user_repository.exists_any(session):
+        return redirect_to("/login")
+
+    form = await validated_form(request)
+    password = str(form.get("password", ""))
+    confirm = str(form.get("confirm_password", ""))
+
+    def _error(message: str) -> HTMLResponse:
+        push_flash(request, "danger", message)
+        return render_template(
+            request,
+            "login.html",
+            current_user=None,
+            context={
+                "safe_next_url": "/",
+                "setup_mode": True,
+                "setup_error": message,
+                "password_policy_min_length": PASSWORD_MIN_LENGTH,
+                "password_policy_message": PASSWORD_POLICY_MESSAGE,
+            },
+            status_code=422,
+        )
+
+    if len(password) > _MAX_PASSWORD_LENGTH:
+        return _error("Password is too long.")
+    if password != confirm:
+        return _error("Passwords do not match.")
+
+    try:
+        settings = get_settings()
+        user = await auth_service.ensure_default_admin(
+            session,
+            username=settings.default_admin_username,
+            password=password,
+            email=settings.default_admin_email,
+        )
+    except WeakPasswordError as exc:
+        return _error(str(exc))
+
+    if user is None:
+        return redirect_to("/login")
+    await session.commit()
+    initialize_user_session(request, user.id, user.password_hash)
+    logger.info("First admin account created via setup UI: username=%r", user.username)
+    push_flash(request, "success", f"Welcome, {user.username}. Your admin account has been created.")
+    return redirect_to("/onboarding")
 
 
 @router.post("/login")
@@ -97,8 +161,5 @@ async def login_action(request: Request, session: AsyncSession = Depends(get_db_
 @router.post("/logout")
 async def logout_action(request: Request, session: AsyncSession = Depends(get_db_session)) -> Response:
     await _validate_csrf_only(request)
-    current_user = await get_session_user(request, session)
     request.session.clear()
-    if current_user is not None:
-        push_flash(request, "info", "You have been signed out.")
     return redirect_to("/login")

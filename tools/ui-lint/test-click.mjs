@@ -4,6 +4,8 @@
 //
 
 import { webkit } from 'playwright';
+import { login } from './lib/browser-utils.mjs';
+import { FULL_MOTION_RESET_CSS } from './lib/constants.mjs';
 
 const baseUrl = process.env.UI_LINT_BASE_URL || 'http://127.0.0.1:8000';
 const username = process.env.UI_LINT_USERNAME;
@@ -19,15 +21,20 @@ try {
     browser = await webkit.launch();
     const context = await browser.newContext();
     const page = await context.newPage();
-    await page.goto(`${baseUrl}/login`, { waitUntil: 'domcontentloaded' });
-    await page.fill('#username', username);
-    await page.fill('#password', password);
 
     try {
-        await Promise.all([
-            page.waitForURL((url) => url.pathname !== '/login', { timeout: 10000 }),
-            page.locator('form[action="/login"] button[type="submit"]').first().click(),
-        ]);
+        await login(page, {
+            baseUrl,
+            credentialProvider: {
+                async getUsername() {
+                    return username;
+                },
+                async getPassword() {
+                    return password;
+                },
+            },
+            motionResetCss: FULL_MOTION_RESET_CSS,
+        });
         console.log('Navigation succeeded:', page.url());
     } catch (error) {
         console.error('Navigation failed:', error instanceof Error ? error.message : String(error));

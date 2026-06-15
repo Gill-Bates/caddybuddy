@@ -19,27 +19,36 @@ from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.config.settings import get_settings
-from app.dependencies.web import ensure_csrf_token, validate_csrf_token
+from app.dependencies.web import ensure_csp_nonce, ensure_csrf_token, validate_csrf_token
+from app.middleware.session import request_is_https
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 # UI/API path prefixes that require CSRF protection.
 # API enforcement is only applied for cookie-authenticated browser requests.
-CSRF_PREFIXES = ("/ui/", "/login", "/api/")
+CSRF_PREFIXES = (
+    "/login",
+    "/logout",
+    "/setup",
+    "/caddyfile",
+    "/sites",
+    "/settings",
+    "/ssl-labs",
+    "/api/",
+)
 _CSRF_EXEMPT_API_PATHS = frozenset({
     "/api/login",
     "/api/mfa/verify",
     "/api/passkeys/login/start",
     "/api/passkeys/login/finish",
 })
+_BASE_CONTENT_SECURITY_POLICY = (
+    b"default-src 'self'; style-src 'self'; "
+    b"script-src 'self'; worker-src blob:; font-src 'self' data:; img-src 'self' data: https:; "
+    b"connect-src 'self'; object-src 'none'; frame-ancestors 'none'; "
+    b"base-uri 'self'; form-action 'self'"
+)
 _SECURITY_HEADERS = (
-    (
-        b"content-security-policy",
-        b"default-src 'self'; style-src 'self'; "
-        b"script-src 'self'; font-src 'self' data:; img-src 'self' data: https:; "
-        b"connect-src 'self'; object-src 'none'; frame-ancestors 'none'; "
-        b"base-uri 'self'; form-action 'self'",
-    ),
     (b"x-frame-options", b"DENY"),
     (b"x-content-type-options", b"nosniff"),
     (b"referrer-policy", b"strict-origin-when-cross-origin"),
@@ -74,18 +83,11 @@ def _is_bearer_request(request: Request) -> bool:
 
 
 def _is_https_request(scope: Scope) -> bool:
-    return scope.get("scheme") == "https"
+    return request_is_https(scope)
 
 
 def _request_origin_tuple(request: Request) -> tuple[str, str, int] | None:
     scheme = (request.url.scheme or "").lower()
-    # When uvicorn doesn't fully trust the reverse proxy's IP (e.g. Docker bridge
-    # NAT makes the source appear as 172.17.0.1 instead of 127.0.0.1), it won't
-    # rewrite the scope scheme from X-Forwarded-Proto. Fall back to the header
-    # directly so the CSRF origin check works behind a TLS-terminating proxy.
-    forwarded_proto = request.headers.get("X-Forwarded-Proto", "").lower().strip()
-    if forwarded_proto in {"http", "https"}:
-        scheme = forwarded_proto
     host = request.url.hostname
     if not scheme or not host:
         return None
@@ -122,7 +124,25 @@ class SecurityHeadersMiddleware:
                     for key, _value in message.get("headers", [])
                 }
                 headers = list(message.get("headers", []))
-                headers_to_apply = list(_SECURITY_HEADERS)
+                state = scope.get("state") or {}
+                nonce = state.get("csp_nonce")
+                content_security_policy = _BASE_CONTENT_SECURITY_POLICY
+                if nonce:
+                    _nonce_b = str(nonce).encode("utf-8")
+                    content_security_policy = (
+                        b"default-src 'self'; style-src 'self' 'nonce-"
+                        + _nonce_b
+                        + b"'; script-src 'self' 'nonce-"
+                        + _nonce_b
+                        + b"'; worker-src blob:; font-src 'self' data:; img-src 'self' data: https:; "
+                        b"connect-src 'self'; object-src 'none'; frame-ancestors 'none'; "
+                        b"base-uri 'self'; form-action 'self'"
+                    )
+
+                headers_to_apply = [
+                    (b"content-security-policy", content_security_policy),
+                    *_SECURITY_HEADERS,
+                ]
                 if _is_https_request(scope):
                     headers_to_apply.append(_HSTS_HEADER)
 
@@ -207,12 +227,19 @@ class CSRFMiddleware:
             return
 
         request = Request(scope, receive=receive)
+        ensure_csp_nonce(request)
         body_receive = receive
         validation_response: Response | None = None
 
-        if request.method in SAFE_METHODS and self._requires_csrf(request.url.path):
+        if (
+            request.method in SAFE_METHODS
+            and self._requires_csrf(request.url.path)
+            and not request.url.path.startswith("/api/")
+        ):
             ensure_csrf_token(request)
 
+        # Bearer-only API requests are exempt. API requests that also carry a
+        # session cookie still require CSRF validation.
         is_stateless_bearer_api_request = (
             request.url.path.startswith("/api/")
             and _is_bearer_request(request)

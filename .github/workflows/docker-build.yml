@@ -217,7 +217,6 @@ jobs:
             --platform linux/amd64 \
             --network smoke-amd64 \
             -e CB_SECRET_KEY="ci-smoke-test-key-not-for-production" \
-            -e CB_ADMIN_PASSWORD="CI-Smoke-Admin-Password-123" \
             -e LOG_LEVEL="DEBUG" \
             -v "$PWD/smoke-test-amd64/Caddyfile:/app/Caddyfile" \
             -v "$PWD/smoke-test-amd64/data:/app/data" \
@@ -245,6 +244,14 @@ jobs:
 
             sleep 1
           done
+
+          if docker exec caddybuddy-test-amd64 sh -c 'command -v caddy' > /dev/null 2>&1; then
+            echo "✗ caddy binary must not be installed in the CaddyBuddy image"
+            docker exec caddybuddy-test-amd64 sh -c 'command -v caddy && caddy version || true'
+            exit 1
+          fi
+
+          echo "✓ caddy binary is not installed"
 
       - name: Trivy vulnerability scan (amd64)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -430,7 +437,6 @@ jobs:
             --platform linux/arm64 \
             --network smoke-arm64 \
             -e CB_SECRET_KEY="ci-smoke-test-key-not-for-production" \
-            -e CB_ADMIN_PASSWORD="CI-Smoke-Admin-Password-123" \
             -e LOG_LEVEL="DEBUG" \
             -v "$PWD/smoke-test-arm64/Caddyfile:/app/Caddyfile" \
             -v "$PWD/smoke-test-arm64/data:/app/data" \
@@ -458,6 +464,14 @@ jobs:
 
             sleep 1
           done
+
+          if docker exec caddybuddy-test-arm64 sh -c 'command -v caddy' > /dev/null 2>&1; then
+            echo "✗ caddy binary must not be installed in the CaddyBuddy image"
+            docker exec caddybuddy-test-arm64 sh -c 'command -v caddy && caddy version || true'
+            exit 1
+          fi
+
+          echo "✓ caddy binary is not installed"
 
       - name: Trivy vulnerability scan (arm64)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0

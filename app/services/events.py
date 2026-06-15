@@ -81,22 +81,29 @@ class ResourceEvent:
     _payload: str = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        normalized_details = dict(self.details)
         try:
-            payload = json.dumps(
-                {
-                    "type": self.resource_type,
-                    "action": self.action,
-                    "id": self.resource_id,
-                    "details": normalized_details,
-                    "ts": self.timestamp,
-                },
-                ensure_ascii=False,
-                separators=(",", ":"),
-                allow_nan=False,
+            # Round-trip through JSON so ``details`` becomes a deep snapshot that
+            # always matches the serialized payload; nested objects shared with
+            # the caller can no longer mutate the stored event.
+            normalized_details = json.loads(
+                json.dumps(self.details, ensure_ascii=False, allow_nan=False)
             )
         except (TypeError, ValueError) as exc:
             raise ValueError("event details must be JSON-serializable") from exc
+        if not isinstance(normalized_details, dict):
+            raise ValueError("event details must be a JSON object")
+        payload = json.dumps(
+            {
+                "type": self.resource_type,
+                "action": self.action,
+                "id": self.resource_id,
+                "details": normalized_details,
+                "ts": self.timestamp,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
         _validate_event_payload_size(payload)
         object.__setattr__(self, "details", normalized_details)
         object.__setattr__(self, "_payload", payload)
@@ -123,7 +130,11 @@ class _SubscriberStream(AsyncIterator[ResourceEvent]):
             self._bus._activate_subscriber(self)
             self._active = True
 
-        event = await self._queue.get()
+        try:
+            event = await self._queue.get()
+        except asyncio.CancelledError:
+            self.close_from_bus()
+            raise
         if event is None:
             self._closed = True
             self._active = False

@@ -1,0 +1,19 @@
+{
+    "name": "caddybuddy-codemirror",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "build": "NODE_PATH=./node_modules esbuild caddybuddy-codemirror.mjs --bundle --format=iife --global-name=CaddyBuddyCodeMirror --outfile=../../app/static/vendor/codemirror/caddybuddy-codemirror.js --minify --legal-comments=none"
+    },
+    "dependencies": {
+        "@codemirror/autocomplete": "6.20.3",
+        "@codemirror/commands": "6.10.3",
+        "@codemirror/language": "6.12.3",
+        "@codemirror/lint": "6.9.7",
+        "@codemirror/search": "6.7.0",
+        "@codemirror/state": "6.6.0",
+        "@codemirror/view": "6.43.1",
+        "codemirror": "6.0.2",
+        "esbuild": "0.28.1"
+    }
+}

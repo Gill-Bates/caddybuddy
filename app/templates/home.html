@@ -7,8 +7,7 @@
 {% set service_running = caddy_status | lower == 'running' %}
 {% set caddy_version = metrics.caddy_version or 'Unavailable' %}
 {% set caddy_uptime = metrics.caddy_service_uptime or 'Unavailable' %}
-{% set onboarding_required = runtime_status is defined and runtime_status.onboarding_required %}
-<section class="app-page" data-dashboard-metrics-url="/api/v1/dashboard/metrics">
+<section class="app-page" data-dashboard-metrics-url="{{ request.app.url_path_for('dashboard_metrics') }}">
     <div class="app-page__header">
         <div class="app-page__lede">
             <p class="eyebrow mb-2">Overview</p>
@@ -18,7 +17,7 @@
             </p>
         </div>
 
-        <div class="dashboard-status" id="caddy-status-badge" data-status-url="/api/v1/caddy/status">
+        <div class="dashboard-status" id="caddy-status-badge" data-status-url="{{ request.app.url_path_for('caddy_status') }}">
             <span id="caddy-status-dot"
                 class="status-dot {% if service_running %}status-dot--online{% else %}status-dot--offline{% endif %}"
                 aria-hidden="true"></span>
@@ -58,86 +57,125 @@
         </span>
     </div>
 
-    <section class="row metric-grid" aria-label="Key metrics">
-        <div class="col-6 col-md-4">
-            <article class="metric-card hero-metric hero-metric--domains">
-                <div class="hero-metric__main">
-                    <span class="hero-metric__icon" aria-hidden="true">
-                        <svg viewBox="0 0 24 24" fill="currentColor" focusable="false">
-                            <path
-                                d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Zm6.93 9h-3.02a15.8 15.8 0 0 0-1.38-5.02A8.03 8.03 0 0 1 18.93 11ZM12 4.04c.83 1.2 1.8 3.27 1.98 6.96h-3.96C10.2 7.31 11.17 5.24 12 4.04ZM4.07 13h3.02a15.8 15.8 0 0 0 1.38 5.02A8.03 8.03 0 0 1 4.07 13Zm3.02-2H4.07a8.03 8.03 0 0 1 4.4-5.02A15.8 15.8 0 0 0 7.09 11ZM12 19.96c-.83-1.2-1.8-3.27-1.98-6.96h3.96c-.18 3.69-1.15 5.76-1.98 6.96ZM15.92 13h3.01a8.03 8.03 0 0 1-4.4 5.02A15.8 15.8 0 0 0 15.92 13Z" />
-                        </svg>
-                    </span>
-                    <div class="hero-metric__content">
-                        <span class="metric-card__label">Domains</span>
-                        <strong class="metric-card__value">{{ metrics.enabled_domain_count or 0 }}<span
-                                class="metric-card__total">/{{ metrics.domain_count or 0 }}</span></strong>
-                    </div>
+    <section class="metric-grid" aria-label="Key metrics">
+        <article class="metric-card hero-metric hero-metric--domains">
+            <div class="hero-metric__main">
+                <span class="hero-metric__icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="currentColor" focusable="false">
+                        <path
+                            d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Zm6.93 9h-3.02a15.8 15.8 0 0 0-1.38-5.02A8.03 8.03 0 0 1 18.93 11ZM12 4.04c.83 1.2 1.8 3.27 1.98 6.96h-3.96C10.2 7.31 11.17 5.24 12 4.04ZM4.07 13h3.02a15.8 15.8 0 0 0 1.38 5.02A8.03 8.03 0 0 1 4.07 13Zm3.02-2H4.07a8.03 8.03 0 0 1 4.4-5.02A15.8 15.8 0 0 0 7.09 11ZM12 19.96c-.83-1.2-1.8-3.27-1.98-6.96h3.96c-.18 3.69-1.15 5.76-1.98 6.96ZM15.92 13h3.01a8.03 8.03 0 0 1-4.4 5.02A15.8 15.8 0 0 0 15.92 13Z" />
+                    </svg>
+                </span>
+                <div class="hero-metric__content">
+                    <span class="metric-card__label">Domains</span>
+                    <strong class="metric-card__value">{{ metrics.enabled_domain_count or 0 }}<span
+                            class="metric-card__total">/{{ metrics.domain_count or 0 }}</span></strong>
                 </div>
-            </article>
+            </div>
+        </article>
+        <article class="metric-card hero-metric hero-metric--valid">
+            <div class="hero-metric__main">
+                <span class="hero-metric__icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="currentColor" focusable="false">
+                        <path
+                            d="M12 2 4 5v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V5Zm-1.2 14.6-3.3-3.3 1.4-1.4 1.9 1.88 4.4-4.38 1.4 1.42Z" />
+                    </svg>
+                </span>
+                <div class="hero-metric__content">
+                    <span class="metric-card__label">Valid certificates</span>
+                    <strong class="metric-card__value" id="dashboard-valid-certificates" data-ui-lint-dynamic>{{
+                        metrics.valid_certificate_count if metrics.valid_certificate_count is not none else '...'
+                        }}</strong>
+                </div>
+            </div>
+        </article>
+        <article class="metric-card hero-metric hero-metric--expired">
+            <div class="hero-metric__main">
+                <span class="hero-metric__icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="currentColor" focusable="false">
+                        <path
+                            d="M12 2 4 5v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V5Zm1 14h-2v-2h2Zm0-4h-2V7h2Z" />
+                    </svg>
+                </span>
+                <div class="hero-metric__content">
+                    <span class="metric-card__label">Expired certificates</span>
+                    <strong class="metric-card__value" id="dashboard-expired-certificates" data-ui-lint-dynamic>{{
+                        metrics.expired_certificate_count if metrics.expired_certificate_count is not none else
+                        '...'
+                        }}</strong>
+                </div>
+            </div>
+        </article>
+    </section>
+
+    <section class="card ssllabs-history-card ssllabs-history-card--loading mt-4" aria-label="SSL Labs rank history"
+        data-ssllabs-history-loading-shell="true"
+        data-ssllabs-history data-ssllabs-history-url="{{ request.app.url_path_for('dashboard_ssllabs_history') }}">
+        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <h2 class="h5 mb-0">SSL Labs rank history</h2>
+            <label class="d-flex align-items-center gap-2 mb-0">
+                <span class="visually-hidden">Select time range</span>
+                <select id="ssllabs-history-range" class="form-select form-select-sm ssllabs-history-range"
+                    aria-label="Select time range">
+                    <option value="7d">7 d</option>
+                    <option value="30d" selected>30 d</option>
+                    <option value="90d">90 d</option>
+                    <option value="180d">180 d</option>
+                    <option value="1y">1 y</option>
+                </select>
+            </label>
         </div>
-        <div class="col-6 col-md-4">
-            <article class="metric-card hero-metric hero-metric--valid">
-                <div class="hero-metric__main">
-                    <span class="hero-metric__icon" aria-hidden="true">
-                        <svg viewBox="0 0 24 24" fill="currentColor" focusable="false">
-                            <path
-                                d="M12 2 4 5v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V5Zm-1.2 14.6-3.3-3.3 1.4-1.4 1.9 1.88 4.4-4.38 1.4 1.42Z" />
-                        </svg>
-                    </span>
-                    <div class="hero-metric__content">
-                        <span class="metric-card__label">Valid certificates</span>
-                        <strong class="metric-card__value" id="dashboard-valid-certificates" data-ui-lint-dynamic>{{
-                            metrics.valid_certificate_count if metrics.valid_certificate_count is not none else '...'
-                            }}</strong>
+        <div class="card-body">
+            <div class="ssllabs-history-toolbar">
+                <div id="ssllabs-grade-legend" class="ssllabs-grade-legend" aria-label="SSL Labs grade legend"></div>
+                <label class="ssllabs-domain-search mb-0">
+                    <span class="visually-hidden">Search domain</span>
+                    <input id="ssllabs-domain-search" class="form-control form-control-sm" type="search"
+                        list="ssllabs-domain-options" placeholder="Search domain…" autocomplete="off"
+                        autocapitalize="none" autocorrect="off" spellcheck="false">
+                </label>
+                <datalist id="ssllabs-domain-options"></datalist>
+            </div>
+
+            <div class="ssllabs-history-grid">
+                <div class="ssllabs-history-chart-wrap">
+                    <canvas id="ssllabs-history-chart" aria-label="SSL Labs grade distribution over time"
+                        aria-describedby="ssllabs-history-summary" role="img"></canvas>
+                    <p id="ssllabs-history-summary" class="visually-hidden">SSL Labs rank history summary is not available yet.</p>
+                    <div id="ssllabs-history-empty" class="ssllabs-history-empty d-none">
+                        <span class="ssllabs-history-empty__text">No SSL Labs scan history yet.</span>
+                        <span class="ssllabs-history-empty__hint">
+                            Weekly samples appear here after the first completed scheduled scan.
+                        </span>
                     </div>
+                    <div id="ssllabs-history-periods" class="ssllabs-history-periods visually-hidden-focusable"
+                        aria-label="Select SSL Labs history week"></div>
                 </div>
-            </article>
-        </div>
-        <div class="col-6 col-md-4">
-            <article class="metric-card hero-metric hero-metric--expired">
-                <div class="hero-metric__main">
-                    <span class="hero-metric__icon" aria-hidden="true">
-                        <svg viewBox="0 0 24 24" fill="currentColor" focusable="false">
-                            <path
-                                d="M12 2 4 5v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V5Zm1 14h-2v-2h2Zm0-4h-2V7h2Z" />
-                        </svg>
-                    </span>
-                    <div class="hero-metric__content">
-                        <span class="metric-card__label">Expired certificates</span>
-                        <strong class="metric-card__value" id="dashboard-expired-certificates" data-ui-lint-dynamic>{{
-                            metrics.expired_certificate_count if metrics.expired_certificate_count is not none else
-                            '...'
-                            }}</strong>
-                    </div>
+                <aside id="ssllabs-history-inspector" class="ssllabs-history-inspector" aria-live="polite"></aside>
+            </div>
+
+            <div id="ssllabs-problem-domains" class="ssllabs-problem-domains"></div>
+
+            <div id="ssllabs-focus-wrap" class="ssllabs-focus-chart-wrap d-none">
+                <div id="ssllabs-pinned-domains" class="ssllabs-pinned-domains"></div>
+                <div class="ssllabs-focus-chart-canvas-wrap">
+                    <canvas id="ssllabs-domain-focus-chart" aria-label="Selected domain SSL Labs grade history"
+                        aria-describedby="ssllabs-domain-focus-summary" role="img"></canvas>
+                    <p id="ssllabs-domain-focus-summary" class="visually-hidden">Selected domain SSL Labs grade history is not available yet.</p>
                 </div>
-            </article>
+            </div>
         </div>
     </section>
 
-    {% if (metrics.domain_count or 0) == 0 %}
-    <section class="panel-card dashboard-empty-state">
-        <div>
-            <p class="eyebrow mb-2">Next step</p>
-            {% if onboarding_required %}
-            <h2 class="h4 mb-2">Create the managed Caddyfile first</h2>
-            <p class="text-body-secondary mb-0">
-                Import the host-mounted Caddyfile into CaddyBuddy and replace it with the managed marker before creating
-                sites.
-            </p>
-            {% else %}
-            <h2 class="h4 mb-2">Create your first managed site</h2>
-            <p class="text-body-secondary mb-0">
-                Add a domain and deploy its Caddy configuration from CaddyBuddy.
-            </p>
-            {% endif %}
-        </div>
-        {% if onboarding_required %}
-        <a href="{{ request.app.url_path_for('caddyfile_page') }}" class="btn btn-primary">Open Caddyfile</a>
-        {% else %}
-        <a href="{{ request.app.url_path_for('sites_page') }}" class="btn btn-primary">Create site</a>
-        {% endif %}
-    </section>
-    {% endif %}
 </section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ request.app.url_path_for('static', path='vendor/chartjs/chart.umd.min.js') }}"></script>
+<script src="{{ request.app.url_path_for('static', path='js/ssllabs-history-chart.js') }}"></script>
+{% if show_onboarding_confetti %}
+<div data-onboarding-confetti="true" hidden></div>
+<script src="{{ request.app.url_path_for('static', path='vendor/confetti/confetti.browser.min.js') }}" nonce="{{ csp_nonce }}"></script>
+<script src="{{ request.app.url_path_for('static', path='js/onboarding-confetti.js') }}" nonce="{{ csp_nonce }}"></script>
+{% endif %}
 {% endblock %}

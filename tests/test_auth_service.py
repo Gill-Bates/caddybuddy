@@ -14,6 +14,7 @@ from hashlib import sha256
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import bcrypt
 from pydantic import SecretStr
 
 from app.config.settings import get_settings
@@ -81,6 +82,21 @@ class AuthServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsInstance(password_hash, str)
         self.assertTrue(password_hash)
+
+    async def test_hash_password_round_trips_when_hmac_digest_contains_nul_byte(self) -> None:
+        password = "Password123!"
+        self.assertIn(b"\x00", AuthService._hmac_digest("password", password))
+
+        password_hash = await AuthService.hash_password(password)
+
+        self.assertTrue(await AuthService.verify_password(password, password_hash))
+
+    async def test_verify_password_accepts_legacy_nul_truncated_hash(self) -> None:
+        password = "Password123!"
+        legacy_input = AuthService._hmac_digest("password", password).split(b"\x00", 1)[0]
+        password_hash = bcrypt.hashpw(legacy_input, bcrypt.gensalt()).decode("utf-8")
+
+        self.assertTrue(await AuthService.verify_password(password, password_hash))
 
     async def test_authenticate_treats_invalid_stored_hash_as_failed_login(self) -> None:
         session = SimpleNamespace()
@@ -177,6 +193,19 @@ class AuthServiceTests(unittest.IsolatedAsyncioTestCase):
             password_hash="hashed-password",
             role="admin",
         )
+
+    async def test_ensure_default_admin_returns_none_for_insecure_password(self) -> None:
+        session = SimpleNamespace(begin_nested=lambda: None)
+
+        with patch.object(auth_module.user_repository, "exists_any", new=AsyncMock(return_value=False)):
+            result = await auth_module.auth_service.ensure_default_admin(
+                session,
+                username="admin",
+                password="admin",
+                email="admin@example.com",
+            )
+
+        self.assertIsNone(result)
 
 
 if __name__ == "__main__":

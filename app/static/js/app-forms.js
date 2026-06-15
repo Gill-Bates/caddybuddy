@@ -8,8 +8,32 @@
 
     const App = window.CaddyBuddyApp || (window.CaddyBuddyApp = {});
     const settingsEmailPattern = /^[^@\s]+@[^@\s]+\.[^@\s]+$/u;
-    const minimumPasswordLength = 8;
-    const passwordPolicyMessage = `Password must be at least ${minimumPasswordLength} characters long and contain uppercase, lowercase, digit, and special character.`;
+    const passwordPolicyElement = document.querySelector("[data-password-policy]");
+    const parsedMinimumPasswordLength = Number.parseInt(passwordPolicyElement?.dataset.passwordPolicyMinLength || "", 10);
+    const minimumPasswordLength = Number.isInteger(parsedMinimumPasswordLength) && parsedMinimumPasswordLength > 0
+        ? parsedMinimumPasswordLength
+        : 8;
+    const passwordPolicyMessage = passwordPolicyElement?.dataset.passwordPolicyMessage
+        || `Password must be at least ${minimumPasswordLength} characters long and contain uppercase, lowercase, digit, and special character.`;
+
+    const isAbortError = (error) => error instanceof DOMException && error.name === "AbortError";
+
+    const fetchWithTimeout = async (rawUrl, options = {}, timeoutMs = 10000) => {
+        if (typeof window.AbortController !== "function") {
+            return fetch(rawUrl, options);
+        }
+
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            return await fetch(rawUrl, {
+                ...options,
+                signal: controller.signal,
+            });
+        } finally {
+            window.clearTimeout(timeoutId);
+        }
+    };
 
     const setFieldFeedbackState = (field) => {
         if (!(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement)) {
@@ -22,7 +46,7 @@
         const isValid = field.checkValidity();
 
         field.classList.toggle("is-invalid", !isValid);
-        field.classList.toggle("is-valid", hasValue && isValid);
+        field.classList.toggle("is-valid", hasValue && isValid && field.dataset.serverValid === "true");
         field.setAttribute("aria-invalid", isValid ? "false" : "true");
     };
 
@@ -53,7 +77,9 @@
                         message = "caddy_api_url must not include query or fragment.";
                     } else if (parsed.hash) {
                         message = "caddy_api_url must not include query or fragment.";
-                    } else if (parsed.port) {
+                    } else if (!parsed.port) {
+                        message = "caddy_api_url must include an explicit port (for example :2019).";
+                    } else {
                         const port = Number.parseInt(parsed.port, 10);
                         if (!Number.isInteger(port) || port < 1 || port > 65535) {
                             message = "caddy_api_url has an invalid port.";
@@ -91,6 +117,37 @@
         field.setCustomValidity(message);
         setFieldFeedbackState(field);
         return message === "" && field.checkValidity();
+    };
+
+    const probeCaddySettingsValidity = async (caddyApiUrlField, otherFields) => {
+        try {
+            const response = await fetchWithTimeout(
+                App.resolveSameOriginUrl("/api/caddy/status"),
+                {
+                    credentials: "same-origin",
+                    headers: {
+                        Accept: "application/json",
+                        "X-Requested-With": "XMLHttpRequest",
+                    },
+                },
+                5000
+            );
+            if (!response.ok) {
+                return;
+            }
+            const payload = await response.json();
+
+            if (payload.admin_api_reachable === true && caddyApiUrlField instanceof HTMLInputElement) {
+                caddyApiUrlField.dataset.serverValid = "true";
+                validateSettingsField(caddyApiUrlField);
+            }
+            for (const field of otherFields) {
+                field.dataset.serverValid = "true";
+                validateSettingsField(field);
+            }
+        } catch {
+            // Probe failed — fields stay without is-valid
+        }
     };
 
     App.initializeSettingsAutoSave = () => {
@@ -132,7 +189,6 @@
             if (!(form instanceof HTMLFormElement) || form.dataset.autoSaveInitialized === "true") {
                 continue;
             }
-            form.dataset.autoSaveInitialized = "true";
 
             const fields = Array.from(form.querySelectorAll("[data-auto-save-field]"))
                 .filter((field) => field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement);
@@ -140,11 +196,40 @@
                 continue;
             }
 
+            form.dataset.autoSaveInitialized = "true";
+
             const statusElement = form.querySelector("[data-auto-save-status]");
             const idleStatusMessage = statusElement instanceof HTMLElement ? statusElement.textContent || "" : "";
             let resetStatusTimeoutId = null;
             let isSaving = false;
             let saveQueued = false;
+
+            const requiresCsrf = form.hasAttribute("data-require-csrf");
+
+            const updateDependentControls = () => {
+                const registerButton = document.querySelector("[data-ssllabs-register-button]");
+                if (!(registerButton instanceof HTMLButtonElement)) {
+                    return;
+                }
+
+                const emailForm = document.querySelector("form[data-ssllabs-email-form]");
+                const emailInput = emailForm?.querySelector("#ssllabs_email");
+                const emailDirty = emailForm instanceof HTMLFormElement && App.serializeComparableFormState(emailForm) !== (emailForm.dataset.lastSavedSerializedState || emailForm.dataset.initialSerializedState || "");
+                const emailBusy = emailForm instanceof HTMLFormElement && emailForm.dataset.autoSaveBusy === "true";
+                const noEmailValue = emailInput instanceof HTMLInputElement && emailInput.value.trim() === "";
+
+                registerButton.disabled = emailDirty || emailBusy || noEmailValue;
+            };
+
+            if (form.matches("form[data-ssllabs-email-form]")) {
+                const emailInput = form.querySelector("#ssllabs_email");
+                if (emailInput instanceof HTMLInputElement) {
+                    const refreshDependentControls = () => updateDependentControls();
+                    emailInput.addEventListener("input", refreshDependentControls);
+                    emailInput.addEventListener("change", refreshDependentControls);
+                    emailInput.addEventListener("blur", refreshDependentControls);
+                }
+            }
 
             const clearResetStatusTimeout = () => {
                 if (resetStatusTimeoutId !== null) {
@@ -164,6 +249,8 @@
             const snapshot = () => snapshotFields(fields);
 
             let lastSavedState = snapshot();
+            form.dataset.lastSavedSerializedState = lastSavedState;
+            updateDependentControls();
 
             const saveForm = async () => {
                 const submittedState = snapshot();
@@ -181,19 +268,32 @@
 
                 isSaving = true;
                 saveQueued = false;
+                form.dataset.autoSaveBusy = "true";
                 clearResetStatusTimeout();
                 updateStatusElement(statusElement, "Saving...", "muted");
 
+                const csrfToken = typeof App.readCsrfToken === "function" ? App.readCsrfToken(form) : "";
+                if (requiresCsrf && !csrfToken) {
+                    const message = "Security token is missing. Reload the page and try again.";
+                    updateStatusElement(statusElement, message, "danger");
+                    App.pushInlineFlash?.("danger", message);
+                    isSaving = false;
+                    form.dataset.autoSaveBusy = "false";
+                    updateDependentControls();
+                    return;
+                }
+
                 try {
-                    const response = await fetch(App.resolveSameOriginUrl(form.action), {
+                    const response = await fetchWithTimeout(App.resolveSameOriginUrl(form.action), {
                         method: (form.method || "post").toUpperCase(),
                         body: new FormData(form),
                         credentials: "same-origin",
                         headers: {
                             Accept: "application/json",
                             "X-Requested-With": "XMLHttpRequest",
+                            "X-CSRF-Token": csrfToken,
                         },
-                    });
+                    }, 10000);
                     const payload = await response.json().catch(() => ({}));
                     const message = typeof payload.message === "string" && payload.message
                         ? payload.message
@@ -206,16 +306,43 @@
                     }
 
                     lastSavedState = submittedState;
-                    updateStatusElement(statusElement, message, "success");
-                    App.pushInlineFlash?.("success", message);
-                    scheduleStatusReset();
-                } catch {
-                    const message = "Automatic save failed. Please try again.";
+                    form.dataset.lastSavedSerializedState = submittedState;
+
+                    const caddyUrlField = fields.find((f) => f.name === "caddy_api_url");
+                    if (caddyUrlField instanceof HTMLInputElement) {
+                        const nonUrlFields = fields.filter((f) => f.name !== "caddy_api_url");
+                        for (const field of nonUrlFields) {
+                            field.dataset.serverValid = "true";
+                            validateSettingsField(field);
+                        }
+                        void probeCaddySettingsValidity(caddyUrlField, []);
+                    } else {
+                        for (const field of fields) {
+                            field.dataset.serverValid = "true";
+                            validateSettingsField(field);
+                        }
+                    }
+
+                    if (snapshot() === submittedState) {
+                        updateStatusElement(statusElement, message, "success");
+                        App.pushInlineFlash?.("success", message);
+                        scheduleStatusReset();
+                    } else {
+                        updateStatusElement(statusElement, "Saving latest changes...", "muted");
+                        saveQueued = true;
+                    }
+                } catch (error) {
+                    const message = isAbortError(error)
+                        ? "Automatic save timed out. Please try again."
+                        : "Automatic save failed. Please try again.";
                     updateStatusElement(statusElement, message, "danger");
                     App.pushInlineFlash?.("danger", message);
                 } finally {
                     isSaving = false;
-                    if (saveQueued || snapshot() !== lastSavedState) {
+                    form.dataset.autoSaveBusy = "false";
+                    updateDependentControls();
+                    const changedDuringSave = snapshot() !== submittedState;
+                    if (saveQueued || changedDuringSave) {
                         void saveForm();
                     }
                 }
@@ -238,6 +365,7 @@
                 }
 
                 field.addEventListener("input", () => {
+                    delete field.dataset.serverValid;
                     validateSettingsField(field);
                 });
 
@@ -255,16 +383,43 @@
                     void saveForm();
                 });
             }
+
+            const initCaddyUrlField = fields.find((f) => f.name === "caddy_api_url");
+            if (initCaddyUrlField instanceof HTMLInputElement) {
+                const initOtherFields = fields.filter((f) => f.name !== "caddy_api_url");
+                void probeCaddySettingsValidity(initCaddyUrlField, initOtherFields);
+            }
         }
     };
 
-    const domainTokenPattern = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+    const domainTokenPattern = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]{2,59})$/;
 
     const normalizeDomainToken = (value) => {
-        const normalized = String(value || "").trim().toLowerCase().replace(/\.+$/u, "");
-        if (!normalized) {
+        const rawValue = String(value || "").trim().replace(/\.+$/u, "");
+        if (!rawValue) {
             return null;
         }
+
+        let parsedUrl;
+        try {
+            parsedUrl = new URL(`http://${rawValue}`);
+        } catch {
+            return null;
+        }
+
+        if (
+            parsedUrl.username ||
+            parsedUrl.password ||
+            parsedUrl.port ||
+            (parsedUrl.pathname && parsedUrl.pathname !== "/") ||
+            parsedUrl.search ||
+            parsedUrl.hash
+        ) {
+            return null;
+        }
+
+        const normalized = parsedUrl.hostname.toLowerCase().replace(/\.+$/u, "");
+
         if (normalized.length > 253 || !domainTokenPattern.test(normalized)) {
             return null;
         }
@@ -281,7 +436,6 @@
             if (!(container instanceof HTMLElement) || container.dataset.domainTagInitialized === "true") {
                 continue;
             }
-            container.dataset.domainTagInitialized = "true";
 
             const hiddenInput = container.querySelector("input[name='domain']");
             const entryInput = container.querySelector("[data-domain-tag-entry]");
@@ -296,7 +450,13 @@
                 continue;
             }
 
+            container.dataset.domainTagInitialized = "true";
+
             const selectedSiteId = Number.parseInt(container.dataset.selectedSiteId || "", 10);
+            const maxDomainsValue = Number.parseInt(container.dataset.maxDomains || "25", 10);
+            const maxDomains = Number.isInteger(maxDomainsValue) && maxDomainsValue > 0
+                ? maxDomainsValue
+                : 25;
             const rawCatalog = container.dataset.existingDomains || "[]";
             let existingDomains = [];
             try {
@@ -344,6 +504,8 @@
                 }
             };
 
+            const originalPlaceholder = entryInput.placeholder;
+
             const renderTags = () => {
                 tagList.replaceChildren();
                 for (const domainName of domains) {
@@ -367,6 +529,7 @@
                     token.append(removeButton);
                     tagList.append(token);
                 }
+                entryInput.placeholder = domains.length > 0 ? "" : originalPlaceholder;
             };
 
             const addDomains = (rawValue) => {
@@ -390,6 +553,11 @@
                         continue;
                     }
                     additions.push(normalized);
+                }
+
+                if (domains.length + additions.length > maxDomains) {
+                    setError(`A site can contain at most ${maxDomains} domains.`);
+                    return false;
                 }
 
                 if (additions.length === 0) {
@@ -603,6 +771,7 @@
 
         const validateButton = form.querySelector("[data-validate-form-button]");
         const saveButton = form.querySelector("[data-site-save-button]");
+        const statusElement = form.querySelector("[data-site-config-status]");
         const currentState = serializeSiteConfigFormState(form);
         const initialState = form.dataset.initialSerializedState || "";
         const lastValidatedState = form.dataset.lastValidatedState || "";
@@ -616,6 +785,37 @@
         const hasRequiredValues = siteConfigFormHasRequiredValues(form);
         const validationMatchesCurrentState = form.dataset.validationState === "valid" && currentState === lastValidatedState;
         const saveAllowed = hasChanges && hasRequiredValues && (changeProfile.onlySiteNameChanged || validationMatchesCurrentState);
+
+        if (statusElement instanceof HTMLElement) {
+            const validationState = form.dataset.validationState;
+            let statusMessage = "";
+            let statusClass = "text-body-secondary";
+
+            if (validationState === "validating") {
+                statusMessage = "Validating site configuration...";
+            } else if (validationState === "invalid") {
+                statusMessage = "Validation failed. Fix the highlighted fields.";
+                statusClass = "text-danger";
+            } else if (validationState === "valid") {
+                statusMessage = saveAllowed
+                    ? (changeProfile.requiresDeploy ? "Validated. Save & Deploy is ready." : "Validated. Save is ready.")
+                    : "Validated.";
+                statusClass = "text-success";
+            } else if (!hasRequiredValues) {
+                statusMessage = "Complete the required site fields.";
+            } else if (hasChanges && changeProfile.requiresDeploy) {
+                statusMessage = "Validate the current site configuration before saving.";
+            } else if (hasChanges) {
+                statusMessage = "Save is ready.";
+                statusClass = "text-success";
+            } else {
+                statusMessage = "Make changes to enable validate and save.";
+            }
+
+            statusElement.textContent = statusMessage;
+            statusElement.classList.remove("text-body-secondary", "text-success", "text-danger");
+            statusElement.classList.add(statusClass);
+        }
 
         setButtonInteractionState(validateButton, hasChanges && hasRequiredValues && changeProfile.requiresDeploy);
         setButtonInteractionState(saveButton, saveAllowed);
@@ -707,9 +907,69 @@
         }
     };
 
+    App.initializeSitesSearch = () => {
+        const input = document.querySelector("[data-sites-search-input]");
+        const tbody = document.querySelector(".sites-table tbody");
+        const countEl = document.querySelector("[data-sites-count]");
+        if (!(input instanceof HTMLInputElement) || !(tbody instanceof HTMLElement)) {
+            return;
+        }
+
+        const getDataRows = () => Array.from(tbody.querySelectorAll("tr:not(.sites-search-empty)"))
+            .filter((row) => !row.querySelector("td[colspan]"));
+
+        const applyFilter = () => {
+            const q = input.value.trim().toLowerCase();
+            const rows = getDataRows();
+            let visibleCount = 0;
+
+            for (const row of rows) {
+                const name = row.querySelector(".fw-semibold")?.textContent?.toLowerCase() ?? "";
+                const domains = Array.from(row.querySelectorAll(".site-domain-badge"))
+                    .map((el) => el.textContent.trim().toLowerCase());
+                const matches = !q || name.includes(q) || domains.some((d) => d.includes(q));
+                if (matches) {
+                    delete row.dataset.searchHidden;
+                    visibleCount++;
+                } else {
+                    row.dataset.searchHidden = "";
+                }
+            }
+
+            let emptyRow = tbody.querySelector(".sites-search-empty");
+            if (q && visibleCount === 0) {
+                if (!emptyRow) {
+                    emptyRow = document.createElement("tr");
+                    emptyRow.className = "sites-search-empty";
+                    const td = document.createElement("td");
+                    td.colSpan = 4;
+                    td.className = "text-center text-body-secondary py-4";
+                    td.textContent = "No sites match your search.";
+                    emptyRow.append(td);
+                    tbody.append(emptyRow);
+                }
+            } else {
+                emptyRow?.remove();
+            }
+
+            if (countEl instanceof HTMLElement) {
+                const total = rows.length;
+                countEl.textContent = q
+                    ? `${visibleCount} of ${total}`
+                    : `${total} configured`;
+            }
+        };
+
+        let debounceTimer = null;
+        input.addEventListener("input", () => {
+            clearTimeout(debounceTimer);
+            debounceTimer = window.setTimeout(applyFilter, 180);
+        });
+    };
+
     // On small screens the create/edit site form is relocated into a Bootstrap
-    // modal that is opened via the "Add site" button (or automatically when an
-    // existing site is being edited). On larger screens it stays inline.
+    // modal that is opened automatically when an existing site is being edited.
+    // On larger screens it stays inline.
     App.initializeSiteFormModal = () => {
         const section = document.querySelector(".app-page--sites");
         const modalElement = document.getElementById("site-form-modal");
@@ -722,11 +982,6 @@
             || !(modalBody instanceof HTMLElement)) {
             return;
         }
-        if (section.dataset.siteFormModalInitialized === "true") {
-            return;
-        }
-        section.dataset.siteFormModalInitialized = "true";
-        section.classList.add("sites-modal-enabled");
 
         const mobileQuery = window.matchMedia("(max-width: 767.98px)");
         const getModal = () => (window.bootstrap?.Modal
@@ -746,10 +1001,17 @@
             }
         };
 
-        placeForViewport();
-        mobileQuery.addEventListener("change", placeForViewport);
+        if (typeof section.siteFormModalCleanup === "function") {
+            section.siteFormModalCleanup();
+        }
+        if (!App.markInitialized(section, "siteFormModalInitialized")) {
+            return;
+        }
 
-        document.addEventListener("click", (event) => {
+        section.classList.add("sites-modal-enabled");
+
+        placeForViewport();
+        const handleOpenClick = (event) => {
             if (!(event.target instanceof Element)) {
                 return;
             }
@@ -759,7 +1021,23 @@
             }
             event.preventDefault();
             getModal()?.show();
-        });
+        };
+
+        const cleanupSiteFormModal = () => {
+            mobileQuery.removeEventListener("change", placeForViewport);
+            document.removeEventListener("click", handleOpenClick);
+            window.removeEventListener("beforeunload", cleanupSiteFormModal);
+            delete section.dataset.siteFormModalInitialized;
+            if (section.siteFormModalCleanup === cleanupSiteFormModal) {
+                section.siteFormModalCleanup = null;
+            }
+        };
+
+        section.siteFormModalCleanup = cleanupSiteFormModal;
+        mobileQuery.addEventListener("change", placeForViewport);
+
+        document.addEventListener("click", handleOpenClick);
+        window.addEventListener("beforeunload", cleanupSiteFormModal, { once: true });
 
         // Editing an existing site reloads the page with the form pre-filled;
         // surface it straight away on mobile so the edit isn't hidden.
@@ -842,10 +1120,12 @@
                     : serializeSiteConfigFormState(form));
                 const submittedState = serializeFormState();
                 const headers = new Headers({ "X-Requested-With": "fetch" });
-                const csrfToken = App.readCsrfToken(form);
-                if (csrfToken) {
-                    headers.set("X-CSRF-Token", csrfToken);
+                const csrfToken = typeof App.readCsrfToken === "function" ? App.readCsrfToken(form) : "";
+                if (!csrfToken) {
+                    App.pushInlineFlash("danger", "Security token is missing. Reload the page and try again.");
+                    return;
                 }
+                headers.set("X-CSRF-Token", csrfToken);
 
                 form.dataset.validationState = "validating";
                 updateSiteConfigFormActions(form);
@@ -862,12 +1142,12 @@
                 }
 
                 try {
-                    const response = await fetch(requestUrl, {
+                    const response = await fetchWithTimeout(requestUrl, {
                         method: "POST",
                         body: new FormData(form),
                         credentials: "same-origin",
                         headers,
-                    });
+                    }, 10000);
                     const contentType = response.headers.get("content-type") || "";
                     let payload = {};
 
@@ -918,9 +1198,14 @@
                             : "Unknown validation error.";
                         App.pushInlineFlash("danger", `${errorPrefix}: ${message}`);
                     }
-                } catch {
+                } catch (error) {
                     form.dataset.validationState = "invalid";
-                    App.pushInlineFlash("danger", "Validation request failed. Please try again.");
+                    App.pushInlineFlash(
+                        "danger",
+                        isAbortError(error)
+                            ? "Validation request timed out. Please try again."
+                            : "Validation request failed. Please try again."
+                    );
                 } finally {
                     button.disabled = false;
                     button.setAttribute("aria-disabled", "false");

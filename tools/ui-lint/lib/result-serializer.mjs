@@ -7,10 +7,45 @@ function countItems(value) {
     return Array.isArray(value) ? value.length : 0;
 }
 
+function collectDetails(value) {
+    return Array.isArray(value) ? value : [];
+}
+
+const URL_IN_TEXT_RE = /https?:\/\/[^\s"'<>]+/g;
+const SENSITIVE_TEXT_RE = /\b(token|secret|password|passwd|csrf|session|authorization)\b\s*[:=]\s*["']?[^"'\s]+/gi;
+const MAX_SUMMARY_TEXT_LENGTH = 1000;
+
+function redactSummaryText(value) {
+    return String(value ?? '')
+        .replace(URL_IN_TEXT_RE, '[redacted-url]')
+        .replace(SENSITIVE_TEXT_RE, '$1=[redacted]')
+        .slice(0, MAX_SUMMARY_TEXT_LENGTH);
+}
+
+function sanitizeDetailValue(value) {
+    if (typeof value === 'string') {
+        return redactSummaryText(value);
+    }
+    if (Array.isArray(value)) {
+        return value.map((entry) => sanitizeDetailValue(entry));
+    }
+    if (value && typeof value === 'object') {
+        return Object.fromEntries(
+            Object.entries(value).map(([key, entryValue]) => [key, sanitizeDetailValue(entryValue)]),
+        );
+    }
+    return value;
+}
+
+function sanitizeDetails(value) {
+    return collectDetails(value).map((entry) => sanitizeDetailValue(entry));
+}
+
 export function serializeResultForOutput(result, { summaryPath, visualRegressionEnabled }) {
     const metrics = result.metrics ?? {};
     const spacing = metrics.spacing ?? {};
     const horizontalOverflow = metrics.horizontalOverflow ?? {};
+    const network = result.network ?? {};
     const layoutShiftValue = Number(metrics.layoutShift?.value ?? 0);
 
     return {
@@ -33,6 +68,7 @@ export function serializeResultForOutput(result, { summaryPath, visualRegression
         buttonAlignmentIssues: countItems(metrics.buttonAlignmentIssues),
         badgeAlignmentIssues: countItems(metrics.badgeAlignmentIssues),
         clickTargetsTooSmall: countItems(metrics.clickTargetsTooSmall),
+        clickTargetDetails: sanitizeDetails(metrics.clickTargetsTooSmall),
         iconButtonsTouchBlocked: countItems(metrics.iconButtonsTouchBlocked),
         hiddenInteractive: countItems(metrics.hiddenInteractiveElements),
         bootstrapGridIssues: countItems(metrics.bootstrapGridIssues),
@@ -47,6 +83,33 @@ export function serializeResultForOutput(result, { summaryPath, visualRegression
         footerViewportGapPass: metrics.footerViewportGap?.present ? (metrics.footerViewportGap.passesMinimum ? 1 : 0) : null,
         sidebarFooterViewportGap: metrics.sidebarFooterViewportGap?.gapPx ?? null,
         sidebarFooterViewportGapPass: metrics.sidebarFooterViewportGap?.present ? (metrics.sidebarFooterViewportGap.passesMinimum ? 1 : 0) : null,
+        sitesTableRowCount: metrics.sitesTableDensity?.rowCount ?? null,
+        sitesTableMedianRowHeight: metrics.sitesTableDensity?.medianRowHeightPx ?? null,
+        sitesTableMaxRowHeight: metrics.sitesTableDensity?.maxRowHeightPx ?? null,
+        sitesTableRowsTooTall: countItems(metrics.sitesTableDensity?.oversizedRows),
+        ssllabsInlineSchedulerTooNarrow: countItems(metrics.ssllabsInlineSchedulerLayout?.tooNarrow),
+        ssllabsInlineSchedulerTooWide: countItems(metrics.ssllabsInlineSchedulerLayout?.tooWide),
+        ssllabsInlineSchedulerAlignmentVariance: metrics.ssllabsInlineSchedulerLayout?.alignmentVariance ?? null,
+        ssllabsRetentionLayoutWidthDelta: metrics.ssllabsRetentionLayout?.widthDelta ?? null,
+        ssllabsRetentionLayoutEdgeDelta: metrics.ssllabsRetentionLayout?.edgeDelta ?? null,
+        ssllabsRetentionLayoutSpacingVariance: metrics.ssllabsRetentionLayout?.spacingVariance ?? null,
+        ssllabsRetentionLayoutPass: metrics.ssllabsRetentionLayout?.present
+            ? (metrics.ssllabsRetentionLayout.passesAlignment ? 1 : 0)
+            : null,
+        dashboardHeroMetricInsetVariance: metrics.dashboardHeroMetricInsets?.variance ?? null,
+        dashboardHeroMetricInsetLeft: metrics.dashboardHeroMetricInsets?.leftInset ?? null,
+        dashboardHeroMetricInsetRight: metrics.dashboardHeroMetricInsets?.rightInset ?? null,
+        onboardingWizardStepActiveButtons: metrics.onboardingWizardStepDimming?.activeButtons ?? null,
+        onboardingWizardStepInactiveButtons: metrics.onboardingWizardStepDimming?.inactiveButtons ?? null,
+        onboardingWizardStepActiveOpacity: metrics.onboardingWizardStepDimming?.activeOpacity ?? null,
+        onboardingWizardStepInactiveOpacityMin: metrics.onboardingWizardStepDimming?.inactiveOpacityMin ?? null,
+        onboardingWizardStepInactiveOpacityMax: metrics.onboardingWizardStepDimming?.inactiveOpacityMax ?? null,
+        onboardingWizardStepDimmingPass: metrics.onboardingWizardStepDimming?.present
+            ? (metrics.onboardingWizardStepDimming.passesDimming ? 1 : 0)
+            : null,
+        onboardingWizardStepAccentPass: metrics.onboardingWizardStepAccent?.present
+            ? (metrics.onboardingWizardStepAccent.passesAccent ? 1 : 0)
+            : null,
         primaryPanelPaddingMismatch: countItems(metrics.primaryPanelPadding?.mismatches),
         pageStructureMissingRowWrapper: countItems(metrics.pageStructureConsistent?.issues),
         ghostScrollContainers: countItems(metrics.ghostScrollContainers),
@@ -69,11 +132,19 @@ export function serializeResultForOutput(result, { summaryPath, visualRegression
         mobileCardEdgeAlignmentIssues: spacing.mobileCardEdgeAlignment
             ? [!spacing.mobileCardEdgeAlignment.matchesLeft, !spacing.mobileCardEdgeAlignment.matchesRight].filter(Boolean).length
             : 0,
-        duplicateRequests: countItems(result.network.duplicateRequests),
+        mobileTopbarClearance: metrics.mobileTopbarClearance?.present ? 1 : 0,
+        mobileTopbarClearancePx: metrics.mobileTopbarClearance?.clearancePx ?? null,
+        mobileTopbarClearancePass: metrics.mobileTopbarClearance?.present
+            ? (metrics.mobileTopbarClearance.passesClearance ? 1 : 0)
+            : null,
+        duplicateRequests: countItems(network.duplicateRequests),
+        badResponseDetails: sanitizeDetails(network.badResponses),
+        failedRequestDetails: sanitizeDetails(network.requestFailures),
         kpiCards: countItems(spacing.kpiCards),
         kpiMissingClass: countItems(spacing.cardsMissingKpiClass),
         cardBorderRadiusMismatch: countItems(spacing.cardBorderRadiusIssues),
         kpiHeightVariance: spacing.kpiHeightVariance || 0,
+        dashboardHeroMetricTooTall: countItems(metrics.dashboardHeroMetricHeights?.tooTall),
         loginErrorVisible: Boolean(metrics.loginFailure?.alertVisible),
         loginShakeActive: Boolean(metrics.loginFailure?.cardAnimationActive),
         loginPasswordInvalid: Boolean(metrics.loginFailure?.passwordInvalidClass),
@@ -81,7 +152,7 @@ export function serializeResultForOutput(result, { summaryPath, visualRegression
         loginRateLimit429: metrics.loginRateLimit?.reached429 ?? null,
         loginRateLimitStatus: metrics.loginRateLimit?.status ?? null,
         missingSecurityHeaders: countItems(result.securityHeaders?.missing),
-        errorMessage: result.error?.message ?? null,
+        errorMessage: result.error?.message ? redactSummaryText(result.error.message) : null,
         errorPhase: result.error?.phase ?? null,
         errorDevice: result.error?.device ?? null,
         summaryPath,

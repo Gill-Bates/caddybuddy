@@ -52,12 +52,8 @@
                         before continuing.
                     </div>
                     {% endif %}
-                    <form action="{{ request.app.url_path_for('run_onboarding') }}" method="post"
-                        data-loading-submit-form>
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                        <button type="submit" class="btn btn-primary" data-loading-submit-button
-                            data-loading-label="Initializing..." {% if not admin_api_reachable %}disabled
-                            aria-disabled="true" aria-describedby="admin-api-warning" {% endif %}>
+                    <a href="{{ optional_url_path_for(request, 'onboarding_page') or '/onboarding' }}" class="btn btn-primary"
+                        {% if not admin_api_reachable %}aria-describedby="admin-api-warning"{% endif %}>
                             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor"
                                 class="bi bi-check2-circle me-1" viewBox="0 0 16 16" aria-hidden="true">
                                 <path
@@ -65,9 +61,8 @@
                                 <path
                                     d="M15.354 3.354a.5.5 0 0 0-.708-.708L8 9.293 5.354 6.646a.5.5 0 1 0-.708.708l3 3a.5.5 0 0 0 .708 0z" />
                             </svg>
-                            Initialize CaddyBuddy
-                        </button>
-                    </form>
+                            Open onboarding wizard
+                    </a>
                 </div>
             </div>
             {% endif %}
@@ -77,7 +72,7 @@
                     <h2 class="h5 mb-0">Global Caddyfile</h2>
                 </div>
                 <form action="{{ request.app.url_path_for('save_caddyfile') }}" method="post"
-                    class="d-grid gap-3 caddyfile-editor-panel__form" id="caddyfile-form" data-loading-submit-form
+                    class="caddyfile-editor-panel__form" id="caddyfile-form" data-loading-submit-form
                     data-caddyfile-config-form {% if onboarding_required %} data-caddyfile-locked="true" {% endif %}>
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
@@ -92,9 +87,7 @@
 :80 {
     respond &quot;ok&quot; 200
 }" {% if onboarding_required %}disabled aria-disabled="true" {% endif %}>{{ caddyfile }}</textarea>
-                        <div class="form-text">Global directives and shared blocks. Saving validates the full
-                            configuration and
-                            pushes it directly to Caddy.</div>
+                        <div class="form-text">Press Escape, then Tab to leave the editor.</div>
                         {% if onboarding_required %}
                         <div class="form-text text-body-secondary">This editor is locked until the onboarding wizard
                             initializes
@@ -102,7 +95,7 @@
                         {% endif %}
                     </div>
 
-                    <div class="d-grid d-sm-flex gap-2">
+                    <div class="d-grid d-sm-flex gap-2 caddyfile-editor-panel__actions">
                         <button type="button" class="btn btn-outline-secondary" id="caddyfile-validate-btn"
                             data-validate-form-button
                             data-validate-url="{{ request.app.url_path_for('validate_caddyfile_only') }}"

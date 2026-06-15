@@ -102,6 +102,29 @@ class ApiRouterTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json(), {"detail": "Caddy Admin API unavailable."})
 
+    def test_ready_endpoint_returns_503_when_onboarding_is_required(self) -> None:
+        app = _build_app(SimpleNamespace())
+
+        with (
+            TestClient(app) as client,
+            patch.object(
+                system_api,
+                "get_caddy_runtime_status",
+                new=AsyncMock(
+                    return_value=SimpleNamespace(
+                        error=None,
+                        onboarding_required=True,
+                        admin_api_reachable=True,
+                    )
+                ),
+            ),
+            patch.object(system_api, "get_build_info", return_value={"version": "1.2.3", "commit": "abc"}),
+        ):
+            response = client.get("/api/v1/ready")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json(), {"detail": "Caddy onboarding is required."})
+
     def test_ready_endpoint_returns_ok_when_runtime_is_ready(self) -> None:
         app = _build_app(SimpleNamespace())
 
@@ -167,6 +190,46 @@ class ApiRouterTests(unittest.TestCase):
                 "caddy_version": "v2.10.0",
             },
         )
+
+    def test_ssllabs_history_endpoint_returns_series_for_authenticated_user(self) -> None:
+        app = _build_app(SimpleNamespace())
+        history = SimpleNamespace(
+            range_key="90d",
+            days=90,
+            series=[
+                SimpleNamespace(
+                    host="example.com",
+                    points=[SimpleNamespace(date="2026-06-10", grade="A+", rank=7)],
+                )
+            ],
+        )
+
+        with (
+            TestClient(app) as client,
+            patch.object(system_api, "get_session_user", new=AsyncMock(return_value=SimpleNamespace(id=1))),
+            patch.object(system_api, "build_rank_history", new=AsyncMock(return_value=history)) as builder,
+        ):
+            response = client.get("/api/v1/dashboard/ssllabs-history?range_key=90d")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["range_key"], "90d")
+        self.assertEqual(payload["days"], 90)
+        self.assertEqual(payload["grade_scale"]["A+"], 7)
+        self.assertEqual(payload["series"][0]["host"], "example.com")
+        self.assertEqual(payload["series"][0]["points"][0]["grade"], "A+")
+        builder.assert_awaited_once()
+
+    def test_ssllabs_history_endpoint_requires_authenticated_user(self) -> None:
+        app = _build_app(SimpleNamespace())
+
+        with (
+            TestClient(app) as client,
+            patch.object(system_api, "get_session_user", new=AsyncMock(return_value=None)),
+        ):
+            response = client.get("/api/v1/dashboard/ssllabs-history")
+
+        self.assertEqual(response.status_code, 401)
 
     def test_ssllabs_registration_status_uses_database_email(self) -> None:
         app = _build_app(SimpleNamespace())
@@ -248,9 +311,10 @@ class EventStreamTests(unittest.IsolatedAsyncioTestCase):
                 self.closed = True
 
         events = _ClosableIterator()
-        stream = system_api._event_stream(events)
-
-        first_chunk = await anext(stream)
+        with patch.object(system_api, "_SSE_HEARTBEAT_SECONDS", 0.01):
+            stream = system_api._event_stream(events)
+            async with asyncio.timeout(1):
+                first_chunk = await anext(stream)
         self.assertEqual(first_chunk, ": keep-alive\n\n")
 
         await stream.aclose()

@@ -13,21 +13,25 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.utils.caddyfile import normalize_caddy_directives
-from app.utils.domains import normalize_domain_list
+from app.utils.domains import split_domain_names
 
 
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]", re.ASCII)
 _MAX_SITE_DIRECTIVES_BYTES = 256 * 1024
+_MAX_SITE_DOMAIN_COUNT = 25
 
 
 def _normalize_domain(value: str) -> str:
-    return normalize_domain_list(
+    normalized_domains = split_domain_names(
         value,
         required_message="domain is required",
         length_message="domain must not exceed 253 characters",
         invalid_message="domain must be a valid DNS name",
         ip_message="domain must not be an IP address",
     )
+    if len(normalized_domains) > _MAX_SITE_DOMAIN_COUNT:
+        raise ValueError(f"site may not contain more than {_MAX_SITE_DOMAIN_COUNT} domains")
+    return ", ".join(normalized_domains)
 
 
 def _normalize_site_name(value: str) -> str:
@@ -95,7 +99,7 @@ class SiteResponse(BaseModel):
 class SiteCreateRequest(BaseModel):
     site_name: str = Field(min_length=1, max_length=255)
     domain: str = Field(min_length=1, max_length=4096)
-    caddy_directives: str = Field(min_length=1, max_length=524288)
+    caddy_directives: str = Field(min_length=1, max_length=_MAX_SITE_DIRECTIVES_BYTES)
     enabled: bool = True
 
     @field_validator("site_name")
@@ -121,7 +125,7 @@ class SiteCreateRequest(BaseModel):
 class SiteUpdateRequest(BaseModel):
     site_name: str | None = Field(default=None, min_length=1, max_length=255)
     domain: str | None = Field(default=None, min_length=1, max_length=4096)
-    caddy_directives: str | None = Field(default=None, min_length=1, max_length=524288)
+    caddy_directives: str | None = Field(default=None, min_length=1, max_length=_MAX_SITE_DIRECTIVES_BYTES)
     enabled: bool | None = None
 
     @field_validator("site_name")

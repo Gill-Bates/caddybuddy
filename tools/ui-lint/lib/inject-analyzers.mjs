@@ -14,12 +14,14 @@ const BUNDLE_PATH = path.resolve(
 
 let bundleSourcePromise = null;
 const PAGE_INJECTION = new WeakMap();
-const INSTALLED_PAGES = new WeakSet();
 
 
 function loadBundleSource() {
     if (bundleSourcePromise === null) {
-        bundleSourcePromise = readFile(BUNDLE_PATH, 'utf8');
+        bundleSourcePromise = readFile(BUNDLE_PATH, 'utf8').catch((error) => {
+            bundleSourcePromise = null;
+            throw error;
+        });
     }
     return bundleSourcePromise;
 }
@@ -41,18 +43,14 @@ export async function installAnalyzers(context) {
  * Ensure the UI-lint analyzer bundle is available on the given page.
  */
 export async function injectAnalyzers(page) {
-    if (INSTALLED_PAGES.has(page)) {
-        return;
-    }
-
     if (PAGE_INJECTION.has(page)) {
         return PAGE_INJECTION.get(page);
     }
 
     const injectionPromise = (async () => {
-        const alreadyInjected = await page.evaluate(() => Boolean(window.__uiLintInstalled && window.__uiLint?.runAll));
+        const alreadyInjected = await page.evaluate(() => Boolean(window.__uiLintInstalled && window.__uiLint?.runAll))
+            .catch(() => false);
         if (alreadyInjected) {
-            INSTALLED_PAGES.add(page);
             return;
         }
 
@@ -62,7 +60,6 @@ export async function injectAnalyzers(page) {
                 ${await loadBundleSource()}
             `,
         });
-        INSTALLED_PAGES.add(page);
     })();
 
     PAGE_INJECTION.set(page, injectionPromise);

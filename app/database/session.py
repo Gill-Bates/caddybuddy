@@ -7,10 +7,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
 import threading
+from datetime import UTC, datetime
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -24,6 +26,8 @@ import fcntl
 from app.config.settings import Settings, get_settings
 from app.models import entities as _entities  # noqa: F401
 from app.models.base import Base
+from app.models.entities import _APP_SETTING_KEYS
+from app.schemas.ssllabs import SSLLABS_SCHEDULE_FREQUENCIES
 
 
 logger = logging.getLogger(__name__)
@@ -191,6 +195,21 @@ def _sqlite_backup_table_name(base_name: str) -> str:
     return f"{base_name}_backup_{os.getpid()}_{threading.get_ident()}"
 
 
+def _app_settings_allows_current_keys(table_sql: str) -> bool:
+    """Return True when the current app_settings DDL already allows every known key.
+
+    New keys are appended to the ``key`` CHECK constraint over time. When an existing
+    database predates a key, its DDL omits the literal and the table must be rebuilt so
+    inserts of that key are not rejected.
+    """
+    normalized_sql = re.sub(r"\s+", " ", table_sql.lower()).strip()
+    for key in _APP_SETTING_KEYS:
+        lowered = key.lower()
+        if f"'{lowered}'" not in normalized_sql and f'"{lowered}"' not in normalized_sql:
+            return False
+    return True
+
+
 def _execute_sqlite_repair(sync_connection, statement: str, *, log_message: str) -> bool:
     """Run a data repair statement and report whether it changed any rows."""
     result = sync_connection.exec_driver_sql(statement)
@@ -217,6 +236,7 @@ def _apply_known_table_migrations(sync_connection, existing_tables: set[str]) ->
         "caddy_sync_events",
         "ssllabs_targets",
         "ssllabs_scans",
+        "ssllabs_rank_history",
     ):
         if table_name in existing_tables:
             continue
@@ -247,9 +267,10 @@ def _apply_known_schema_migrations(
         )
         table_sql_row = result.first()
         table_sql = table_sql_row[0] if table_sql_row is not None else ""
-        if isinstance(table_sql, str) and "'ssllabs_email'" not in table_sql:
+        if isinstance(table_sql, str) and not _app_settings_allows_current_keys(table_sql):
             logger.info("Applying known SQLite schema migration: app_settings allowed keys")
             backup_table_name = _sqlite_backup_table_name("app_settings")
+            sync_connection.exec_driver_sql(f'DROP TABLE IF EXISTS "{backup_table_name}"')
             sync_connection.exec_driver_sql(
                 f'CREATE TABLE "{backup_table_name}" AS '
                 'SELECT id, "key", value, created_at, updated_at FROM app_settings'
@@ -315,6 +336,50 @@ def _apply_known_schema_migrations(
             log_message="Disabling sites that require upstream_url review",
         ) or migrated
 
+    if existing_columns.get("ssllabs_targets") is not None:
+        # The scheduler is On/Off (weekly only); unsupported persisted frequencies are disabled.
+        migrated = _execute_sqlite_repair(
+            sync_connection,
+            "UPDATE ssllabs_targets SET schedule_frequency = NULL "
+            f"WHERE schedule_frequency IS NOT NULL AND schedule_frequency != '{SSLLABS_SCHEDULE_FREQUENCIES[0]}'",
+            log_message="Disabling unsupported SSL Labs schedule frequencies",
+        ) or migrated
+
+    existing_installation_tables = (
+        "app_settings",
+        "caddyfile_snapshots",
+        "caddy_config_versions",
+        "caddy_sync_events",
+        "caddy_sites",
+        "ssllabs_targets",
+        "ssllabs_scans",
+        "ssllabs_rank_history",
+    )
+    existing_data_checks = [
+        f"EXISTS (SELECT 1 FROM {table_name})"
+        for table_name in existing_installation_tables
+        if existing_columns.get(table_name) is not None
+    ]
+    if existing_columns.get("caddybuddy_state") is not None and existing_data_checks:
+        # Existing installations that predate the onboarding wizard should be
+        # marked as completed so they are not routed into the wizard on upgrade.
+        now_iso = datetime.now(UTC).isoformat()
+        state_json = json.dumps(
+            {"status": "completed", "completed_at": now_iso},
+            separators=(",", ":"),
+        )
+        result = sync_connection.exec_driver_sql(
+            "INSERT INTO caddybuddy_state (key, value, updated_at) "
+            "SELECT 'caddy_onboarding_wizard', ?, ? "
+            "WHERE NOT EXISTS "
+            "  (SELECT 1 FROM caddybuddy_state WHERE key = 'caddy_onboarding_wizard') "
+            f"AND ({' OR '.join(existing_data_checks)})",
+            (state_json, now_iso),
+        )
+        if result.rowcount > 0:
+            logger.info("Auto-completed onboarding wizard state for existing installation.")
+            migrated = True
+
     return migrated
 
 
@@ -379,12 +444,15 @@ def _release_sqlite_init_lock(lock_file) -> None:
     fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
-async def _execute_database_init() -> None:
+async def _execute_database_init(database_path: Path | None = None) -> None:
     """Perform schema bootstrap or schema validation for the current database."""
     async with get_engine().begin() as connection:
         existing_tables = await connection.run_sync(_read_existing_table_names)
         if not existing_tables:
-            logger.info("Initializing new database schema")
+            if database_path is not None:
+                logger.info("Initializing new database: %s", database_path)
+            else:
+                logger.info("Initializing new in-memory database schema")
             await connection.run_sync(Base.metadata.create_all)
             return
 
@@ -399,8 +467,8 @@ async def _execute_database_init() -> None:
             raise RuntimeError(
                 "Existing database schema is missing tables: "
                 f"{', '.join(missing_tables)}. "
-                "Startup will not mutate an existing schema automatically. "
-                "Reinitialize the database or add migrations before starting the app."
+                "Startup will not apply unknown schema changes automatically. "
+                "Reinitialize the database or add an explicit migration before starting the app."
             )
 
         existing_columns = await connection.run_sync(_read_existing_table_columns)
@@ -419,8 +487,8 @@ async def _execute_database_init() -> None:
             raise RuntimeError(
                 "Existing database schema is missing columns: "
                 f"{', '.join(missing_columns)}. "
-                "Startup will not mutate an existing schema automatically. "
-                "Reinitialize the database or add migrations before starting the app."
+                "Startup will not apply unknown schema changes automatically. "
+                "Reinitialize the database or add an explicit migration before starting the app."
             )
 
         existing_unique_constraints = await connection.run_sync(_read_existing_unique_constraints)
@@ -446,8 +514,8 @@ async def _execute_database_init() -> None:
             raise RuntimeError(
                 "Existing database schema is missing unique constraints: "
                 f"{', '.join(missing_unique_constraints)}. "
-                "Startup will not mutate an existing schema automatically. "
-                "Reinitialize the database or add migrations before starting the app."
+                "Startup will not apply unknown schema changes automatically. "
+                "Reinitialize the database or add an explicit migration before starting the app."
             )
 
         existing_indexes = await connection.run_sync(_read_existing_index_names)
@@ -475,7 +543,11 @@ async def _execute_database_init() -> None:
 async def _ensure_sqlite_wal_mode() -> None:
     """Apply WAL journal mode once at init time rather than per-connection."""
     async with get_engine().connect() as connection:
-        await connection.exec_driver_sql("PRAGMA journal_mode=WAL")
+        result = await connection.exec_driver_sql("PRAGMA journal_mode=WAL")
+        journal_mode = str(result.scalar_one_or_none() or "").lower()
+
+    if journal_mode != "wal":
+        raise RuntimeError(f"SQLite WAL mode could not be enabled; journal_mode={journal_mode!r}")
 
 
 async def init_database() -> None:
@@ -488,7 +560,7 @@ async def init_database() -> None:
     database_path = _resolve_sqlite_database_path(settings)
 
     if database_path is None:
-        await _execute_database_init()
+        await _execute_database_init(database_path=None)
         return
 
     _ensure_sqlite_database_directory(database_path)
@@ -498,7 +570,7 @@ async def init_database() -> None:
         await asyncio.to_thread(_acquire_sqlite_init_lock, lock_file)
         try:
             await _ensure_sqlite_wal_mode()
-            await _execute_database_init()
+            await _execute_database_init(database_path=database_path)
         finally:
             await asyncio.to_thread(_release_sqlite_init_lock, lock_file)
             logger.debug("Released SQLite init lock: %s", lock_path)

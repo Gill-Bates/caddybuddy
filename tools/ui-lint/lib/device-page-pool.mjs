@@ -24,7 +24,7 @@ export function createDevicePagePool({
 
     async function createResource(device) {
         const baseOptions = { ...(deviceContextOptions.get(device) || deviceContextOptions.get('desktop') || {}) };
-        
+
         if (browser.browserType().name() === 'firefox') {
             delete baseOptions.isMobile;
         }
@@ -33,13 +33,18 @@ export function createDevicePagePool({
             ...baseOptions,
             storageState,
         }));
-        await installUiLintInitScript(context);
-        await installAnalyzers(context);
-        await installLayoutShiftObserver(context);
+        try {
+            await installUiLintInitScript(context);
+            await installAnalyzers(context);
+            await installLayoutShiftObserver(context);
 
-        const page = await context.newPage();
-        await page.emulateMedia({ reducedMotion: 'reduce' });
-        return { context, page };
+            const page = await context.newPage();
+            await page.emulateMedia({ reducedMotion: 'reduce' });
+            return { context, page };
+        } catch (error) {
+            await context.close().catch(() => {});
+            throw error;
+        }
     }
 
     return {

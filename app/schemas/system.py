@@ -36,3 +36,22 @@ class DashboardMetricsResponse(BaseModel):
     caddy_service_status: str
     caddy_service_uptime: str
     caddy_version: str
+
+
+class SslLabsRankPointResponse(BaseModel):
+    date: str
+    grade: str
+    rank: int
+
+
+class SslLabsRankSeriesResponse(BaseModel):
+    host: str
+    points: list[SslLabsRankPointResponse]
+
+
+class SslLabsRankHistoryResponse(BaseModel):
+    """Per-host daily SSL Labs rank timeseries for the dashboard chart."""
+    range_key: str
+    days: int
+    grade_scale: dict[str, int]
+    series: list[SslLabsRankSeriesResponse]

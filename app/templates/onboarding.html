@@ -1,0 +1,487 @@
+{% extends 'base.html' %}
+
+{% set page_title = "Caddy Onboarding" %}
+{% set current_step = 4 if state.preflight_passed else 3 if state.mode else 2 if pending_location else 1 %}
+{% set max_step = current_step %}
+{% set preflight_field_status_labels = {
+    'idle': 'Not checked',
+    'checking': 'Checking...',
+    'passed': 'Ready',
+    'failed': 'Needs review',
+    'stale': 'Changed since check'
+} %}
+
+{% block content %}
+<section class="app-page app-page--onboarding">
+    <div class="app-page__header">
+        <div class="app-page__lede">
+            <p class="eyebrow mb-2">Welcome to Caddybuddy</p>
+            <h1 class="page-title mb-1">Set up Caddy management</h1>
+            <p class="app-page__subtitle mb-0">
+                CaddyBuddy verifies your Caddy runtime and then becomes the exclusive manager of
+                its configuration.
+            </p>
+        </div>
+    </div>
+
+    <div class="row app-grid">
+        <div class="col-12">
+            <section class="cb-onboarding-wizard" data-onboarding-wizard
+                data-current-step="{{ current_step }}" data-max-step="{{ max_step }}">
+                <div class="cb-onboarding-wizard__progress">
+                    <div class="cb-onboarding-wizard__steps" aria-label="Onboarding steps">
+                        <button type="button" class="cb-onboarding-wizard__step-button{% if current_step == 1 %} is-active{% else %} is-inactive{% endif %}"
+                            data-wizard-step-button data-step-target="1"{% if current_step == 1 %} aria-current="step"{% endif %}>
+                            <span class="cb-onboarding-wizard__step-index">1</span>
+                            <span class="cb-onboarding-wizard__step-copy">
+                                <span class="cb-onboarding-wizard__step-title">Caddy runtime</span>
+                                <span class="cb-onboarding-wizard__step-subtitle">Where Caddy runs</span>
+                            </span>
+                        </button>
+                        <button type="button" class="cb-onboarding-wizard__step-button{% if current_step == 2 %} is-active{% else %} is-inactive{% endif %}"
+                            data-wizard-step-button data-step-target="2"
+                            {% if current_step == 2 %}aria-current="step"{% endif %}
+                            {% if max_step < 2 %}disabled aria-disabled="true"{% endif %}>
+                            <span class="cb-onboarding-wizard__step-index">2</span>
+                            <span class="cb-onboarding-wizard__step-copy">
+                                <span class="cb-onboarding-wizard__step-title">Configuration</span>
+                                <span class="cb-onboarding-wizard__step-subtitle">Import or start fresh</span>
+                            </span>
+                        </button>
+                        <button type="button" class="cb-onboarding-wizard__step-button{% if current_step == 3 %} is-active{% else %} is-inactive{% endif %}"
+                            data-wizard-step-button data-step-target="3"
+                            {% if current_step == 3 %}aria-current="step"{% endif %}
+                            {% if max_step < 3 %}disabled aria-disabled="true"{% endif %}>
+                            <span class="cb-onboarding-wizard__step-index">3</span>
+                            <span class="cb-onboarding-wizard__step-copy">
+                                <span class="cb-onboarding-wizard__step-title">Access check</span>
+                                <span class="cb-onboarding-wizard__step-subtitle">Verify Admin API and files</span>
+                            </span>
+                        </button>
+                        <button type="button" class="cb-onboarding-wizard__step-button{% if current_step == 4 %} is-active{% else %} is-inactive{% endif %}"
+                            data-wizard-step-button data-step-target="4"
+                            {% if current_step == 4 %}aria-current="step"{% endif %}
+                            {% if max_step < 4 %}disabled aria-disabled="true"{% endif %}>
+                            <span class="cb-onboarding-wizard__step-index">4</span>
+                            <span class="cb-onboarding-wizard__step-copy">
+                                <span class="cb-onboarding-wizard__step-title">Summary</span>
+                                <span class="cb-onboarding-wizard__step-subtitle">Review and execute</span>
+                            </span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="cb-onboarding-wizard__viewport" data-wizard-viewport>
+                    <div class="cb-onboarding-wizard__track" data-wizard-track>
+                        <article class="panel-card cb-onboarding-step" data-wizard-step data-step="1"{% if current_step != 1 %} hidden inert{% endif %}>
+                            <div class="panel-card__header">
+                                <h2 class="h5 mb-0">Where does Caddy run?</h2>
+                            </div>
+                            <div class="panel-card__body">
+                                <form action="{{ request.app.url_path_for('onboarding_location_action') }}" method="post"
+                                    class="d-grid gap-3">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                    <div class="cb-onboarding-detected" data-onboarding-detected-runtime>
+                                        <span class="cb-onboarding-detected__label">CaddyBuddy environment</span>
+                                        <span class="cb-onboarding-detected__value">{{ default_runtime_location_label }}</span>
+                                        <span class="cb-onboarding-detected__hint form-text mb-0">
+                                            Choose where the Caddy server itself runs.
+                                        </span>
+                                    </div>
+                                    <fieldset class="cb-choice-group">
+                                        <legend class="form-label">Where does Caddy run?<span class="cb-required-marker" aria-hidden="true">*</span></legend>
+                                        <div class="cb-choice-cards">
+                                            {% for location in caddy_locations %}
+                                            <label class="cb-choice-card">
+                                                <input class="form-check-input cb-choice-card__input" type="radio"
+                                                    name="caddy_location" value="{{ location.value }}"
+                                                    {% if loop.first %}required{% endif %}
+                                                    {% if selected_location == location.value %}checked{% endif %}>
+                                                <span class="cb-choice-card__copy">
+                                                    <span class="cb-choice-card__title">{{ location.label }}</span>
+                                                    <span class="cb-choice-card__hint">{{ location.description }}</span>
+                                                </span>
+                                            </label>
+                                            {% endfor %}
+                                        </div>
+                                    </fieldset>
+                                    <div>
+                                        <button type="submit" class="btn btn-primary">Continue</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </article>
+
+                        <article class="panel-card cb-onboarding-step" data-wizard-step data-step="2"{% if current_step != 2 %} hidden inert{% endif %}>
+                            <div class="panel-card__header">
+                                <h2 class="h5 mb-0">What should CaddyBuddy start from?</h2>
+                            </div>
+                            <div class="panel-card__body">
+                                {% if pending_location == 'host' %}
+                                <form action="{{ request.app.url_path_for('onboarding_mode_action') }}" method="post" class="d-grid gap-3">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                    <input type="hidden" name="caddy_location" value="host">
+                                    <fieldset class="cb-choice-group">
+                                        <legend class="form-label">What should CaddyBuddy start from?<span class="cb-required-marker" aria-hidden="true">*</span></legend>
+                                        <div class="cb-choice-cards">
+                                            {% for source in caddy_sources %}
+                                            <label class="cb-choice-card">
+                                                <input class="form-check-input cb-choice-card__input" type="radio"
+                                                    name="caddy_source" value="{{ source.value }}"
+                                                    {% if loop.first %}required{% endif %}
+                                                    {% if selected_source == source.value %}checked{% endif %}>
+                                                <span class="cb-choice-card__copy">
+                                                    <span class="cb-choice-card__title">{{ source.label }}</span>
+                                                    <span class="cb-choice-card__hint">{{ source.description }}</span>
+                                                </span>
+                                            </label>
+                                            {% endfor %}
+                                        </div>
+                                    </fieldset>
+                                    <div>
+                                        <button type="submit" class="btn btn-primary">Continue to access check</button>
+                                    </div>
+                                </form>
+                                {% elif pending_location == 'docker' %}
+                                <form action="{{ request.app.url_path_for('onboarding_mode_action') }}" method="post" class="d-grid gap-3">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                    <input type="hidden" name="caddy_location" value="docker">
+                                    <p class="mb-0">CaddyBuddy will manage Caddy's configuration exclusively through the Admin API. A local Caddyfile is only needed if you want CaddyBuddy to remove an existing config file from the Docker host.</p>
+                                    <div>
+                                        <button type="submit" class="btn btn-primary">Continue to access check</button>
+                                    </div>
+                                </form>
+                                {% elif pending_location == 'missing' %}
+                                <form action="{{ request.app.url_path_for('onboarding_mode_action') }}" method="post" class="d-grid gap-3">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                    <input type="hidden" name="caddy_location" value="missing">
+                                    <p class="mb-0">CaddyBuddy will store your settings now. Onboarding completes automatically once a reachable Caddy 2.x Admin API is available at the configured address.</p>
+                                    <div>
+                                        <button type="submit" class="btn btn-primary">Continue to access check</button>
+                                    </div>
+                                </form>
+                                {% else %}
+                                <div class="cb-onboarding-step__locked">
+                                    <h3 class="h6">Step locked</h3>
+                                    <p class="mb-0">Choose where Caddy runs in the previous step to continue.</p>
+                                </div>
+                                {% endif %}
+                            </div>
+                        </article>
+
+                        <article class="panel-card cb-onboarding-step" data-wizard-step data-step="3"{% if current_step != 3 %} hidden inert{% endif %}>
+                            <div class="panel-card__header">
+                                <h2 class="h5 mb-0">Access check</h2>
+                            </div>
+                            <div class="panel-card__body">
+                                {% if state.mode %}
+                                <form action="{{ request.app.url_path_for('onboarding_preflight_action') }}" method="post"
+                                    class="d-grid gap-3" data-loading-submit-form data-onboarding-preflight-form>
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                    <div>
+                                        {% set admin_api_check_status = state.field_check_statuses.get(
+                                            'admin_api_url',
+                                            'failed' if state.field_errors.get('admin_api_url') else 'passed' if state.last_preflight_at else 'idle'
+                                        ) %}
+                                        <div class="cb-onboarding-field__header">
+                                            <label class="form-label mb-0" for="admin-api-url">Caddy Admin API URL<span class="cb-required-marker" aria-hidden="true">*</span></label>
+                                            <span class="cb-field-check" data-field-check data-field-check-name="admin_api_url"
+                                                data-field-check-status="{{ admin_api_check_status }}"
+                                                data-field-check-value="{{ state.field_check_values.get('admin_api_url', default_admin_api_url if state.last_preflight_at else '') }}"
+                                                aria-live="polite">
+                                                <span class="cb-field-check__badge" aria-hidden="true">
+                                                    <span class="spinner-border spinner-border-sm cb-field-check__spinner"></span>
+                                                    <svg class="cb-field-check__icon cb-field-check__icon--passed" viewBox="0 0 16 16" fill="none">
+                                                        <path d="M3.5 8.5 6.5 11.5 12.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                                                    </svg>
+                                                    <svg class="cb-field-check__icon cb-field-check__icon--failed" viewBox="0 0 16 16" fill="none">
+                                                        <path d="M8 4.25v4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                                                        <circle cx="8" cy="11.75" r="1" fill="currentColor" />
+                                                    </svg>
+                                                    <span class="cb-field-check__dot"></span>
+                                                </span>
+                                                <span class="cb-field-check__label">{{ preflight_field_status_labels.get(admin_api_check_status, 'Not checked') }}</span>
+                                            </span>
+                                        </div>
+                                        <input id="admin-api-url"
+                                            class="form-control{% if state.field_errors.get('admin_api_url') %} is-invalid{% endif %}"
+                                            name="admin_api_url" type="url"
+                                            value="{{ default_admin_api_url }}" required inputmode="url"
+                                            aria-describedby="admin-api-url-help" data-field-check-input="admin_api_url">
+                                        <div id="admin-api-url-help" class="form-text">
+                                            Use only loopback, private, or internal network addresses reachable from CaddyBuddy.
+                                        </div>
+                                        {% if state.field_errors.get('admin_api_url') %}
+                                        <div class="invalid-feedback d-block">
+                                            {{ state.field_errors.get('admin_api_url') | join(' ') }}
+                                        </div>
+                                        {% endif %}
+                                    </div>
+                                    <div>
+                                        {% set acme_email_check_status = state.field_check_statuses.get(
+                                            'acme_email',
+                                            'failed' if state.field_errors.get('acme_email') else 'passed' if state.last_preflight_at else 'idle'
+                                        ) %}
+                                        <div class="cb-onboarding-field__header">
+                                            <label class="form-label mb-0" for="acme-email">ACME/TLS email<span class="cb-required-marker" aria-hidden="true">*</span></label>
+                                            <span class="cb-field-check" data-field-check data-field-check-name="acme_email"
+                                                data-field-check-status="{{ acme_email_check_status }}"
+                                                data-field-check-value="{{ state.field_check_values.get('acme_email', default_acme_email if state.last_preflight_at else '') }}"
+                                                aria-live="polite">
+                                                <span class="cb-field-check__badge" aria-hidden="true">
+                                                    <span class="spinner-border spinner-border-sm cb-field-check__spinner"></span>
+                                                    <svg class="cb-field-check__icon cb-field-check__icon--passed" viewBox="0 0 16 16" fill="none">
+                                                        <path d="M3.5 8.5 6.5 11.5 12.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                                                    </svg>
+                                                    <svg class="cb-field-check__icon cb-field-check__icon--failed" viewBox="0 0 16 16" fill="none">
+                                                        <path d="M8 4.25v4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                                                        <circle cx="8" cy="11.75" r="1" fill="currentColor" />
+                                                    </svg>
+                                                    <span class="cb-field-check__dot"></span>
+                                                </span>
+                                                <span class="cb-field-check__label">{{ preflight_field_status_labels.get(acme_email_check_status, 'Not checked') }}</span>
+                                            </span>
+                                        </div>
+                                        <input id="acme-email"
+                                            class="form-control{% if state.field_errors.get('acme_email') %} is-invalid{% endif %}"
+                                            name="acme_email" type="email"
+                                            value="{{ default_acme_email }}" autocomplete="email" required
+                                            data-field-check-input="acme_email">
+                                        {% if state.field_errors.get('acme_email') %}
+                                        <div class="invalid-feedback d-block">
+                                            {{ state.field_errors.get('acme_email') | join(' ') }}
+                                        </div>
+                                        {% endif %}
+                                    </div>
+                                    <div>
+                                        {% set caddyfile_check_status = state.field_check_statuses.get(
+                                            'caddyfile_path',
+                                            'failed' if state.field_errors.get('caddyfile_path') else 'passed' if state.last_preflight_at else 'idle'
+                                        ) %}
+                                        <div class="cb-onboarding-field__header">
+                                            <label class="form-label mb-0" for="caddyfile-path">Caddyfile path<span class="cb-required-marker" aria-hidden="true">*</span></label>
+                                            <span class="cb-field-check" data-field-check data-field-check-name="caddyfile_path"
+                                                data-field-check-status="{{ caddyfile_check_status }}"
+                                                data-field-check-value="{{ state.field_check_values.get('caddyfile_path', default_caddyfile_path if state.last_preflight_at else '') }}"
+                                                aria-live="polite">
+                                                <span class="cb-field-check__badge" aria-hidden="true">
+                                                    <span class="spinner-border spinner-border-sm cb-field-check__spinner"></span>
+                                                    <svg class="cb-field-check__icon cb-field-check__icon--passed" viewBox="0 0 16 16" fill="none">
+                                                        <path d="M3.5 8.5 6.5 11.5 12.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                                                    </svg>
+                                                    <svg class="cb-field-check__icon cb-field-check__icon--failed" viewBox="0 0 16 16" fill="none">
+                                                        <path d="M8 4.25v4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                                                        <circle cx="8" cy="11.75" r="1" fill="currentColor" />
+                                                    </svg>
+                                                    <span class="cb-field-check__dot"></span>
+                                                </span>
+                                                <span class="cb-field-check__label">{{ preflight_field_status_labels.get(caddyfile_check_status, 'Not checked') }}</span>
+                                            </span>
+                                        </div>
+                                        <input id="caddyfile-path"
+                                            class="form-control{% if state.field_errors.get('caddyfile_path') %} is-invalid{% endif %}"
+                                            name="caddyfile_path" type="text"
+                                            value="{{ default_caddyfile_path }}" required
+                                            data-field-check-input="caddyfile_path">
+                                        <div class="form-text">
+                                            The wizard checks the selected runtime's common Linux locations first.
+                                            {% if caddyfile_candidates %}
+                                            Preferred candidates:
+                                            {% for candidate in caddyfile_candidates %}
+                                            <code>{{ candidate }}</code>{% if not loop.last %}, {% endif %}
+                                            {% endfor %}.
+                                            {% endif %}
+                                        </div>
+                                        {% if state.field_errors.get('caddyfile_path') %}
+                                        <div class="invalid-feedback d-block">
+                                            {{ state.field_errors.get('caddyfile_path') | join(' ') }}
+                                        </div>
+                                        {% endif %}
+                                    </div>
+                                    {% if state.mode == 'docker' %}
+                                    <div class="alert alert-info mb-0">
+                                        In Docker mode, use the Admin API address reachable from the CaddyBuddy container. File cleanup
+                                        is only possible when the Caddyfile is mounted into CaddyBuddy.
+                                    </div>
+                                    {% endif %}
+                                    {% if state.mode == 'missing' %}
+                                    <div class="alert alert-warning mb-0">
+                                        CaddyBuddy can prepare settings, but onboarding cannot complete until a reachable Caddy 2.x
+                                        Admin API is available.
+                                    </div>
+                                    {% endif %}
+                                    <div>
+                                        <button type="submit" class="btn btn-primary"
+                                            data-loading-submit-button data-loading-label="Running access check...">
+                                            <span data-loading-submit-label>Run access check</span>
+                                            <span class="spinner-border spinner-border-sm ms-2 d-none"
+                                                data-loading-submit-spinner aria-hidden="true"></span>
+                                        </button>
+                                    </div>
+                                </form>
+                                {% if state.admin_api_assist_available %}
+                                <div class="alert alert-warning cb-onboarding-assist mt-3" role="note">
+                                    <h3 class="h6">Admin API disabled?</h3>
+                                    <p class="mb-3">
+                                        CaddyBuddy can fix this automatically by adding an Admin API directive to the
+                                        Caddyfile, creating a backup, restarting Caddy, and running the access check
+                                        again. This causes a short Caddy restart.
+                                    </p>
+                                    <form action="{{ request.app.url_path_for('onboarding_enable_admin_api_action') }}"
+                                        method="post" class="d-grid gap-3">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="yes"
+                                                name="confirm_admin_api_enablement" id="confirm-admin-api-enablement"
+                                                required>
+                                            <label class="form-check-label" for="confirm-admin-api-enablement">
+                                                I understand CaddyBuddy will modify the Caddyfile and restart Caddy.
+                                            </label>
+                                        </div>
+                                        <div>
+                                            <button type="submit" class="btn btn-primary">Enable Admin API and re-check</button>
+                                        </div>
+                                    </form>
+                                </div>
+                                {% endif %}
+                                {% else %}
+                                <div class="cb-onboarding-step__locked">
+                                    <h3 class="h6">Step locked</h3>
+                                    <p class="mb-0">Choose how Caddy runs and confirm the configuration source to unlock the access check.</p>
+                                </div>
+                                {% endif %}
+                            </div>
+                        </article>
+
+                        <article class="panel-card cb-onboarding-step" data-wizard-step data-step="4"{% if current_step != 4 %} hidden inert{% endif %}>
+                            <div class="panel-card__header">
+                                <h2 class="h5 mb-0">Summary</h2>
+                            </div>
+                            <div class="panel-card__body">
+                                {% if state.last_preflight_at %}
+                                {% if state.preflight_errors %}
+                                <div class="alert alert-danger">
+                                    <h3 class="h6">Preflight issues</h3>
+                                    <ul class="mb-0">
+                                        {% for error in state.preflight_errors %}
+                                        <li>{{ error }}</li>
+                                        {% endfor %}
+                                    </ul>
+                                </div>
+                                {% endif %}
+                                {% if state.preflight_warnings %}
+                                <div class="alert alert-warning">
+                                    <h3 class="h6">Warnings</h3>
+                                    <ul class="mb-0">
+                                        {% for warning in state.preflight_warnings %}
+                                        <li>{{ warning }}</li>
+                                        {% endfor %}
+                                    </ul>
+                                </div>
+                                {% endif %}
+
+                                <dl class="row mb-4">
+                                    <dt class="col-sm-4">CaddyBuddy runtime</dt>
+                                    <dd class="col-sm-8">{{ state.runtime_location_label }}</dd>
+                                    <dt class="col-sm-4">Mode</dt>
+                                    <dd class="col-sm-8">{{ state.mode_label }}</dd>
+                                    <dt class="col-sm-4">Caddy version</dt>
+                                    <dd class="col-sm-8">{{ state.caddy_version or 'not detected' }}</dd>
+                                    <dt class="col-sm-4">Admin API</dt>
+                                    <dd class="col-sm-8"><code>{{ state.admin_api_url }}</code></dd>
+                                    <dt class="col-sm-4">Managed Caddyfile</dt>
+                                    <dd class="col-sm-8"><code>{{ state.caddyfile_path }}</code></dd>
+                                    <dt class="col-sm-4">Backup path</dt>
+                                    <dd class="col-sm-8">
+                                        {% if state.backup_path %}
+                                        <code>{{ state.backup_path }}</code>
+                                        {% elif state.mode in ['unconfigured', 'default_config'] and state.caddyfile_writable %}
+                                        Will be created during execution.
+                                        {% else %}
+                                        Not available.
+                                        {% endif %}
+                                    </dd>
+                                    <dt class="col-sm-4">File operations</dt>
+                                    <dd class="col-sm-8">
+                                        {% if state.mode == 'docker' and not state.caddyfile_writable %}
+                                        Admin API takeover only. Filesystem cleanup cannot be performed from this container until the
+                                        Caddyfile is mounted writable.
+                                        {% elif state.mode == 'existing_config' %}
+                                        Existing active config must be readable and writable so CaddyBuddy can back it up and prevent
+                                        duplicate active configuration before completion.
+                                        {% elif state.mode in ['unconfigured', 'default_config'] %}
+                                        Prepare the default <code>/opt/caddybuddy/Caddyfile</code>, back up any existing active
+                                        Caddyfile, then switch the managed path to the CaddyBuddy-controlled configuration.
+                                        {% elif state.mode == 'missing' %}
+                                        Store the future managed Caddyfile path now. CaddyBuddy will use this path once Caddy is
+                                        installed and reachable through the configured Admin API.
+                                        {% elif state.caddyfile_writable %}
+                                        CaddyBuddy will use the configured writable Caddyfile path as the managed configuration source
+                                        and deploy the generated configuration through the Caddy Admin API. Existing configuration
+                                        handling must complete successfully before onboarding is marked done.
+                                        {% else %}
+                                        CaddyBuddy cannot modify the configured Caddyfile path automatically. Review the warnings
+                                        before confirming exclusive management.
+                                        {% endif %}
+                                    </dd>
+                                    <dt class="col-sm-4">API operations</dt>
+                                    <dd class="col-sm-8">
+                                        {% if state.mode == 'missing' %}
+                                        No Admin API call is executed because Caddy is not installed yet. The configured URL is saved
+                                        for the future Caddy installation.
+                                        {% else %}
+                                        Validate and load generated config through the Caddy Admin API.
+                                        {% endif %}
+                                    </dd>
+                                    {% if state.api_only_takeover %}
+                                    <dt class="col-sm-4">Docker notice</dt>
+                                    <dd class="col-sm-8">
+                                        <span class="text-warning-emphasis">API-only takeover.</span>
+                                        CaddyBuddy cannot clean up container or host Caddyfiles because the
+                                        configured path is not writable from this container.
+                                    </dd>
+                                    {% endif %}
+                                </dl>
+
+                                <form action="{{ request.app.url_path_for('onboarding_execute_action') }}" method="post"
+                                    data-loading-submit-form>
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                    <div class="form-check mb-3">
+                                        <input class="form-check-input" type="checkbox" value="on"
+                                            name="exclusive_manager_confirmed" id="exclusive-manager-confirmed"
+                                            {% if not state.preflight_ok %}disabled{% endif %} required>
+                                        <label class="form-check-label" for="exclusive-manager-confirmed">
+                                            {% if state.mode == 'missing' %}
+                                            I confirm that CaddyBuddy will be the exclusive manager of the future active Caddy configuration.
+                                            {% else %}
+                                            I confirm that CaddyBuddy will be the exclusive manager of the active Caddy configuration.
+                                            {% endif %}
+                                            <span class="cb-required-marker" aria-hidden="true">*</span>
+                                        </label>
+                                    </div>
+                                    <button type="submit" class="btn btn-primary"
+                                        data-loading-submit-button data-loading-label="Executing..."
+                                        {% if not state.preflight_ok %}disabled aria-disabled="true"{% endif %}>
+                                        Execute onboarding
+                                    </button>
+                                </form>
+                                {% else %}
+                                <div class="cb-onboarding-step__locked">
+                                    <h3 class="h6">Step locked</h3>
+                                    <p class="mb-0">Run the access check before you review the takeover and execute onboarding.</p>
+                                </div>
+                                {% endif %}
+                            </div>
+                        </article>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script src="{{ request.app.url_path_for('static', path='js/onboarding-wizard.js') }}"></script>
+{% endblock %}

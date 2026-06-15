@@ -21,6 +21,7 @@ DEFAULTS: dict[str, str] = {
     "caddyfile_path": str(DEFAULT_CADDYFILE_PATH),
     "rate_limit_enabled": "true",
     "ssllabs_email": "",
+    "ssllabs_history_retention_days": "365",
 }
 
 

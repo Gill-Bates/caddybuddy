@@ -1,48 +1,48 @@
 {
-	admin 172.17.0.1:2019
-	email name@domain.com
+    # ACME/TLS email — filled in by CaddyBuddy during onboarding.
+    email {{ ACME_EMAIL }}
 
-	log {
-		level info
-		format json
-		output stdout
-	}
+    log {
+        level info
+        format json
+        output stdout
+    }
+
+    # Nur aktivieren, wenn Caddy hinter einem vertrauenswürdigen Proxy/CDN läuft.
+    #
+    servers {
+    #     trusted_proxies static private_ranges
+    #     trusted_proxies_strict
+    }
 }
 
 (security_headers) {
-	header {
-		Strict-Transport-Security "max-age=31536000"
-		X-Content-Type-Options "nosniff"
-		X-Frame-Options "DENY"
-		Referrer-Policy "strict-origin-when-cross-origin"
-		-Server
-		-X-Powered-By
-	}
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options "nosniff"
+        # X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+
+        -Server
+        -X-Powered-By
+    }
+}
+
+(security_headers_strict) {
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+
+        -Server
+        -X-Powered-By
+    }
 }
 
 (default_log) {
-	log {
-		output stdout
-		format json
-	}
-}
-
-caddy.domain.com {
-	import security_headers
-	import default_log
-
-	encode zstd gzip
-
-	request_body {
-		max_size 10MB
-	}
-
-	reverse_proxy 127.0.0.1:8000 {
-		transport http {
-			keepalive 30s
-		}
-
-		header_up Host {host}
-		header_up X-Forwarded-Proto {scheme}
-	}
+    log {
+        output stdout
+        format json
+    }
 }

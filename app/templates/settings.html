@@ -1,6 +1,7 @@
 {% extends 'base.html' %}
 
 {% set page_title = "Settings" %}
+{% set current_retention_index = ssllabs_retention_values.index(ssllabs_retention_days) if ssllabs_retention_days in ssllabs_retention_values else 0 %}
 
 {% block content %}
 <section class="app-page">
@@ -13,43 +14,65 @@
 
     <div class="row app-grid settings-layout">
         <div class="col-12 col-xl-6">
-            <div class="panel-card settings-panel settings-panel--primary" id="caddy-settings">
+            <div class="panel-card settings-panel" id="password-settings">
                 <div class="panel-card__header">
-                    <h2 class="h5 mb-0">Global Settings</h2>
+                    <h2 class="h5 mb-0">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor"
+                            class="bi bi-key me-2" viewBox="0 0 16 16" aria-hidden="true">
+                            <path
+                                d="M0 8a4 4 0 0 1 7.465-2H14a.5.5 0 0 1 .354.146l1.5 1.5a.5.5 0 0 1 0 .708l-1.5 1.5a.5.5 0 0 1-.708 0L13 9.207l-.646.647a.5.5 0 0 1-.708 0L11 9.207l-.646.647a.5.5 0 0 1-.708 0L9 9.207l-.646.647A.5.5 0 0 1 8 10h-.535A4 4 0 0 1 0 8m4-3a3 3 0 1 0 2.712 4.285A.5.5 0 0 1 7.163 9h.63l.853-.854a.5.5 0 0 1 .708 0l.646.647.646-.647a.5.5 0 0 1 .708 0l.646.647.646-.647a.5.5 0 0 1 .708 0l.646.647.793-.793-1-1h-6.63a.5.5 0 0 1-.451-.285A3 3 0 0 0 4 5" />
+                            <path d="M4 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0" />
+                        </svg>
+                        Change Password
+                    </h2>
                 </div>
                 <div class="panel-card__body">
-                    <form action="{{ request.app.url_path_for('update_caddy_settings') }}" method="post"
-                        data-loading-submit-form data-auto-save-form>
+                    <form action="{{ request.app.url_path_for('change_password') }}" method="post"
+                        data-loading-submit-form id="password-form" data-password-checklist-form>
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <input type="text" name="username" value="{{ current_user.username }}"
+                            autocomplete="username" hidden>
 
-                        <div class="row g-3">
-                            <div class="col-12 col-lg-6">
-                                <label for="caddy_api_url" class="form-label">Caddy Admin URL</label>
-                                <input type="url" class="form-control" id="caddy_api_url" name="caddy_api_url"
-                                    value="{{ caddy_api_url }}" placeholder="http://localhost:2019" required
-                                    inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false"
-                                    data-auto-save-field>
-                                <div class="form-text">Used for health checks, onboarding, and configuration sync.</div>
-                            </div>
-                            <div class="col-12 col-lg-6">
-                                <label for="caddyfile_path" class="form-label">Mounted Caddyfile Path</label>
-                                <input type="text" class="form-control" id="caddyfile_path" name="caddyfile_path"
-                                    value="{{ caddyfile_path }}" placeholder="/app/Caddyfile" required
-                                    autocapitalize="off" autocomplete="off" spellcheck="false" data-auto-save-field>
-                                <div class="form-text">This file is inspected during onboarding and replaced with the
-                                    managed marker.</div>
-                            </div>
-                            <div class="col-12">
-                                <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" role="switch"
-                                        id="rate_limit_enabled" name="rate_limit_enabled" {% if rate_limit_enabled
-                                        %}checked{% endif %} data-auto-save-field>
-                                    <label class="form-check-label" for="rate_limit_enabled">Enable Rate
-                                        Limiting</label>
-                                </div>
-                                <div class="form-text">Protects sensitive endpoints against brute force attacks.</div>
+                        <div class="mb-3">
+                            <label for="current_password" class="form-label">Current Password</label>
+                            <input type="password" class="form-control" id="current_password"
+                                name="current_password" required autocomplete="current-password"
+                                maxlength="4096">
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="new_password" class="form-label">New Password</label>
+                            <input type="password" class="form-control" id="new_password" name="new_password"
+                                required minlength="{{ password_policy_min_length }}"
+                                maxlength="{{ password_policy_max_length }}" autocomplete="new-password"
+                                data-password-policy data-password-policy-min-length="{{ password_policy_min_length }}"
+                                data-password-policy-message="{{ password_policy_message }}"
+                                data-password-checklist-password>
+                            <div class="form-text">
+                                {{ password_policy_message }}
                             </div>
                         </div>
+
+                        <div class="mb-3">
+                            <label for="confirm_password" class="form-label">Confirm New Password</label>
+                            <input type="password" class="form-control" id="confirm_password"
+                                name="confirm_password" required minlength="8" maxlength="4096"
+                                autocomplete="new-password" data-password-checklist-confirm>
+                        </div>
+
+                        <ul class="setup-checklist mb-4" aria-label="Password requirements">
+                            <li class="setup-check" data-check="length">At least {{ password_policy_min_length }} characters</li>
+                            <li class="setup-check" data-check="upper">Uppercase letter (A-Z)</li>
+                            <li class="setup-check" data-check="lower">Lowercase letter (a-z)</li>
+                            <li class="setup-check" data-check="digit">Digit (0-9)</li>
+                            <li class="setup-check" data-check="special">Special character (!@#...)</li>
+                            <li class="setup-check" data-check="match">Passwords match</li>
+                        </ul>
+
+                        <button type="submit" class="btn btn-primary" data-loading-submit-button
+                            data-loading-label="Changing password...">
+                            Change Password
+                        </button>
                     </form>
                 </div>
             </div>
@@ -57,6 +80,64 @@
 
         <div class="col-12 col-xl-6">
             <div class="row g-4 settings-stack">
+                <div class="col-12">
+                    <div class="panel-card settings-panel settings-panel--primary" id="caddy-settings">
+                        <div class="panel-card__header">
+                            <h2 class="h5 mb-0">Global Settings</h2>
+                        </div>
+                        <div class="panel-card__body">
+                            <form action="{{ request.app.url_path_for('update_caddy_settings') }}" method="post"
+                                data-loading-submit-form data-auto-save-form>
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+                                <div class="row g-3">
+                                    <div class="col-12 col-lg-6">
+                                        <label for="caddy_api_url" class="form-label">Caddy Admin URL</label>
+                                        <input type="url" class="form-control" id="caddy_api_url" name="caddy_api_url"
+                                            value="{{ caddy_api_url }}" placeholder="http://localhost:2019" required
+                                            inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false"
+                                            data-auto-save-field>
+                                        <div class="form-text">Used for health checks, onboarding, and configuration sync.</div>
+                                    </div>
+                                    <div class="col-12 col-lg-6">
+                                        <label for="caddyfile_path" class="form-label">Mounted Caddyfile Path</label>
+                                        <input type="text" class="form-control" id="caddyfile_path" name="caddyfile_path"
+                                            value="{{ caddyfile_path }}" placeholder="/app/Caddyfile" required
+                                            autocapitalize="off" autocomplete="off" spellcheck="false" data-auto-save-field>
+                                        <div class="form-text">This file is inspected during onboarding and replaced with the
+                                            managed marker.</div>
+                                    </div>
+                                    <div class="col-12">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" role="switch"
+                                                id="rate_limit_enabled" name="rate_limit_enabled" {% if rate_limit_enabled
+                                                %}checked{% endif %} data-auto-save-field>
+                                            <label class="form-check-label" for="rate_limit_enabled">Enable Rate
+                                                Limiting</label>
+                                        </div>
+                                        <div class="form-text">Protects sensitive endpoints against brute force attacks.</div>
+                                    </div>
+                                </div>
+                            </form>
+                            <div class="mt-3">
+                                <form action="{{ request.app.url_path_for('restart_onboarding_wizard') }}" method="post" class="d-inline">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                    <button type="submit" class="btn btn-outline-warning js-confirm"
+                                        data-confirm-title="Restart onboarding wizard"
+                                        data-confirm="This will reset the onboarding wizard and reopen step 1."
+                                        data-confirm-accept="Restart wizard"
+                                        data-confirm-btn-class="btn-warning">
+                                        Restart onboarding wizard
+                                    </button>
+                                </form>
+                                <div class="form-text mt-2">
+                                    Resets the wizard state and reopens the onboarding flow from the beginning.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="col-12">
                     <div class="panel-card settings-panel" id="ssllabs-settings">
                         <div class="panel-card__header">
@@ -66,14 +147,15 @@
                                     <path
                                         d="M5.338 1.59a61 61 0 0 0-2.837.856.48.48 0 0 0-.328.39c-.554 4.157.726 7.19 2.253 9.188a10.7 10.7 0 0 0 2.287 2.233c.346.244.652.42.893.533q.18.085.293.118a1 1 0 0 0 .101.025 1 1 0 0 0 .1-.025q.114-.034.294-.118c.24-.113.547-.29.893-.533a10.7 10.7 0 0 0 2.287-2.233c1.527-1.997 2.807-5.031 2.253-9.188a.48.48 0 0 0-.328-.39c-.651-.213-1.75-.56-2.837-.855C9.552 1.29 8.531 1.067 8 1.067c-.53 0-1.552.223-2.662.524zM5.072.56C6.157.265 7.31 0 8 0s1.843.265 2.928.56c1.11.3 2.229.655 2.887.87a1.54 1.54 0 0 1 1.044 1.262c.596 4.477-.787 7.795-2.465 9.99a11.8 11.8 0 0 1-2.517 2.453 7 7 0 0 1-1.048.625c-.28.132-.581.24-.829.24s-.548-.108-.829-.24a7 7 0 0 1-1.048-.625 11.8 11.8 0 0 1-2.517-2.453C1.928 10.487.545 7.169 1.141 2.692A1.54 1.54 0 0 1 2.185 1.43 63 63 0 0 1 5.072.56" />
                                     <path
-                                        d="M9.5 6.5a1.5 1.5 0 0 1-1 1.415l.385 1.99a.5.5 0 0 1-.491.595h-.788a.5.5 0 0 1-.49-.595l.384-1.99a1.5 1.5 0 1 1 2-1.415" />
+                                        d="M9.5 6.5a1.5 1.5 0 0 1-1 1.415l.385 1.99a.5.5 0 0 1-.491.595h-.788a.5.5 0 0 1-.49-.595l.384-1.99a1.5 1.5 0 0 1 2-1.415" />
                                 </svg>
                                 SSL Labs API
                             </h2>
                         </div>
                         <div class="panel-card__body">
                             <form action="{{ request.app.url_path_for('update_ssllabs_settings') }}" method="post"
-                                data-loading-submit-form data-auto-save-form class="mb-3">
+                                data-loading-submit-form data-auto-save-form class="mb-3"
+                                data-require-csrf>
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                 <label for="ssllabs_email" class="form-label">Configured Email</label>
                                 <input type="email" class="form-control" id="ssllabs_email" name="ssllabs_email"
@@ -90,20 +172,30 @@
 
                             <div class="ssllabs-status-panel">
                                 <div class="form-label text-body-secondary">Registration Status</div>
-                                <div id="ssllabs-status">
+                                <div id="ssllabs-status" aria-live="polite" aria-atomic="true"{% if ssllabs_email is none or ssllabs_is_registered is not none %} data-ssllabs-preloaded="true"{% endif %}>
+                                    {% if ssllabs_email is none %}
+                                    <span class="badge cb-pill bg-warning text-dark">Not configured</span>
+                                    {% elif ssllabs_is_registered == true %}
+                                    <span class="badge cb-pill bg-success">Registered</span>
+                                    {% elif ssllabs_is_registered == false %}
+                                    <span class="badge cb-pill bg-danger">Not registered</span>
+                                    {% else %}
                                     <span class="spinner-border spinner-border-sm text-secondary" role="status">
                                         <span class="visually-hidden">Loading...</span>
                                     </span>
+                                    {% endif %}
                                 </div>
-                                <div class="form-text" id="ssllabs-status-hint"></div>
+
                             </div>
 
                             {% if ssllabs_email %}
                             <form action="{{ request.app.url_path_for('register_ssllabs_email') }}" method="post"
-                                data-loading-submit-form class="mt-3">
+                                data-loading-submit-form class="mt-3" data-require-csrf
+                                data-ssllabs-email-form>
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                <button type="submit" class="btn btn-outline-primary js-confirm"
+                                <button type="submit" class="btn btn-outline-primary js-confirm{% if ssllabs_is_registered == true %} d-none{% endif %}"
                                     id="ssllabs-register-btn" data-loading-submit-button
+                                    data-ssllabs-register-button data-ssllabs-register-from="ssllabs_email"
                                     data-loading-label="Registering..." data-confirm-title="Register SSL Labs email"
                                     data-confirm="Register the configured email address with the SSL Labs API?"
                                     data-confirm-accept="Register" data-confirm-btn-class="btn-primary">
@@ -111,58 +203,47 @@
                                 </button>
                             </form>
                             {% endif %}
+
                         </div>
                     </div>
                 </div>
 
                 <div class="col-12">
-                    <div class="panel-card settings-panel" id="password-settings">
+                    <div class="panel-card settings-panel" id="ssllabs-retention-settings">
                         <div class="panel-card__header">
-                            <h2 class="h5 mb-0">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor"
-                                    class="bi bi-key me-2" viewBox="0 0 16 16" aria-hidden="true">
-                                    <path
-                                        d="M0 8a4 4 0 0 1 7.465-2H14a.5.5 0 0 1 .354.146l1.5 1.5a.5.5 0 0 1 0 .708l-1.5 1.5a.5.5 0 0 1-.708 0L13 9.207l-.646.647a.5.5 0 0 1-.708 0L11 9.207l-.646.647a.5.5 0 0 1-.708 0L9 9.207l-.646.647A.5.5 0 0 1 8 10h-.535A4 4 0 0 1 0 8m4-3a3 3 0 1 0 2.712 4.285A.5.5 0 0 1 7.163 9h.63l.853-.854a.5.5 0 0 1 .708 0l.646.647.646-.647a.5.5 0 0 1 .708 0l.646.647.646-.647a.5.5 0 0 1 .708 0l.646.647.793-.793-1-1h-6.63a.5.5 0 0 1-.451-.285A3 3 0 0 0 4 5" />
-                                    <path d="M4 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0" />
-                                </svg>
-                                Change Password
-                            </h2>
+                            <h2 class="h5 mb-0">SSL Labs History Retention</h2>
                         </div>
                         <div class="panel-card__body">
-                            <form action="{{ request.app.url_path_for('change_password') }}" method="post"
-                                data-loading-submit-form id="password-form">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                <input type="text" name="username" value="{{ current_user.username }}"
-                                    autocomplete="username" hidden aria-hidden="true">
-
-                                <div class="mb-3">
-                                    <label for="current_password" class="form-label">Current Password</label>
-                                    <input type="password" class="form-control" id="current_password"
-                                        name="current_password" required autocomplete="current-password"
-                                        maxlength="4096">
+                            <div class="retention-slider"
+                                data-ssllabs-retention
+                                data-retention-url="{{ request.app.url_path_for('update_ssllabs_retention') }}"
+                                data-retention-values="{{ ssllabs_retention_values | tojson }}"
+                                data-retention-current="{{ ssllabs_retention_days }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}" data-retention-csrf>
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <label for="ssllabs-retention-slider" class="form-label mb-0">Rank history retention</label>
+                                    <span class="badge cb-pill text-bg-secondary" id="ssllabs-retention-badge"
+                                        data-retention-badge aria-live="polite">{{ ssllabs_retention_days }} days</span>
                                 </div>
-
-                                <div class="mb-3">
-                                    <label for="new_password" class="form-label">New Password</label>
-                                    <input type="password" class="form-control" id="new_password" name="new_password"
-                                        required minlength="8" maxlength="4096" autocomplete="new-password">
-                                    <div class="form-text">
-                                        At least 8 characters with uppercase, lowercase, digit, and special character.
+                                <div class="ssllabs-retention-scale">
+                                    <input type="range" class="form-range" id="ssllabs-retention-slider"
+                                        min="0" max="{{ ssllabs_retention_values | length - 1 }}" step="1"
+                                        value="{{ current_retention_index }}"
+                                        data-retention-slider
+                                        aria-describedby="ssllabs-retention-help">
+                                    <div class="ssllabs-retention-labels" aria-hidden="true">
+                                        {% for days in ssllabs_retention_values %}
+                                        <span class="ssllabs-retention-label">
+                                            {% if days == 365 %}1y{% else %}{{ days }}d{% endif %}
+                                        </span>
+                                        {% endfor %}
                                     </div>
                                 </div>
-
-                                <div class="mb-3">
-                                    <label for="confirm_password" class="form-label">Confirm New Password</label>
-                                    <input type="password" class="form-control" id="confirm_password"
-                                        name="confirm_password" required minlength="8" maxlength="4096"
-                                        autocomplete="new-password">
+                                <div class="form-text" id="ssllabs-retention-help">
+                                    How long SSL Labs grade history samples are kept for the dashboard chart. Older
+                                    samples are pruned automatically.
                                 </div>
-
-                                <button type="submit" class="btn btn-primary" data-loading-submit-button
-                                    data-loading-label="Changing password...">
-                                    Change Password
-                                </button>
-                            </form>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -170,4 +251,8 @@
         </div>
     </div>
 </section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ request.app.url_path_for('static', path='js/settings-retention.js') }}"></script>
 {% endblock %}

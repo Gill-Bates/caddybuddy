@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hmac
 import logging
 from datetime import UTC, datetime
@@ -31,6 +32,12 @@ _MIN_PASSWORD_LENGTH = 8
 _MAX_PASSWORD_LENGTH = 4096
 _BCRYPT_CONCURRENCY = 4
 _bcrypt_semaphore = asyncio.Semaphore(_BCRYPT_CONCURRENCY)
+
+PASSWORD_MIN_LENGTH = _MIN_PASSWORD_LENGTH
+PASSWORD_MAX_LENGTH = _MAX_PASSWORD_LENGTH
+PASSWORD_POLICY_MESSAGE = (
+    f"Password must be at least {PASSWORD_MIN_LENGTH} characters long and contain uppercase, lowercase, digit, and special character."
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +69,19 @@ class AuthService:
         return hmac.digest(_password_pepper_bytes(), message, sha256)
 
     @classmethod
+    def _bcrypt_password_bytes(cls, scope: str, value: str) -> bytes:
+        """Return NUL-free bytes suitable for bcrypt input."""
+        return base64.b64encode(cls._hmac_digest(scope, value))
+
+    @classmethod
+    def _legacy_bcrypt_password_candidates(cls, scope: str, value: str) -> tuple[bytes, ...]:
+        """Return historical bcrypt inputs used before digest encoding was NUL-safe."""
+        digest = cls._hmac_digest(scope, value)
+        if b"\x00" not in digest:
+            return (digest,)
+        return (digest, digest.split(b"\x00", 1)[0])
+
+    @classmethod
     def _validate_password_input(cls, password: str) -> None:
         if not isinstance(password, str):
             raise ValueError("Password must be a string.")
@@ -70,7 +90,7 @@ class AuthService:
 
     @classmethod
     async def _hash_password_unchecked(cls, password: str) -> str:
-        peppered = cls._hmac_digest("password", password)
+        peppered = cls._bcrypt_password_bytes("password", password)
         async with _bcrypt_semaphore:
             return await asyncio.to_thread(
                 lambda: bcrypt.hashpw(peppered, bcrypt.gensalt()).decode("utf-8")
@@ -87,14 +107,24 @@ class AuthService:
     async def verify_password(cls, password: str, password_hash: str) -> bool:
         """Verify a password against a peppered bcrypt hash."""
         cls._validate_password_input(password)
-        peppered = cls._hmac_digest("password", password)
+        peppered = cls._bcrypt_password_bytes("password", password)
+        legacy_candidates = cls._legacy_bcrypt_password_candidates("password", password)
 
         def _check() -> bool:
+            encoded_hash = password_hash.encode("utf-8")
             try:
-                return bcrypt.checkpw(peppered, password_hash.encode("utf-8"))
+                if bcrypt.checkpw(peppered, encoded_hash):
+                    return True
             except ValueError:
                 logger.warning("Invalid bcrypt password hash encountered")
                 return False
+            for legacy_peppered in legacy_candidates:
+                try:
+                    if bcrypt.checkpw(legacy_peppered, encoded_hash):
+                        return True
+                except ValueError:
+                    continue
+            return False
 
         async with _bcrypt_semaphore:
             return await asyncio.to_thread(_check)
@@ -149,10 +179,7 @@ class AuthService:
             return None
         password = password.strip()
         if password in _INSECURE_ADMIN_PASSWORD_VALUES or len(password) < _MIN_ADMIN_PASSWORD_LENGTH:
-            raise ValueError(
-                "Set CB_ADMIN_PASSWORD, CADDYBUDDY_ADMIN_PASSWORD, or ADMIN_PASSWORD to a non-default value "
-                f"of at least {_MIN_ADMIN_PASSWORD_LENGTH} characters before first startup."
-            )
+            return None
         password_hash = await self.hash_password(password)
         try:
             async with session.begin_nested():

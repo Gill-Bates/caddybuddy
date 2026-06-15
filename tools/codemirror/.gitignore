@@ -1,0 +1,6 @@
+# Keep this directory source-only.
+*
+!.gitignore
+!caddybuddy-codemirror.mjs
+!package.json
+!package-lock.json
