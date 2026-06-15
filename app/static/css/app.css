@@ -1793,7 +1793,7 @@ body.app-body--menu-open .app-sidebar {
 
 .ssllabs-filterbar .form-control,
 .ssllabs-filterbar .form-select {
-    min-height: 2.75rem;
+    min-height: 2.1rem;
     padding-block: 0.35rem;
     font-size: 0.82rem;
     font-family: inherit;
@@ -2728,11 +2728,6 @@ body.app-body--menu-open .app-sidebar {
     align-items: flex-start;
 }
 
-.ssllabs-domain-card__next-run {
-    padding-inline: 0.1rem;
-    line-height: 1.2;
-}
-
 /* Grade keeps a heavier weight and a stable min-width for alignment,
    but never grows taller than the shared pill geometry. */
 .ssllabs-result__grade {
@@ -2877,7 +2872,7 @@ body.app-body--menu-open .app-sidebar {
     }
 
     .ssllabs-domain-card .btn-sm {
-        min-block-size: 2.75rem;
+        min-block-size: 2.1rem;
         padding-inline: 0.65rem;
         border-radius: 999px;
         font-size: 0.78rem;
@@ -2885,7 +2880,7 @@ body.app-body--menu-open .app-sidebar {
     }
 
     .ssllabs-domain-card .form-select-sm {
-        min-height: 2.75rem;
+        min-height: 2.1rem;
         padding-block: 0.35rem;
         padding-inline: 0.65rem 2rem;
         border-radius: 999px;

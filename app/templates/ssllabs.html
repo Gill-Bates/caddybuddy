@@ -166,11 +166,11 @@
                                                                 {% if row.host_error %}disabled{% endif %}>
                                                                 <option value="" {% if not row.target.schedule_frequency %}selected{% endif %}>Off</option>
                                                                 <option value="weekly" {% if row.target.schedule_frequency %}selected{% endif %}>On (weekly)</option>
+                                                                {% if row.target.next_scheduled_at %}
+                                                                <option disabled data-ui-lint-dynamic>Next run {{ row.target.next_scheduled_at|datetimeformat }}</option>
+                                                                {% endif %}
                                                             </select>
                                                         </form>
-                                                        {% if row.target.next_scheduled_at %}
-                                                        <div class="ssllabs-domain-card__next-run small text-body-secondary" data-ui-lint-dynamic>Next run {{ row.target.next_scheduled_at|datetimeformat }}</div>
-                                                        {% endif %}
                                                     </div>
                                                     <div class="ssllabs-domain-card__quick-actions">
                                                         {% if row.scan_report_available %}
