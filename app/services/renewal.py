@@ -76,12 +76,11 @@ class CertificateRenewalService:
         capability = await self._evaluate_renewal_capability(
             site, cert_info, fetch_if_missing=fetch_if_missing
         )
-        # Forced renewal modes that purge artifacts or repair state must reload or
-        # restart Caddy afterwards, which is only possible when a control mode is
-        # configured. Surface the missing prerequisite as a disabled action with a
-        # clear hint instead of letting the user trigger a guaranteed failure.
+        # restart_repair requires a full Caddy restart which is only possible with a
+        # configured control mode. artifact_purge can fall back to Admin API reload
+        # (POST /load) instead, so it is not blocked here.
         if (
-            capability.mode in ("artifact_purge", "restart_repair")
+            capability.mode == "restart_repair"
             and self.settings.caddy_control_mode == "disabled"
         ):
             return CertificateRenewalCapability(
@@ -296,16 +295,30 @@ class CertificateRenewalService:
     ) -> tuple[bool, str]:
         logger.info("Initiating artifact_purge for domains: %s", domains)
         primary_domain = domains[0]
+        control_mode_disabled = self.settings.caddy_control_mode == "disabled"
 
-        try:
-            supervisor = await get_caddy_supervisor(self.session)
-            status = await supervisor.status()
-        except Exception:
-            logger.exception("Unable to verify Caddy supervisor before certificate purge")
-            return False, "Forced renewal needs a working Caddy control mode (systemd, Docker, or script). Configure and start it in Settings."
-        if not status.success or status.status != "running":
-            logger.warning("Caddy supervisor not ready for artifact purge: %s", status.error or status.status)
-            return False, "Forced renewal needs a working Caddy control mode (systemd, Docker, or script). Configure and start it in Settings."
+        supervisor = None
+        if not control_mode_disabled:
+            try:
+                supervisor = await get_caddy_supervisor(self.session)
+                status = await supervisor.status()
+            except Exception:
+                logger.exception("Unable to verify Caddy supervisor before certificate purge")
+                return False, "Forced renewal needs a working Caddy control mode (systemd, Docker, or script). Configure and start it in Settings."
+            if not status.success or status.status != "running":
+                logger.warning("Caddy supervisor not ready for artifact purge: %s", status.error or status.status)
+                return False, "Forced renewal needs a working Caddy control mode (systemd, Docker, or script). Configure and start it in Settings."
+        else:
+            caddy_config = await get_caddy_config(self.session)
+            if not caddy_config.admin_url:
+                return False, "Forced renewal requires either a Caddy control mode or a configured Caddy Admin API URL."
+            try:
+                async with CaddyAdminClient(caddy_config.admin_url, self.settings.caddy_admin_timeout_seconds) as client:
+                    if not await client.health():
+                        return False, "Caddy Admin API is not reachable. Cannot proceed with forced renewal."
+            except Exception:
+                logger.exception("Admin API health check failed before artifact purge")
+                return False, "Caddy Admin API is not reachable. Cannot proceed with forced renewal."
 
         try:
             deleted_count = await caddy_service.purge_certificate_artifacts(
@@ -320,6 +333,19 @@ class CertificateRenewalService:
         except Exception:
             logger.exception("Error purging certificate artifacts")
             return False, "Error deleting certificate artifacts."
+
+        if control_mode_disabled:
+            try:
+                caddy_config = await get_caddy_config(self.session)
+                async with CaddyAdminClient(caddy_config.admin_url, self.settings.caddy_admin_timeout_seconds) as client:
+                    current_config = await client.get_config()
+                    await client.load_config_force(current_config, force_reload=True)
+                logger.info("Admin API reload triggered after artifact purge for %s", primary_domain)
+            except Exception:
+                logger.exception("Admin API reload failed after artifact purge")
+                return False, "Certificate artifacts were purged, but Caddy Admin API reload failed."
+            await self._publish(progress, "waiting_for_certificate", {})
+            return await self._verify_renewal_success(domains)
 
         reload_result = await supervisor.reload()
         if not reload_result.success:
@@ -339,16 +365,15 @@ class CertificateRenewalService:
 
         await self._publish(progress, "waiting_for_certificate", {})
         artifacts_ok = await self._wait_for_local_artifacts(domains, timeout=self.settings.cert_renewal_monitor_timeout_seconds)
-        
+
         if not artifacts_ok:
-            # Fallback to full restart if reload failed to recreate artifacts
             logger.warning("Artifacts not recreated after Caddy reload. Falling back to full Caddy restart.")
             await self._publish(progress, "restarting_caddy", {})
             restart_result = await supervisor.restart()
             if not restart_result.success:
                 logger.error("Caddy restart fallback failed after artifact purge: %s", restart_result.error)
                 return False, "Artifacts were purged, but Caddy restart fallback failed."
-            
+
             health_ok = await self._wait_for_caddy_health(timeout=30)
             if not health_ok:
                 return False, "Caddy restarted but admin API did not become healthy."

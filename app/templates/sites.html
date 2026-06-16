@@ -240,7 +240,7 @@
                                                 {% elif renewal.mode == "storage_unavailable" %}
                                                     {% set renewal_hint = "Certificate storage is currently unavailable." %}
                                                 {% elif renewal.mode == "unavailable" and renewal.reason == "control_mode_disabled" %}
-                                                    {% set renewal_hint = "Configure a Caddy control mode (systemd, Docker, or script) in Settings to enable forced renewal." %}
+                                                    {% set renewal_hint = "Caddy must be restarted to repair missing certificate artifacts. Configure a control mode (systemd, Docker, or script) in Settings." %}
                                                 {% elif renewal.mode == "unavailable" and renewal.reason == "no_domains" %}
                                                     {% set renewal_hint = "No domains configured for this site." %}
                                                 {% elif renewal.mode == "unavailable" and renewal.reason == "check_failed" %}

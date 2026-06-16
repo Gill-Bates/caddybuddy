@@ -108,10 +108,8 @@
                                     <td data-label="Domains">
                                         <div class="ssllabs-domain-list">
                                             {% for row in site_row.domains %}
-                                            {% set scan_time = None %}
                                             {% set scan_status = "Not scanned yet" %}
                                             {% if row.scan %}
-                                            {% set scan_time = row.scan.completed_at or row.scan.started_at %}
                                             {% set scan_status = (row.scan.status or 'unknown') | replace('_', ' ') | title %}
                                             {% endif %}
                                             {% set schedule_select_id = "ssllabs-schedule-" ~ row.target.id %}
@@ -128,9 +126,6 @@
                                                         <span class="status-pill {{ row.badge_class }} ssllabs-result__status-badge ssllabs-result__status-badge--compact">{{ scan_status }}</span>
                                                         {% else %}
                                                         <span class="status-pill {{ row.badge_class }} ssllabs-result__status-badge ssllabs-result__status-badge--compact">{{ scan_status }}</span>
-                                                        {% endif %}
-                                                        {% if scan_time %}
-                                                        <span class="ssllabs-domain-card__muted" data-ui-lint-dynamic>{{ scan_time|datetimeformat }}</span>
                                                         {% endif %}
                                                         {% if row.endpoints %}
                                                         <div class="ssllabs-result__endpoints">

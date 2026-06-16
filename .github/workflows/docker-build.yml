@@ -1,59 +1,27 @@
-name: Build & Push Docker Image
+name: Docker Multi-Arch Build
 
 on:
   push:
     tags:
-      - "v*"
+      - 'v*'
   workflow_dispatch:
-    inputs:
-      push:
-        description: 'Push to registry'
-        required: false
-        default: 'true'
-        type: choice
-        options:
-          - 'true'
-          - 'false'
-      platforms:
-        description: 'Platforms to build'
-        required: false
-        default: 'linux/amd64,linux/arm64'
-        type: choice
-        options:
-          - 'linux/amd64'
-          - 'linux/arm64'
-          - 'linux/amd64,linux/arm64'
-      enforce_trivy_gate:
-        description: 'Fail build on HIGH/CRITICAL Trivy findings'
-        required: false
-        default: 'true'
-        type: choice
-        options:
-          - 'true'
-          - 'false'
-      allow_overwrite:
-        description: 'Allow overwriting existing Docker tags'
-        required: false
-        default: 'false'
-        type: choice
-        options:
-          - 'true'
-          - 'false'
+
+concurrency:
+  group: docker-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: giiibates/caddybuddy
-  REGISTRY_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-  REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
-
-concurrency:
-  group: docker-build-${{ github.ref }}
-  cancel-in-progress: false
 
 jobs:
   meta:
     name: Validate build metadata
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     timeout-minutes: 10
     permissions:
       contents: read
@@ -63,26 +31,30 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
-      - name: Validate registry secrets
+      - name: Validate Docker Hub secrets
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           set -euo pipefail
-          test -n "${{ env.REGISTRY_USERNAME }}" || {
-            echo "ERROR: Missing DOCKERHUB_USERNAME secret"
-            exit 1
-          }
-          test -n "${{ env.REGISTRY_PASSWORD }}" || {
-            echo "ERROR: Missing DOCKERHUB_TOKEN secret"
-            exit 1
-          }
+          : "${DOCKERHUB_USERNAME:?Missing DOCKERHUB_USERNAME secret}"
+          : "${DOCKERHUB_TOKEN:?Missing DOCKERHUB_TOKEN secret}"
 
       - name: Validate and set build metadata
         id: meta
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
           set -euo pipefail
+
+          if ! echo "$DOCKERHUB_USERNAME" | grep -qE '^[a-z0-9][a-z0-9_-]{2,}$'; then
+            echo "ERROR: Invalid Docker Hub username/namespace: '$DOCKERHUB_USERNAME'"
+            exit 1
+          fi
 
           if [ ! -f VERSION ]; then
             echo "ERROR: VERSION file not found"
@@ -108,24 +80,47 @@ jobs:
 
           echo "build_date=${BUILD_DATE}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Version: ${VERSION}, Build date: ${BUILD_DATE}"
 
-  build-amd64:
-    name: Build amd64 image
+  build:
+    name: Build ${{ matrix.arch }} image
     needs: meta
-    runs-on: ubuntu-24.04
-    if: github.event.inputs.platforms == 'linux/amd64' || github.event.inputs.platforms == 'linux/amd64,linux/arm64' || github.event.inputs.platforms == '' || github.event_name == 'push'
-    timeout-minutes: 30
-    outputs:
-      version: ${{ needs.meta.outputs.version }}
-      trivy_summary: ${{ steps.trivy_summary.outputs.summary }}
-      trivy_artifact_url: ${{ steps.trivy_artifact.outputs.artifact-url }}
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      VERSION: ${{ needs.meta.outputs.version }}
+      IMAGE_NAME: ${{ format('{0}/caddybuddy', secrets.DOCKERHUB_USERNAME) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            platform: linux/amd64
+            cache_scope: caddybuddy-amd64
+            test_image: caddybuddy:test-amd64
+            container_name: caddybuddy-test-amd64
+            mock_container: caddy-mock-amd64
+            network: smoke-amd64
+            smoke_dir: smoke-test-amd64
+            image_suffix: amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            cache_scope: caddybuddy-arm64
+            test_image: caddybuddy:test-arm64
+            container_name: caddybuddy-test-arm64
+            mock_container: caddy-mock-arm64
+            network: smoke-arm64
+            smoke_dir: smoke-test-arm64
+            image_suffix: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     permissions:
       contents: read
+      actions: write
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
@@ -139,63 +134,59 @@ jobs:
           EOF
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+        uses: docker/setup-buildx-action@v4
         with:
+          cache-binary: false
           driver-opts: |
-            network=host
+            image=moby/buildkit:v0.16.0
 
-      - name: Log in to registry
-        if: github.event.inputs.push != 'false'
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ env.REGISTRY_USERNAME }}
-          password: ${{ env.REGISTRY_PASSWORD }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build amd64 image
+      - name: Build image for smoke tests
         run: |
           set -euo pipefail
-          VERSION="${{ needs.meta.outputs.version }}"
-
           docker buildx build \
             --pull \
-            --platform linux/amd64 \
+            --platform "${{ matrix.platform }}" \
+            --target runtime \
             --load \
-            --cache-from type=gha,scope=caddybuddy-amd64 \
-            --cache-to type=gha,mode=max,scope=caddybuddy-amd64 \
+            --cache-from type=gha,scope=${{ matrix.cache_scope }} \
+            --cache-to type=gha,mode=max,scope=${{ matrix.cache_scope }} \
             --build-arg "APP_VERSION=${VERSION}" \
             --build-arg "GIT_SHA=${{ github.sha }}" \
             --build-arg "BUILD_DATE=${{ needs.meta.outputs.build_date }}" \
-            -t "${IMAGE_NAME}:${VERSION}-amd64" \
+            -t "${{ matrix.test_image }}" \
             -f docker/Dockerfile \
             .
 
-          echo "Built: ${IMAGE_NAME}:${VERSION}-amd64"
-
-      - name: Smoke test amd64 image
+      - name: Smoke test (${{ matrix.arch }})
         run: |
           set -euo pipefail
-          VERSION="${{ needs.meta.outputs.version }}"
-          IMAGE="${IMAGE_NAME}:${VERSION}-amd64"
+          IMAGE="${{ matrix.test_image }}"
 
           cleanup() {
-            docker rm -f caddybuddy-test-amd64 2>/dev/null || true
-            docker rm -f caddy-mock-amd64 2>/dev/null || true
-            docker network rm smoke-amd64 2>/dev/null || true
-            sudo rm -rf smoke-test-amd64
+            docker rm -f "${{ matrix.container_name }}" 2>/dev/null || true
+            docker rm -f "${{ matrix.mock_container }}" 2>/dev/null || true
+            docker network rm "${{ matrix.network }}" 2>/dev/null || true
+            sudo rm -rf "${{ matrix.smoke_dir }}"
           }
           trap cleanup EXIT
 
-          mkdir -p smoke-test-amd64/data
-          printf '### MANAGED BY CADDYBUDDY ###\n' > smoke-test-amd64/Caddyfile
-          sudo chown -R 1000:1000 smoke-test-amd64/data
-          sudo chown 1000:1000 smoke-test-amd64/Caddyfile
+          mkdir -p "${{ matrix.smoke_dir }}/data"
+          printf '### MANAGED BY CADDYBUDDY ###\n' > "${{ matrix.smoke_dir }}/Caddyfile"
+          sudo chown -R 1000:1000 "${{ matrix.smoke_dir }}/data"
+          sudo chown 1000:1000 "${{ matrix.smoke_dir }}/Caddyfile"
 
-          docker network create smoke-amd64
+          docker network create "${{ matrix.network }}"
 
           # Mock Caddy API
-          docker run -d --name caddy-mock-amd64 \
-            --network smoke-amd64 \
+          docker run -d --name "${{ matrix.mock_container }}" \
+            --network "${{ matrix.network }}" \
             python:3.13-alpine \
             python -c 'from http.server import BaseHTTPRequestHandler, HTTPServer
           class H(BaseHTTPRequestHandler):
@@ -213,24 +204,24 @@ jobs:
                   pass
           HTTPServer(("0.0.0.0", 2019), H).serve_forever()'
 
-          docker run -d --name caddybuddy-test-amd64 \
-            --platform linux/amd64 \
-            --network smoke-amd64 \
+          docker run -d --name "${{ matrix.container_name }}" \
+            --platform "${{ matrix.platform }}" \
+            --network "${{ matrix.network }}" \
             -e CB_SECRET_KEY="ci-smoke-test-key-not-for-production" \
             -e LOG_LEVEL="DEBUG" \
-            -v "$PWD/smoke-test-amd64/Caddyfile:/app/Caddyfile" \
-            -v "$PWD/smoke-test-amd64/data:/app/data" \
+            -v "$PWD/${{ matrix.smoke_dir }}/Caddyfile:/app/Caddyfile" \
+            -v "$PWD/${{ matrix.smoke_dir }}/data:/app/data" \
             "$IMAGE"
 
           echo "Waiting for health endpoint..."
           for i in $(seq 1 45); do
-            if ! docker ps -q -f name=caddybuddy-test-amd64 | grep -q .; then
+            if ! docker ps -q -f name="${{ matrix.container_name }}" | grep -q .; then
               echo "✗ Container exited during startup after ${i}s"
-              docker logs caddybuddy-test-amd64 2>&1 || true
+              docker logs "${{ matrix.container_name }}" 2>&1 || true
               exit 1
             fi
 
-            if docker exec caddybuddy-test-amd64 \
+            if docker exec "${{ matrix.container_name }}" \
                 python -c 'import sys, urllib.request; response = urllib.request.urlopen("http://127.0.0.1:8000/api/v1/health", timeout=3); sys.exit(0 if response.status < 500 else 1)' > /dev/null 2>&1; then
               echo "✓ Health check passed after ${i}s"
               break
@@ -238,45 +229,54 @@ jobs:
 
             if [[ $i -eq 45 ]]; then
               echo "✗ Health check timeout after 45s"
-              docker logs caddybuddy-test-amd64 2>&1 || true
+              docker logs "${{ matrix.container_name }}" 2>&1 || true
               exit 1
             fi
 
             sleep 1
           done
 
-          if docker exec caddybuddy-test-amd64 sh -c 'command -v caddy' > /dev/null 2>&1; then
+          if docker exec "${{ matrix.container_name }}" sh -c 'command -v caddy' > /dev/null 2>&1; then
             echo "✗ caddy binary must not be installed in the CaddyBuddy image"
-            docker exec caddybuddy-test-amd64 sh -c 'command -v caddy && caddy version || true'
+            docker exec "${{ matrix.container_name }}" sh -c 'command -v caddy && caddy version || true'
             exit 1
           fi
 
           echo "✓ caddy binary is not installed"
 
-      - name: Trivy vulnerability scan (amd64)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      - name: Tag image for push
+        run: |
+          set -euo pipefail
+          docker tag "${{ matrix.test_image }}" "${IMAGE_NAME}:${VERSION}-${{ matrix.image_suffix }}"
+
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@master
         with:
-          image-ref: '${{ env.IMAGE_NAME }}:${{ needs.meta.outputs.version }}-amd64'
+          cache: 'false'
+          image-ref: '${{ matrix.test_image }}'
           format: 'json'
-          output: 'trivy-amd64.json'
-          cache: false
-          exit-code: ${{ (github.event.inputs.enforce_trivy_gate == 'true' || github.event_name == 'push') && '1' || '0' }}
+          output: 'trivy-${{ matrix.image_suffix }}.json'
+          exit-code: '1'
           ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
           timeout: '10m'
           trivyignores: '.trivyignore'
 
-      - name: Generate Trivy summary (amd64)
-        id: trivy_summary
+      - name: Generate Trivy summary (${{ matrix.arch }})
+        if: always()
         run: |
-          if [[ ! -f trivy-amd64.json ]]; then
-            echo "summary=Scan failed - no results" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          ARCH="${{ matrix.image_suffix }}"
+          FILE="trivy-${ARCH}.json"
+
+          if [[ ! -f "$FILE" ]]; then
+            echo "### Trivy (${ARCH}): Scan failed — no results file" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
-          CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' trivy-amd64.json 2>/dev/null || echo 0)
-          HIGH=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' trivy-amd64.json 2>/dev/null || echo 0)
+          CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' "$FILE" 2>/dev/null || echo 0)
+          HIGH=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' "$FILE" 2>/dev/null || echo 0)
 
           if (( CRITICAL == 0 && HIGH == 0 )); then
             SUMMARY="✅ No HIGH/CRITICAL vulnerabilities found"
@@ -284,373 +284,274 @@ jobs:
             SUMMARY="⚠️ ${CRITICAL} CRITICAL, ${HIGH} HIGH vulnerabilities"
           fi
 
-          echo "summary=$SUMMARY" >> "$GITHUB_OUTPUT"
-          echo "$SUMMARY"
-
-          echo "### Trivy Scan Results (amd64)" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Trivy Scan Results (${ARCH})" >> "$GITHUB_STEP_SUMMARY"
           if (( CRITICAL > 0 || HIGH > 0 )); then
             echo '```' >> "$GITHUB_STEP_SUMMARY"
-            jq -r '.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL" or .Severity == "HIGH") | "\(.Severity)\t\(.VulnerabilityID)\t\(.PkgName)\t\(.InstalledVersion)"' trivy-amd64.json 2>/dev/null | head -20 >> "$GITHUB_STEP_SUMMARY" || true
+            jq -r '.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL" or .Severity == "HIGH") | "\(.Severity)\t\(.VulnerabilityID)\t\(.PkgName)\t\(.InstalledVersion)"' \
+              "$FILE" 2>/dev/null | head -20 >> "$GITHUB_STEP_SUMMARY" || true
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           else
             echo "$SUMMARY" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Upload Trivy findings (amd64)
+      - name: Upload Trivy findings (${{ matrix.arch }})
         if: always()
-        id: trivy_artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@v7
         with:
-          name: trivy-findings-amd64
-          path: trivy-amd64.json
+          name: trivy-findings-${{ matrix.image_suffix }}
+          path: trivy-${{ matrix.image_suffix }}.json
           retention-days: 14
           if-no-files-found: warn
 
-      - name: Check amd64 tag existence
-        if: github.event.inputs.push != 'false'
-        id: check_tag
-        run: |
-          VERSION="${{ needs.meta.outputs.version }}"
-          TAG="${IMAGE_NAME}:${VERSION}-amd64"
-          if docker manifest inspect "$TAG" > /dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Tag $TAG already exists in registry"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "Tag $TAG does not exist yet"
-          fi
-
-      - name: Push amd64 image
-        if: github.event.inputs.push != 'false' && (steps.check_tag.outputs.exists != 'true' || github.event.inputs.allow_overwrite == 'true')
-        run: |
-          VERSION="${{ needs.meta.outputs.version }}"
-          docker push "${IMAGE_NAME}:${VERSION}-amd64"
-
-      - name: Skip push (tag exists)
-        if: github.event.inputs.push != 'false' && steps.check_tag.outputs.exists == 'true' && github.event.inputs.allow_overwrite != 'true'
-        run: |
-          echo "::warning::Skipping push: ${IMAGE_NAME}:${{ needs.meta.outputs.version }}-amd64 already exists. Set allow_overwrite=true to force."
-
-  build-arm64:
-    name: Build arm64 image
-    needs: meta
-    runs-on: ubuntu-24.04-arm
-    if: github.event.inputs.platforms == 'linux/arm64' || github.event.inputs.platforms == 'linux/amd64,linux/arm64' || github.event.inputs.platforms == '' || github.event_name == 'push'
-    timeout-minutes: 30
-    outputs:
-      version: ${{ needs.meta.outputs.version }}
-      trivy_summary: ${{ steps.trivy_summary.outputs.summary }}
-      trivy_artifact_url: ${{ steps.trivy_artifact.outputs.artifact-url }}
-    permissions:
-      contents: read
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 1
-
-      - name: Generate BUILD_INFO
+      - name: Push arch-specific image
         run: |
           set -euo pipefail
-          cat > BUILD_INFO <<EOF
-          APP_VERSION=${{ needs.meta.outputs.version }}
-          GIT_SHA=${{ github.sha }}
-          BUILD_DATE=${{ needs.meta.outputs.build_date }}
-          EOF
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
-        with:
-          driver-opts: |
-            network=host
-
-      - name: Log in to registry
-        if: github.event.inputs.push != 'false'
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ env.REGISTRY_USERNAME }}
-          password: ${{ env.REGISTRY_PASSWORD }}
-
-      - name: Build arm64 image
-        run: |
-          set -euo pipefail
-          VERSION="${{ needs.meta.outputs.version }}"
-
-          docker buildx build \
-            --pull \
-            --platform linux/arm64 \
-            --load \
-            --cache-from type=gha,scope=caddybuddy-arm64 \
-            --cache-to type=gha,mode=max,scope=caddybuddy-arm64 \
-            --build-arg "APP_VERSION=${VERSION}" \
-            --build-arg "GIT_SHA=${{ github.sha }}" \
-            --build-arg "BUILD_DATE=${{ needs.meta.outputs.build_date }}" \
-            -t "${IMAGE_NAME}:${VERSION}-arm64" \
-            -f docker/Dockerfile \
-            .
-
-          echo "Built: ${IMAGE_NAME}:${VERSION}-arm64"
-
-      - name: Smoke test arm64 image
-        run: |
-          set -euo pipefail
-          VERSION="${{ needs.meta.outputs.version }}"
-          IMAGE="${IMAGE_NAME}:${VERSION}-arm64"
-
-          cleanup() {
-            docker rm -f caddybuddy-test-arm64 2>/dev/null || true
-            docker rm -f caddy-mock-arm64 2>/dev/null || true
-            docker network rm smoke-arm64 2>/dev/null || true
-            sudo rm -rf smoke-test-arm64
-          }
-          trap cleanup EXIT
-
-          mkdir -p smoke-test-arm64/data
-          printf '### MANAGED BY CADDYBUDDY ###\n' > smoke-test-arm64/Caddyfile
-          sudo chown -R 1000:1000 smoke-test-arm64/data
-          sudo chown 1000:1000 smoke-test-arm64/Caddyfile
-
-          docker network create smoke-arm64
-
-          docker run -d --name caddy-mock-arm64 \
-            --network smoke-arm64 \
-            python:3.13-alpine \
-            python -c 'from http.server import BaseHTTPRequestHandler, HTTPServer
-          class H(BaseHTTPRequestHandler):
-              def do_GET(self):
-                  self.send_response(200)
-                  self.send_header("Content-Type", "application/json")
-                  self.end_headers()
-                  self.wfile.write(b"{}")
-              def do_POST(self):
-                  self.send_response(200)
-                  self.send_header("Content-Type", "application/json")
-                  self.end_headers()
-                  self.wfile.write(b"{}")
-              def log_message(self, *_):
-                  pass
-          HTTPServer(("0.0.0.0", 2019), H).serve_forever()'
-
-          docker run -d --name caddybuddy-test-arm64 \
-            --platform linux/arm64 \
-            --network smoke-arm64 \
-            -e CB_SECRET_KEY="ci-smoke-test-key-not-for-production" \
-            -e LOG_LEVEL="DEBUG" \
-            -v "$PWD/smoke-test-arm64/Caddyfile:/app/Caddyfile" \
-            -v "$PWD/smoke-test-arm64/data:/app/data" \
-            "$IMAGE"
-
-          echo "Waiting for health endpoint..."
-          for i in $(seq 1 45); do
-            if ! docker ps -q -f name=caddybuddy-test-arm64 | grep -q .; then
-              echo "✗ Container exited during startup after ${i}s"
-              docker logs caddybuddy-test-arm64 2>&1 || true
-              exit 1
-            fi
-
-            if docker exec caddybuddy-test-arm64 \
-                python -c 'import sys, urllib.request; response = urllib.request.urlopen("http://127.0.0.1:8000/api/v1/health", timeout=3); sys.exit(0 if response.status < 500 else 1)' > /dev/null 2>&1; then
-              echo "✓ Health check passed after ${i}s"
-              break
-            fi
-
-            if [[ $i -eq 45 ]]; then
-              echo "✗ Health check timeout after 45s"
-              docker logs caddybuddy-test-arm64 2>&1 || true
-              exit 1
-            fi
-
-            sleep 1
-          done
-
-          if docker exec caddybuddy-test-arm64 sh -c 'command -v caddy' > /dev/null 2>&1; then
-            echo "✗ caddy binary must not be installed in the CaddyBuddy image"
-            docker exec caddybuddy-test-arm64 sh -c 'command -v caddy && caddy version || true'
-            exit 1
-          fi
-
-          echo "✓ caddy binary is not installed"
-
-      - name: Trivy vulnerability scan (arm64)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: '${{ env.IMAGE_NAME }}:${{ needs.meta.outputs.version }}-arm64'
-          format: 'json'
-          output: 'trivy-arm64.json'
-          cache: false
-          exit-code: ${{ (github.event.inputs.enforce_trivy_gate == 'true' || github.event_name == 'push') && '1' || '0' }}
-          ignore-unfixed: true
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
-          timeout: '10m'
-          trivyignores: '.trivyignore'
-
-      - name: Generate Trivy summary (arm64)
-        id: trivy_summary
-        run: |
-          if [[ ! -f trivy-arm64.json ]]; then
-            echo "summary=Scan failed - no results" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' trivy-arm64.json 2>/dev/null || echo 0)
-          HIGH=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' trivy-arm64.json 2>/dev/null || echo 0)
-
-          if (( CRITICAL == 0 && HIGH == 0 )); then
-            SUMMARY="✅ No HIGH/CRITICAL vulnerabilities found"
-          else
-            SUMMARY="⚠️ ${CRITICAL} CRITICAL, ${HIGH} HIGH vulnerabilities"
-          fi
-
-          echo "summary=$SUMMARY" >> "$GITHUB_OUTPUT"
-          echo "$SUMMARY"
-
-          echo "### Trivy Scan Results (arm64)" >> "$GITHUB_STEP_SUMMARY"
-          if (( CRITICAL > 0 || HIGH > 0 )); then
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            jq -r '.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL" or .Severity == "HIGH") | "\(.Severity)\t\(.VulnerabilityID)\t\(.PkgName)\t\(.InstalledVersion)"' trivy-arm64.json 2>/dev/null | head -20 >> "$GITHUB_STEP_SUMMARY" || true
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "$SUMMARY" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Upload Trivy findings (arm64)
-        if: always()
-        id: trivy_artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: trivy-findings-arm64
-          path: trivy-arm64.json
-          retention-days: 14
-          if-no-files-found: warn
-
-      - name: Check arm64 tag existence
-        if: github.event.inputs.push != 'false'
-        id: check_tag
-        run: |
-          VERSION="${{ needs.meta.outputs.version }}"
-          TAG="${IMAGE_NAME}:${VERSION}-arm64"
-          if docker manifest inspect "$TAG" > /dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Tag $TAG already exists in registry"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "Tag $TAG does not exist yet"
-          fi
-
-      - name: Push arm64 image
-        if: github.event.inputs.push != 'false' && (steps.check_tag.outputs.exists != 'true' || github.event.inputs.allow_overwrite == 'true')
-        run: |
-          VERSION="${{ needs.meta.outputs.version }}"
-          docker push "${IMAGE_NAME}:${VERSION}-arm64"
-
-      - name: Skip push (tag exists)
-        if: github.event.inputs.push != 'false' && steps.check_tag.outputs.exists == 'true' && github.event.inputs.allow_overwrite != 'true'
-        run: |
-          echo "::warning::Skipping push: ${IMAGE_NAME}:${{ needs.meta.outputs.version }}-arm64 already exists. Set allow_overwrite=true to force."
+          docker push "${IMAGE_NAME}:${VERSION}-${{ matrix.image_suffix }}"
 
   create-manifest:
     name: Create multi-arch manifest
-    needs: [meta, build-amd64, build-arm64]
-    if: always() && (needs.build-amd64.result == 'success' || needs.build-arm64.result == 'success') && github.event.inputs.push != 'false'
+    needs: [meta, build]
+    if: needs.build.result == 'success'
     runs-on: ubuntu-24.04
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      VERSION: ${{ needs.meta.outputs.version }}
+      IMAGE_NAME: ${{ format('{0}/caddybuddy', secrets.DOCKERHUB_USERNAME) }}
     permissions:
       contents: read
 
     steps:
-      - name: Log in to registry
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ env.REGISTRY_USERNAME }}
-          password: ${{ env.REGISTRY_PASSWORD }}
-
-      - name: Check manifest tag existence
-        id: check_manifest
-        run: |
-          VERSION="${{ needs.meta.outputs.version }}"
-          TAG="${IMAGE_NAME}:${VERSION}"
-          if docker manifest inspect "$TAG" > /dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Manifest tag $TAG already exists"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "Manifest tag $TAG does not exist yet"
-          fi
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Create and push manifest
-        if: steps.check_manifest.outputs.exists != 'true' || github.event.inputs.allow_overwrite == 'true'
         run: |
           set -euo pipefail
-          VERSION="${{ needs.meta.outputs.version }}"
 
-          IMAGES=()
-          if docker manifest inspect "${IMAGE_NAME}:${VERSION}-amd64" > /dev/null 2>&1; then
-            IMAGES+=("${IMAGE_NAME}:${VERSION}-amd64")
-          fi
-          if docker manifest inspect "${IMAGE_NAME}:${VERSION}-arm64" > /dev/null 2>&1; then
-            IMAGES+=("${IMAGE_NAME}:${VERSION}-arm64")
+          # Create multi-arch manifest from already-pushed arch-specific tags
+          docker buildx imagetools create \
+            --tag "${IMAGE_NAME}:${VERSION}" \
+            "${IMAGE_NAME}:${VERSION}-amd64" \
+            "${IMAGE_NAME}:${VERSION}-arm64"
+
+          echo "Pushed manifests:"
+          echo "  ${IMAGE_NAME}:${VERSION}"
+
+          # Only stable releases move the floating 'latest' tag.
+          if [[ "$VERSION" == *-* ]]; then
+            echo "Skipping 'latest' tag for prerelease ${VERSION}"
+          else
+            docker buildx imagetools create \
+              --tag "${IMAGE_NAME}:latest" \
+              "${IMAGE_NAME}:${VERSION}-amd64" \
+              "${IMAGE_NAME}:${VERSION}-arm64"
+            echo "  ${IMAGE_NAME}:latest"
           fi
 
-          if (( ${#IMAGES[@]} == 0 )); then
-            echo "No images available for manifest"
+  cleanup-dockerhub-tags:
+    name: Keep only latest and current version tag
+    needs: [meta, create-manifest]
+    if: needs.create-manifest.result == 'success'
+    runs-on: ubuntu-24.04
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    permissions:
+      contents: read
+
+    steps:
+      - name: Delete all non-current Docker Hub tags
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          REPOSITORY: caddybuddy
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "ERROR: jq is required for Docker Hub tag cleanup"
             exit 1
           fi
 
-          echo "Creating manifest with: ${IMAGES[*]}"
+          keep_version="${VERSION}"
+          keep_latest="latest"
+          api_base="https://hub.docker.com/v2/namespaces/${DOCKERHUB_USERNAME}/repositories/${REPOSITORY}/tags"
 
-          docker manifest create "${IMAGE_NAME}:${VERSION}" "${IMAGES[@]}" --amend
-          docker manifest push "${IMAGE_NAME}:${VERSION}"
+          list_tags() {
+            local next_url="${api_base}?page_size=100"
+            local response=""
 
-          if [[ "$VERSION" != *"-"* ]]; then
-            docker manifest create "${IMAGE_NAME}:latest" "${IMAGES[@]}" --amend
-            docker manifest push "${IMAGE_NAME}:latest"
-            echo "Pushed: ${IMAGE_NAME}:latest"
+            while [[ -n "$next_url" && "$next_url" != "null" ]]; do
+              response="$(curl -fsSL \
+                -H "Authorization: Bearer ${hub_token}" \
+                "$next_url")"
+
+              printf '%s' "$response" | jq -r '.results[].name'
+              next_url="$(printf '%s' "$response" | jq -r '.next // empty')"
+            done
+          }
+
+          wait_for_tag_absent() {
+            local tag="$1"
+            local tag_url="${api_base}/${tag}"
+            local status_code=""
+
+            for _ in $(seq 1 12); do
+              status_code="$(curl -sS -o /dev/null -w '%{http_code}' \
+                -H "Authorization: Bearer ${hub_token}" \
+                "$tag_url")"
+
+              case "$status_code" in
+                404)
+                  echo "Confirmed tag absent: $tag"
+                  return 0
+                  ;;
+                200)
+                  sleep 5
+                  ;;
+                *)
+                  echo "ERROR: Failed to verify deletion for '$tag' (HTTP $status_code)"
+                  return 1
+                  ;;
+              esac
+            done
+
+            echo "ERROR: Tag still visible after cleanup propagation: $tag"
+            return 1
+          }
+
+          echo "Keeping Docker Hub tags:"
+          echo "  ${DOCKERHUB_USERNAME}/${REPOSITORY}:${keep_version}"
+          echo "  ${DOCKERHUB_USERNAME}/${REPOSITORY}:${keep_latest}"
+
+          token_response="$(
+            jq -nc \
+              --arg username "$DOCKERHUB_USERNAME" \
+              --arg password "$DOCKERHUB_TOKEN" \
+              '{username: $username, password: $password}' \
+            | curl -fsSL \
+                -H 'Content-Type: application/json' \
+                -d @- \
+                'https://hub.docker.com/v2/users/login/'
+          )"
+
+          hub_token="$(printf '%s' "$token_response" | jq -r '.token // .access_token // empty')"
+          if [[ -z "$hub_token" ]]; then
+            echo "ERROR: Failed to obtain Docker Hub API token"
+            printf '%s\n' "$token_response"
+            exit 1
           fi
 
-          echo "Pushed: ${IMAGE_NAME}:${VERSION}"
+          declare -a tags_to_delete=()
+          while IFS= read -r tag; do
+            [[ -n "$tag" ]] || continue
 
-      - name: Skip manifest (tag exists)
-        if: steps.check_manifest.outputs.exists == 'true' && github.event.inputs.allow_overwrite != 'true'
-        run: |
-          echo "::warning::Skipping manifest push: ${IMAGE_NAME}:${{ needs.meta.outputs.version }} already exists. Set allow_overwrite=true to force."
+            if [[ "$tag" == "$keep_version" || "$tag" == "$keep_latest" ]]; then
+              echo "Keeping tag: $tag"
+              continue
+            fi
+
+            tags_to_delete+=("$tag")
+          done < <(list_tags)
+
+          for tag in "${tags_to_delete[@]}"; do
+            echo "Deleting tag: $tag"
+            status_code="$(curl -sS -o /dev/null -w '%{http_code}' \
+              -X DELETE \
+              -H "Authorization: Bearer ${hub_token}" \
+              "${api_base}/${tag}")"
+
+            case "$status_code" in
+              202|204)
+                echo "Deleted tag: $tag"
+                wait_for_tag_absent "$tag"
+                ;;
+              404)
+                echo "Tag already absent: $tag"
+                ;;
+              *)
+                echo "ERROR: Failed to delete tag '$tag' (HTTP $status_code)"
+                exit 1
+                ;;
+            esac
+          done
+
+          declare -A remaining_tags=()
+          while IFS= read -r tag; do
+            [[ -n "$tag" ]] || continue
+            remaining_tags["$tag"]=1
+
+            if [[ "$tag" != "$keep_version" && "$tag" != "$keep_latest" ]]; then
+              echo "ERROR: Unexpected tag remained after cleanup: $tag"
+              exit 1
+            fi
+          done < <(list_tags | sort -u)
+
+          for tag in "$keep_latest" "$keep_version"; do
+            if [[ -z "${remaining_tags[$tag]:-}" ]]; then
+              echo "ERROR: Expected tag missing after cleanup: $tag"
+              exit 1
+            fi
+          done
 
   create-release:
     name: Create GitHub Release
-    needs: [meta, build-amd64, build-arm64, create-manifest]
-    if: always() && needs.create-manifest.result == 'success' && github.event.inputs.push != 'false'
-    runs-on: ubuntu-24.04
+    needs: [meta, cleanup-dockerhub-tags]
+    if: needs.cleanup-dockerhub-tags.result == 'success'
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      VERSION: ${{ needs.meta.outputs.version }}
+      IMAGE_NAME: ${{ format('{0}/caddybuddy', secrets.DOCKERHUB_USERNAME) }}
     permissions:
       contents: write
       actions: read
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
+      - name: Download Trivy findings
+        uses: actions/download-artifact@v7
+        with:
+          pattern: trivy-findings-*
+          path: trivy-reports/
+          merge-multiple: false
+
       - name: Create or update GitHub Release
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        env:
-          VERSION: ${{ needs.meta.outputs.version }}
-          TRIVY_AMD64: ${{ needs.build-amd64.outputs.trivy_summary }}
-          TRIVY_AMD64_URL: ${{ needs.build-amd64.outputs.trivy_artifact_url }}
-          TRIVY_ARM64: ${{ needs.build-arm64.outputs.trivy_summary }}
-          TRIVY_ARM64_URL: ${{ needs.build-arm64.outputs.trivy_artifact_url }}
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('node:fs');
+            const path = require('node:path');
             const version = process.env.VERSION;
-            const trivyAmd64 = process.env.TRIVY_AMD64 || 'Scan not available';
-            const trivyAmd64Url = process.env.TRIVY_AMD64_URL || '';
-            const trivyArm64 = process.env.TRIVY_ARM64 || 'Scan not available';
-            const trivyArm64Url = process.env.TRIVY_ARM64_URL || '';
-            const imageName = 'giiibates/caddybuddy';
+            const imageName = process.env.IMAGE_NAME;
             const isPrerelease = version.includes('-');
-            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+
+            function parseTrivyStatus(arch) {
+              const file = path.join('trivy-reports', `trivy-findings-${arch}`, `trivy-${arch}.json`);
+              try {
+                const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+                let critical = 0, high = 0;
+                for (const result of (data.Results || [])) {
+                  for (const vuln of (result.Vulnerabilities || [])) {
+                    if (vuln.Severity === 'CRITICAL') critical++;
+                    else if (vuln.Severity === 'HIGH') high++;
+                  }
+                }
+                return (critical === 0 && high === 0)
+                  ? '✅ No HIGH/CRITICAL vulnerabilities found'
+                  : `⚠️ ${critical} CRITICAL, ${high} HIGH vulnerabilities`;
+              } catch {
+                return '❓ Report unavailable';
+              }
+            }
 
             function normalizeVersion(value) {
               const main = value.split('-', 1)[0];
@@ -703,40 +604,38 @@ jobs:
             }
 
             const tags = [
-              '- `' + imageName + ':' + version + '` (multi-arch)',
-              '- `' + imageName + ':' + version + '-amd64`',
-              '- `' + imageName + ':' + version + '-arm64`'
+              '- `' + imageName + ':' + version + '` (multi-arch)'
             ];
-
             if (!isPrerelease) {
-              tags.push('- `' + imageName + ':latest`');
+              tags.push('- `' + imageName + ':latest` (multi-arch)');
             }
 
-            function escapeCell(value) {
-              return String(value).replace(/\|/g, '\\|');
-            }
-
-            function artifactLink(label, url) {
-              return url ? `[${label}](${url})` : '_Artifact unavailable_';
-            }
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const trivyAmd64 = parseTrivyStatus('amd64');
+            const trivyArm64 = parseTrivyStatus('arm64');
 
             const body = [
+              '## CaddyBuddy ' + version,
+              '',
               '**Docker Image:** `docker pull ' + imageName + ':' + version + '`',
               '',
               '### Available Tags',
               ...tags,
               '',
               '### Security Scan Results',
+              '',
               '| Architecture | Status | Findings |',
-              '| --- | --- | --- |',
-              '| amd64 | ' + escapeCell(trivyAmd64) + ' | ' + artifactLink('trivy-findings-amd64', trivyAmd64Url) + ' |',
-              '| arm64 | ' + escapeCell(trivyArm64) + ' | ' + artifactLink('trivy-findings-arm64', trivyArm64Url) + ' |',
+              '|---|---|---|',
+              '| amd64 | ' + trivyAmd64 + ' | [trivy-findings-amd64](' + runUrl + '#artifacts) |',
+              '| arm64 | ' + trivyArm64 + ' | [trivy-findings-arm64](' + runUrl + '#artifacts) |',
               '| run | workflow details | [Actions Run](' + runUrl + ') |',
               '',
-              'Scanned with Trivy for HIGH and CRITICAL severity vulnerabilities (unfixed CVEs ignored).',
+              '> Scanned with [Trivy](https://trivy.dev/) for HIGH and CRITICAL severity vulnerabilities (unfixed CVEs ignored).',
               '',
               '### Changelog',
-              changelogSection || '_No matching CHANGELOG entry found for this version._'
+              changelogSection || '_No matching CHANGELOG entry found for this version._',
+              '',
+              '**Source:** [CaddyBuddy Repository](https://github.com/' + context.repo.owner + '/' + context.repo.repo + ')'
             ].join('\n');
 
             try {
