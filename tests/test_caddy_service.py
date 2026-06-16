@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import io
+from datetime import UTC, datetime, timedelta
 from ipaddress import ip_address
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,9 +18,92 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 
 from app.services.caddy import CaddyAdminClient, CaddyService, CaddyServiceError, _resolve_target_ips
+from app.services.certificates import certificate_info_from_dates, load_x509_certificate_from_path
 
 
 class CaddyServiceTests(unittest.IsolatedAsyncioTestCase):
+    def test_admin_client_disables_environment_proxy_inheritance(self) -> None:
+        client = CaddyAdminClient("http://localhost:2019", 1.0)
+
+        with patch("app.services.caddy.httpx.AsyncClient", return_value=MagicMock()) as client_cls:
+            created_client = client._get_client()
+
+        self.assertIsNotNone(created_client)
+        client_cls.assert_called_once()
+        self.assertFalse(client_cls.call_args.kwargs["trust_env"])
+
+    def test_path_matches_scope_requires_trusted_issuer_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            cert_root = base / "certificates"
+            trusted_scope = cert_root / "acme-v02.api.letsencrypt.org-directory" / "example.com"
+            trusted_scope.mkdir(parents=True)
+            untrusted_scope = cert_root / "backup" / "example.com"
+            untrusted_scope.mkdir(parents=True)
+
+            self.assertTrue(
+                CaddyService._path_matches_scope(
+                    trusted_scope,
+                    "domain",
+                    "example.com",
+                    root=cert_root,
+                    cert_root=cert_root,
+                )
+            )
+            self.assertFalse(
+                CaddyService._path_matches_scope(
+                    untrusted_scope,
+                    "domain",
+                    "example.com",
+                    root=cert_root,
+                    cert_root=cert_root,
+                )
+            )
+
+            acme_root = base / "acme"
+            trusted_acme_scope = acme_root / "acme-v02.api.letsencrypt.org-directory" / "example.com"
+            trusted_acme_scope.mkdir(parents=True)
+            untrusted_acme_scope = acme_root / "backup" / "example.com"
+            untrusted_acme_scope.mkdir(parents=True)
+
+            self.assertTrue(
+                CaddyService._path_matches_scope(
+                    trusted_acme_scope,
+                    "domain",
+                    "example.com",
+                    root=acme_root,
+                    cert_root=cert_root,
+                )
+            )
+            self.assertFalse(
+                CaddyService._path_matches_scope(
+                    untrusted_acme_scope,
+                    "domain",
+                    "example.com",
+                    root=acme_root,
+                    cert_root=cert_root,
+                )
+            )
+
+    def test_certificate_info_from_dates_marks_not_yet_valid_certificates_pending(self) -> None:
+        now = datetime.now(UTC)
+        info = certificate_info_from_dates(now + timedelta(days=1), now + timedelta(days=31), now)
+
+        self.assertIsNotNone(info)
+        self.assertEqual(info.status, "pending")
+        self.assertFalse(info.valid)
+
+    def test_load_x509_certificate_from_path_avoids_stat_based_size_check(self) -> None:
+        certificate_path = Path("/tmp/example.crt")
+
+        with (
+            patch.object(Path, "open", return_value=io.BytesIO(b"not a certificate")) as open_mock,
+            patch.object(Path, "stat", side_effect=AssertionError("stat() should not be used")),
+        ):
+            self.assertIsNone(load_x509_certificate_from_path(certificate_path))
+
+        open_mock.assert_called_once()
+
     async def test_validate_caddyfile_returns_api_unavailable_on_non_caddy_error(self) -> None:
         service = CaddyService()
 

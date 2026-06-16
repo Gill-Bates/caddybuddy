@@ -39,7 +39,7 @@ class CertificateInfo:
     # valid | expired | pending | error | missing | storage_unavailable | remote_check_unavailable
     status: str = "missing"
     source: str = "none"  # local | remote | none
-    match_type: str | None = None  # san | cn | wildcard
+    match_type: str | None = None  # san | wildcard
     is_wildcard: bool = False
     covering_name: str | None = None  # e.g. "*.cirrio.de"
     checked_at: datetime | None = None
@@ -53,6 +53,7 @@ class CertificateInfo:
 class CertificateRenewalCapability:
     mode: Literal[
         "artifact_purge",
+        "api_reload",
         "restart_repair",
         "wildcard_scope_required",
         "acquisition_sync",
@@ -87,7 +88,7 @@ def normalize_domains(domains: Iterable[str]) -> list[str]:
 
 
 def certificate_names(certificate: x509.Certificate) -> tuple[CertificateName, ...]:
-    """Return the DNS names a certificate is valid for (SAN, with CN fallback)."""
+    """Return the SAN DNS names a certificate is valid for."""
     names: list[CertificateName] = []
     try:
         san = certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName)
@@ -97,16 +98,6 @@ def certificate_names(certificate: x509.Certificate) -> tuple[CertificateName, .
                 names.append(CertificateName(value=val, source="san"))
     except x509.ExtensionNotFound:
         pass
-    if not names:
-        try:
-            for attribute in certificate.subject.get_attributes_for_oid(x509.NameOID.COMMON_NAME):
-                value = attribute.value
-                if isinstance(value, str):
-                    val = value.lower().strip()
-                    if val:
-                        names.append(CertificateName(value=val, source="cn"))
-        except x509.AttributeNotFound:
-            pass
     return tuple(names)
 
 
@@ -168,10 +159,13 @@ def load_x509_certificate_bytes(certificate_bytes: bytes) -> x509.Certificate | 
 
 
 def load_x509_certificate_from_path(certificate_path: Path) -> x509.Certificate | None:
-    if certificate_path.stat().st_size > _MAX_CERTIFICATE_FILE_BYTES:
+    with certificate_path.open("rb") as certificate_file:
+        certificate_bytes = certificate_file.read(_MAX_CERTIFICATE_FILE_BYTES + 1)
+
+    if len(certificate_bytes) > _MAX_CERTIFICATE_FILE_BYTES:
         logger.warning("Skipping oversized certificate file: %s", certificate_path)
         return None
-    certificate_bytes = certificate_path.read_bytes()
+
     return load_x509_certificate_bytes(certificate_bytes)
 
 
@@ -221,10 +215,18 @@ def certificate_info_from_dates(
     seconds_remaining = int((expires_at - now).total_seconds())
     valid_from_ok = issued_at is None or issued_at <= now
     is_valid = valid_from_ok and seconds_remaining > 0
+    resolved_status = status
+    if resolved_status is None:
+        if is_valid:
+            resolved_status = "valid"
+        elif issued_at is not None and issued_at > now:
+            resolved_status = "pending"
+        else:
+            resolved_status = "expired"
     return CertificateInfo(
         exists=True,
         valid=is_valid,
-        status=status or ("valid" if is_valid else "expired"),
+        status=resolved_status,
         source=source,
         match_type=match_type,
         is_wildcard=is_wildcard,
@@ -347,7 +349,7 @@ def find_certificate_for_domain(certs: list[ParsedCertificate], domain: str) -> 
         rank = (
             0 if certificate_info.valid else 1,
             0 if certificate_info.local_artifact_complete else 1,
-            0 if match_type in {"san", "cn"} and not is_wildcard else 1,
+            0 if match_type == "san" and not is_wildcard else 1,
             -(cert.expires_at.timestamp() if cert.expires_at else 0),
         )
         if best_match is None or rank < best_match[0]:
