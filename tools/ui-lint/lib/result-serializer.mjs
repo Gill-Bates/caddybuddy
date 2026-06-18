@@ -87,6 +87,12 @@ export function serializeResultForOutput(result, { summaryPath, visualRegression
         sitesTableMedianRowHeight: metrics.sitesTableDensity?.medianRowHeightPx ?? null,
         sitesTableMaxRowHeight: metrics.sitesTableDensity?.maxRowHeightPx ?? null,
         sitesTableRowsTooTall: countItems(metrics.sitesTableDensity?.oversizedRows),
+        ssllabsMobileCardLayout: metrics.ssllabsMobileCardLayout?.present ? 1 : 0,
+        ssllabsMobileCardRowCount: metrics.ssllabsMobileCardLayout?.rowCount ?? null,
+        ssllabsMobileCardTheadHidden: metrics.ssllabsMobileCardLayout?.present
+            ? (metrics.ssllabsMobileCardLayout.theadHidden ? 1 : 0)
+            : null,
+        ssllabsMobileCardIssues: countItems(metrics.ssllabsMobileCardLayout?.issues),
         ssllabsInlineSchedulerTooNarrow: countItems(metrics.ssllabsInlineSchedulerLayout?.tooNarrow),
         ssllabsInlineSchedulerTooWide: countItems(metrics.ssllabsInlineSchedulerLayout?.tooWide),
         ssllabsInlineSchedulerAlignmentVariance: metrics.ssllabsInlineSchedulerLayout?.alignmentVariance ?? null,

@@ -118,6 +118,66 @@ test('summarizeFindings warns when the SSL Labs history loading shell contract i
     assert.ok(result.warnings.includes('ssllabsHistoryLoadingShell=0/1/1/0/1/0'));
 });
 
+test('summarizeFindings flags SSL Labs mobile site rows that fail the card contract', () => {
+    const result = summarizeFindings({
+        name: 'mobile-ssllabs-light',
+        metrics: {
+            ssllabsMobileCardLayout: {
+                present: true,
+                rowCount: 3,
+                minBorderRadius: 8,
+                theadHidden: true,
+                issues: [
+                    { index: 0, host: 'example.com', reasons: ['noCardRadius', 'noCardBorder'] },
+                ],
+            },
+        },
+        diff: { ratio: 0, sizeMismatch: false },
+        network: {},
+    });
+
+    assert.ok(result.hardFindings.includes('ssllabsMobileCardLayout=1/1/3'));
+    assert.ok(result.findings.includes('ssllabsMobileCardLayout=1/1/3'));
+});
+
+test('summarizeFindings flags SSL Labs mobile layout when the table head stays visible', () => {
+    const result = summarizeFindings({
+        name: 'mobile-ssllabs-light',
+        metrics: {
+            ssllabsMobileCardLayout: {
+                present: true,
+                rowCount: 2,
+                minBorderRadius: 8,
+                theadHidden: false,
+                issues: [],
+            },
+        },
+        diff: { ratio: 0, sizeMismatch: false },
+        network: {},
+    });
+
+    assert.ok(result.hardFindings.includes('ssllabsMobileCardLayout=0/0/2'));
+});
+
+test('summarizeFindings stays silent when SSL Labs mobile cards satisfy the contract', () => {
+    const result = summarizeFindings({
+        name: 'mobile-ssllabs-light',
+        metrics: {
+            ssllabsMobileCardLayout: {
+                present: true,
+                rowCount: 4,
+                minBorderRadius: 8,
+                theadHidden: true,
+                issues: [],
+            },
+        },
+        diff: { ratio: 0, sizeMismatch: false },
+        network: {},
+    });
+
+    assert.ok(!result.findings.some((entry) => entry.startsWith('ssllabsMobileCardLayout=')));
+});
+
 test('summarizeFindings treats broken desktop sites form fill as a hard finding', () => {
     const result = summarizeFindings({
         name: 'desktop-sites',

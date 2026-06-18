@@ -25,6 +25,23 @@
         cache.boundingRect.delete(el);
     }
 
+    // Returns a finite number, or `fallback` when `value` is missing/NaN.
+    // Prevents Number(undefined) → NaN from silently disabling comparisons.
+    function numberConstant(value, fallback) {
+        const n = Number(value);
+        return Number.isFinite(n) ? n : fallback;
+    }
+
+    // Runs querySelectorAll with a try/catch so a malformed selector from the
+    // harness cannot abort the entire runAll() pipeline.
+    function queryAllSafe(selector, fallbackSelector) {
+        try {
+            return Array.from(document.querySelectorAll(selector));
+        } catch {
+            return fallbackSelector ? Array.from(document.querySelectorAll(fallbackSelector)) : [];
+        }
+    }
+
     function styleOf(el) {
         if (!el) return null;
         let style = cache.computedStyle.get(el);
@@ -51,19 +68,36 @@
         return Math.round(value * factor) / factor;
     }
 
+    // Matches Bootstrap column tokens only (col, col-4, col-md-6, col-auto, …)
+    // to avoid false positives from unrelated classes that contain "col-".
+    const BOOTSTRAP_COLUMN_TOKEN_RE = /(^|\s)col(?:-\d+|-auto|-(?:sm|md|lg|xl|xxl)(?:-\d+|-auto)?)?(?=\s|$)/;
+
     function isModalActive(el) {
         if (!el) return false;
         return el.classList.contains('is-open') || el.matches('.modal.show') || styleOf(el)?.display === 'flex';
     }
 
     function getOpenModalElements() {
-        return Array.from(document.querySelectorAll(OPEN_MODAL_CANDIDATE_SELECTOR))
+        const candidates = Array.from(document.querySelectorAll(OPEN_MODAL_CANDIDATE_SELECTOR))
             .filter(isModalActive);
+        // Drop elements that are nested inside another matched element so a
+        // custom overlay wrapping a .modal.show is not counted as two modals.
+        return candidates.filter((candidate) =>
+            !candidates.some((other) => other !== candidate && other.contains(candidate))
+        );
     }
 
     function getOpenModalOverlay() {
         return Array.from(document.querySelectorAll(OPEN_MODAL_OVERLAY_SELECTOR))
             .find(isModalActive) || null;
+    }
+
+    // Normalizes open modal candidates to actual dialog elements, covering both
+    // a standalone Bootstrap .modal.show and a .modal inside a custom overlay.
+    function getOpenModalDialogs() {
+        return getOpenModalElements()
+            .map((el) => el.matches('.modal') ? el : el.querySelector('.modal'))
+            .filter((el) => el instanceof Element && isVisible(el));
     }
 
     function isVisible(el) {
@@ -130,13 +164,6 @@
                 const altText = el.getAttribute('alt')?.trim() || '';
                 if (altText) return altText;
             }
-            const placeholder = el.getAttribute('placeholder')?.trim() || '';
-            if (placeholder) return placeholder;
-        }
-
-        if (el instanceof HTMLTextAreaElement) {
-            const placeholder = el.getAttribute('placeholder')?.trim() || '';
-            if (placeholder) return placeholder;
         }
 
         const title = el.getAttribute('title');
@@ -223,16 +250,19 @@
             return hasOutline || hasBoxShadow;
         }
 
+        // Suppress focus/blur events at window + document level during probing
+        // so app-level capture listeners cannot react to the synthetic focus.
         function isFocusIndicatorMissing(el) {
             const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
             const controller = new AbortController();
 
-            // Suppress event propagation to prevent application state mutation
             const listeners = (event) => event.stopImmediatePropagation();
-            const target = el.closest('form') || el.closest('[tabindex]') || document;
+            const localTarget = el.closest('form') || el.closest('[tabindex]') || document;
             const eventTypes = ['focusin', 'focus', 'focusout', 'blur'];
-            for (const type of eventTypes) {
-                target.addEventListener(type, listeners, { capture: true, signal: controller.signal });
+            for (const suppressTarget of [window, localTarget]) {
+                for (const type of eventTypes) {
+                    suppressTarget.addEventListener(type, listeners, { capture: true, signal: controller.signal });
+                }
             }
 
             try {
@@ -272,13 +302,24 @@
             .map((el) => ({ tag: el.tagName }));
 
         const emptyAriaLabels = interactive
+            .filter(isVisible)
+            .filter((el) => !isVisuallyHidden(el))
             .filter((el) => el.hasAttribute('aria-label') && !String(el.getAttribute('aria-label') || '').trim())
+            .slice(0, 20)
             .map((el) => ({ tag: el.tagName }));
+
+        // Skip text-entry controls: focusing them can open the virtual keyboard
+        // on iOS and cause layout shifts that corrupt subsequent measurements.
+        const canSafelyProbeFocus = (el) =>
+            !(el instanceof HTMLInputElement)
+            && !(el instanceof HTMLTextAreaElement)
+            && !(el instanceof HTMLSelectElement);
 
         let focusIndicatorMissing = [];
         if (constants.ENABLE_FOCUS_LINTING) {
             focusIndicatorMissing = interactive
                 .filter(isVisible)
+                .filter(canSafelyProbeFocus)
                 .filter((el) => isFocusIndicatorMissing(el))
                 .slice(0, 20)
                 .map((el) => ({ tag: el.tagName }));
@@ -312,7 +353,9 @@
             }));
 
         const bootstrapColumnsOutsideRows = Array.from(document.querySelectorAll('[class*="col-"]'))
+            .filter((el) => BOOTSTRAP_COLUMN_TOKEN_RE.test(el.className || ''))
             .filter(isVisible)
+            .filter((el) => !isVisuallyHidden(el))
             .filter((el) => !el.closest('.row'))
             .slice(0, 20)
             .map((el) => ({
@@ -429,12 +472,13 @@
 
     // ---------------- Interaction ----------------
     function interactionAnalyzer(constants, selectors, scope = '') {
-        const targets = Array.from(document.querySelectorAll(selectors.clickTarget || 'button'));
-        const interactiveTargets = Array.from(document.querySelectorAll(
-            selectors.interactive || 'button, [role="button"], a[href], input:not([type="hidden"]), select, textarea'
-        ));
-        const minSize = Number(constants.CLICK_TARGET_MIN_SIZE_PX);
-        const denseTableMinSize = Number(constants.DENSE_TABLE_CLICK_TARGET_MIN_SIZE_PX ?? minSize);
+        const targets = queryAllSafe(selectors.clickTarget || 'button', 'button');
+        const interactiveTargets = queryAllSafe(
+            selectors.interactive || 'button, [role="button"], a[href], input:not([type="hidden"]), select, textarea',
+            'button, [role="button"], a[href], input:not([type="hidden"]), select, textarea'
+        );
+        const minSize = numberConstant(constants.CLICK_TARGET_MIN_SIZE_PX, 44);
+        const denseTableMinSize = numberConstant(constants.DENSE_TABLE_CLICK_TARGET_MIN_SIZE_PX, minSize);
         const tolerance = Number(constants.OVERFLOW_TOLERANCE_PX || 0);
         const isDesktopViewport = window.innerWidth >= Number(constants.LG_BREAKPOINT_PX ?? 992);
         const isDenseSitesTableTarget = (el) => (
@@ -1085,13 +1129,8 @@
     function modalThemeAnalyzer(constants = {}) {
         resetRunCache();
         const theme = document.documentElement.getAttribute('data-bs-theme') || 'light';
-        const openModal = getOpenModalOverlay();
-        if (theme !== 'dark' || !openModal || !isVisible(openModal)) {
-            return { modalThemeIssues: [] };
-        }
-
-        const dialog = openModal.querySelector('.modal');
-        if (!dialog || !isVisible(dialog)) {
+        const [dialog] = getOpenModalDialogs();
+        if (theme !== 'dark' || !dialog) {
             return { modalThemeIssues: [] };
         }
 
@@ -1804,6 +1843,79 @@
         };
     }
 
+    // On mobile the SSL Labs domains table must collapse into standalone site
+    // cards (mirroring the Sites list): each site row renders as a block-level
+    // tile with a border + corner radius, and the table head is hidden. This
+    // analyzer locks that contract in so the responsive treatment cannot
+    // silently regress back to a flat, horizontally-scrolling table row.
+    function ssllabsMobileCardLayoutAnalyzer(constants = {}, scope = '') {
+        const minBorderRadius = Number(constants.SSLLABS_MOBILE_CARD_MIN_BORDER_RADIUS_PX ?? 8);
+        // Gate on the md breakpoint (768px) — the exact width at which the
+        // responsive CSS collapses the table into cards. Using the lg
+        // breakpoint here would falsely flag tablet viewports (e.g. iPad Pro,
+        // 834px) where the desktop table layout is still intentionally active.
+        const isCardViewport = window.innerWidth < Number(constants.MD_BREAKPOINT_PX ?? 768);
+        const fallback = {
+            present: false,
+            rowCount: 0,
+            minBorderRadius,
+            theadHidden: true,
+            issues: [],
+        };
+
+        if (scope !== 'ssllabs' || !isCardViewport) {
+            return { ssllabsMobileCardLayout: fallback };
+        }
+
+        const table = document.querySelector('.ssllabs-table');
+        if (!(table instanceof Element) || !isVisible(table) || isVisuallyHidden(table)) {
+            return { ssllabsMobileCardLayout: fallback };
+        }
+
+        const thead = table.querySelector('thead');
+        const theadHidden = !(thead instanceof Element)
+            || styleOf(thead).display === 'none'
+            || isVisuallyHidden(thead);
+
+        const rows = Array.from(table.querySelectorAll('tr[data-ssllabs-site-row]'))
+            .filter((row) => row instanceof Element && isVisible(row) && !isVisuallyHidden(row));
+        if (!rows.length) {
+            return { ssllabsMobileCardLayout: { ...fallback, present: true, theadHidden } };
+        }
+
+        const issues = rows
+            .map((row, index) => {
+                const style = styleOf(row);
+                const reasons = [];
+                if (style.display !== 'block') {
+                    reasons.push('notBlock');
+                }
+                if ((parseFloat(style.borderTopLeftRadius) || 0) < minBorderRadius) {
+                    reasons.push('noCardRadius');
+                }
+                if ((parseFloat(style.borderTopWidth) || 0) <= 0) {
+                    reasons.push('noCardBorder');
+                }
+                if (reasons.length === 0) {
+                    return null;
+                }
+                const host = (row.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+                return { index, host, reasons };
+            })
+            .filter(Boolean)
+            .slice(0, 20);
+
+        return {
+            ssllabsMobileCardLayout: {
+                present: true,
+                rowCount: rows.length,
+                minBorderRadius,
+                theadHidden,
+                issues,
+            },
+        };
+    }
+
     // ---------------- Mobile spacing checks ----------------
     // Verifies:
     //   1. mobileTopbarClearance — the top of page content clears the fixed topbar/toggle
@@ -1906,6 +2018,7 @@
         const pageStructure = pageStructureAnalyzer();
         const sitesFormControlHeights = sitesFormControlHeightAnalyzer(constants, scope);
         const sitesTableDensity = sitesTableDensityAnalyzer(constants, scope);
+        const ssllabsMobileCardLayout = ssllabsMobileCardLayoutAnalyzer(constants, scope);
         const mobileSpacing = mobileSpacingAnalyzer(constants);
         const state = stateAnalyzer();
         const components = componentAnalyzer();
@@ -1934,6 +2047,7 @@
             ...pageStructure,
             ...sitesFormControlHeights,
             ...sitesTableDensity,
+            ...ssllabsMobileCardLayout,
             ...modalTheme,
             ...mobileSpacing,
 

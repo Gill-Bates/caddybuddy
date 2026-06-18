@@ -154,11 +154,15 @@ body.app-body--menu-open .app-sidebar {
     text-transform: uppercase;
     letter-spacing: 0.14em;
     font-size: 0.72rem;
-    color: rgba(15, 23, 42, 0.55);
+    /* Small (0.72rem) uppercase label: rgba(...,0.55) lands at ~3.8:1 on the
+       page background, below WCAG AA for small text. 0.65 reaches ~5:1. */
+    color: rgba(15, 23, 42, 0.65);
 }
 
 .app-sidebar .brand-mark__kicker {
-    color: rgba(248, 250, 252, 0.6);
+    /* Light label over the teal end of the sidebar gradient: 0.6 opacity is
+       ~2.9:1. Strengthen to clear AA across the whole gradient. */
+    color: rgba(248, 250, 252, 0.92);
 }
 
 .brand-mark__name {
@@ -196,7 +200,10 @@ body.app-body--menu-open .app-sidebar {
     border-radius: 0.95rem;
     min-block-size: var(--cb-sidebar-link-block);
     padding: 0.85rem 1rem;
-    color: rgba(248, 250, 252, 0.78);
+    /* Inactive nav label over the teal gradient end sits at ~3.9:1 at 0.78;
+       0.92 clears AA without losing the active/inactive distinction (active
+       links also gain a background highlight). */
+    color: rgba(248, 250, 252, 0.92);
     font-weight: 600;
     line-height: 1.2;
     text-decoration: none;
@@ -2644,8 +2651,12 @@ body.app-body--menu-open .app-sidebar {
         align-items: stretch;
         max-width: none;
         width: 100%;
+        /* Use the stable small-viewport height as the baseline and let the
+           dialog grow with its content. Forcing height: 100dvh made the modal
+           resize and jump on iOS as the URL bar / on-screen keyboard toggled;
+           the modal body already handles its own scrolling. */
         min-height: 100svh;
-        height: 100dvh;
+        height: auto;
         margin: 0;
     }
 
@@ -2953,9 +2964,46 @@ body.app-body--menu-open .app-sidebar {
         min-block-size: 2.75rem;
     }
 
+    /* Flatten the panel so each site renders as a standalone card tile
+       (mirroring the Sites list), and let the page scroll naturally instead
+       of a short, fixed-height inner scroll box. */
+    .ssllabs-panel {
+        height: auto;
+        min-height: 0;
+        max-height: none;
+        padding: 0;
+        overflow: visible;
+        background: transparent;
+        border: 0;
+        box-shadow: none;
+        backdrop-filter: none;
+    }
+
+    /* With the panel flattened, the cards run full-width to the panel edge.
+       Pull the header and filter controls out to the same edge so the side
+       spacing matches the cards (and the Sites list) instead of keeping the
+       panel's 1.05rem inset, which left the search/filter looking narrower
+       than the cards below them. */
+    .ssllabs-page .ssllabs-panel .panel-card__header,
+    .ssllabs-page .ssllabs-panel .ssllabs-filterbar {
+        padding-inline: 0.25rem;
+    }
+
+    .ssllabs-page .ssllabs-panel .ssllabs-filterbar {
+        border-bottom: 0;
+        margin-bottom: 0.75rem;
+    }
+
+    .ssllabs-scrollbox {
+        flex: 0 0 auto;
+        overflow: visible;
+        padding: 0;
+        scrollbar-gutter: auto;
+    }
+
     .ssllabs-table-wrap {
         overflow: visible;
-        padding: 0 0.75rem 0.75rem;
+        padding: 0;
     }
 
     .ssllabs-table,
@@ -2966,29 +3014,42 @@ body.app-body--menu-open .app-sidebar {
         width: 100%;
     }
 
+    .ssllabs-table colgroup,
     .ssllabs-table thead {
         display: none;
     }
 
-    .ssllabs-table tr {
-        padding: 0.85rem 0;
-        border-top: 1px solid rgba(21, 34, 46, 0.08);
+    /* Each configured site renders as a self-contained card / tile */
+    .ssllabs-table tr[data-ssllabs-site-row] {
+        padding: 1rem 1.05rem;
+        margin-bottom: 0.85rem;
+        border: 1px solid var(--cb-border);
+        border-radius: 1.1rem;
+        background: var(--cb-surface);
+        box-shadow: 0 6px 16px -10px rgba(5, 23, 49, 0.25), 0 2px 6px rgba(5, 23, 49, 0.05);
     }
 
-    .ssllabs-table tr:first-child {
-        border-top: 0;
+    .ssllabs-table tr[data-ssllabs-site-row]:last-child {
+        margin-bottom: 0;
     }
 
     .ssllabs-table td {
-        display: grid;
-        grid-template-columns: minmax(5.75rem, 34%) minmax(0, 1fr);
-        gap: 0.75rem;
-        padding: 0.45rem 0;
+        padding: 0;
         border-bottom: 0;
     }
 
-    .ssllabs-table td::before {
+    /* Divider + spacing between the Site heading and the Domains block */
+    .ssllabs-table td + td {
+        margin-top: 0.7rem;
+        padding-top: 0.7rem;
+        border-top: 1px solid var(--cb-border);
+    }
+
+    /* Field labels sit above their value, not beside it */
+    .ssllabs-table td[data-label="Domains"]::before {
         content: attr(data-label);
+        display: block;
+        margin-bottom: 0.45rem;
         color: var(--cb-muted);
         font-size: 0.68rem;
         font-weight: 700;
@@ -2996,12 +3057,19 @@ body.app-body--menu-open .app-sidebar {
         text-transform: uppercase;
     }
 
-    .ssllabs-table td[colspan] {
-        display: block;
+    /* Site name is the card heading; no label needed */
+    .ssllabs-table td[data-label="Site"]::before {
+        display: none;
     }
 
-    .ssllabs-table td[colspan]::before {
-        content: none;
+    .ssllabs-table td[data-label="Site"] .site-row-title .fw-semibold {
+        font-size: 1rem;
+    }
+
+    /* Empty-state row keeps a plain look, not a tile */
+    .ssllabs-table tr td[colspan] {
+        display: block;
+        text-align: center;
     }
 
     .ssllabs-schedule-form {
@@ -3032,10 +3100,14 @@ body.app-body--menu-open .app-sidebar {
         font-size: 0.75rem;
     }
 
+    .ssllabs-domain-list {
+        gap: 0.7rem;
+    }
+
     .ssllabs-domain-card__summary {
         grid-template-columns: minmax(0, 1fr) auto;
         align-items: start;
-        padding-inline: 0.75rem;
+        padding: 0.7rem 0.75rem;
     }
 
     .ssllabs-domain-card__main {
@@ -3093,11 +3165,6 @@ body.app-body--menu-open .app-sidebar {
         overflow-x: auto;
         overflow-y: auto;
         -webkit-overflow-scrolling: touch;
-    }
-
-    .caddyfile-editor-panel .cm-content,
-    .sites-form-panel__config .cm-content {
-        min-width: 0;
     }
 
     .caddyfile-editor-panel__actions {
@@ -3505,9 +3572,27 @@ body.app-body--menu-open .app-sidebar {
         padding-top: env(safe-area-inset-top);
         padding-left: var(--cb-mobile-gutter-left);
         padding-right: var(--cb-mobile-gutter-right);
+        /* Solid fallback first: where color-mix or backdrop-filter is
+           unavailable (or the user prefers reduced transparency) the topbar
+           must stay opaque enough to keep the logo legible over page content.
+           Enhancements are layered on top behind feature/preference guards,
+           mirroring the panel-card treatment elsewhere in this file. */
+        background: var(--cb-bg);
         background: color-mix(in srgb, var(--cb-bg) 86%, transparent);
-        backdrop-filter: blur(10px);
         border-bottom: 1px solid var(--cb-border);
+    }
+
+    @supports (backdrop-filter: blur(10px)) {
+        .mobile-topbar {
+            backdrop-filter: blur(10px);
+        }
+    }
+
+    @media (prefers-reduced-transparency: reduce) {
+        .mobile-topbar {
+            background: var(--cb-bg);
+            backdrop-filter: none;
+        }
     }
 
     /* The logo now lives in the persistent top bar, so drop it from the flyout. */

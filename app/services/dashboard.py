@@ -29,7 +29,6 @@ from app.utils.domains import split_domain_names
 from app.utils.ssllabs import validate_ssllabs_host
 from app.services.certificates import (
     CertificateInfo,
-    CertificateRenewalCapability,
     normalize_domains,
     certificate_info_from_dates,
     scan_certificate_storage,
@@ -44,19 +43,23 @@ _CERT_FETCH_CONCURRENCY = 10
 _CERT_CACHE_TTL_SECONDS = 600  # 10 minutes
 _MAX_CERT_CACHE_ENTRIES = 1000
 _EXPIRING_SOON_DAYS = 7
+_PENDING_ISSUANCE_WINDOW = timedelta(minutes=30)
 type ResolvedIPAddress = IPv4Address | IPv6Address
 
-# Simple in-memory cache for certificate info
 _cert_cache: dict[str, tuple[datetime, CertificateInfo]] = {}
+_cert_cache_generations: dict[str, int] = {}
 _cert_cache_lock = asyncio.Lock()
 _CERT_FETCH_SEMAPHORE = asyncio.Semaphore(_CERT_FETCH_CONCURRENCY)
 _cert_fetch_tasks: dict[str, asyncio.Task[tuple[str, CertificateInfo]]] = {}
 
 
 async def invalidate_certificate_cache(domain: str) -> None:
-    """Remove a domain from the certificate cache."""
-    normalized = domain.lower().strip()
+    normalized_domains = normalize_domains([domain])
+    if not normalized_domains:
+        return
+    normalized = normalized_domains[0]
     async with _cert_cache_lock:
+        _cert_cache_generations[normalized] = _cert_cache_generations.get(normalized, 0) + 1
         _cert_cache.pop(normalized, None)
 
 
@@ -106,12 +109,6 @@ class HostServiceMetrics:
     status: str
     uptime: str
     version: str
-
-
-@dataclass(slots=True, frozen=True)
-class CertificateStatus:
-    certificate: CertificateInfo
-    renewal: CertificateRenewalCapability
 
 
 class SiteLike(Protocol):
@@ -172,6 +169,12 @@ def _certificate_fetch_error_info(
 
 
 
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
 def _is_pending_certificate_request(
     *,
     enabled: bool,
@@ -180,7 +183,8 @@ def _is_pending_certificate_request(
 ) -> bool:
     if not enabled or updated_at is None:
         return False
-    return now - updated_at <= timedelta(days=_EXPIRING_SOON_DAYS)
+    age = now - _as_utc(updated_at)
+    return timedelta(0) <= age <= _PENDING_ISSUANCE_WINDOW
 
 
 def _normalize_resolved_ip(target_ip: ResolvedIPAddress) -> ResolvedIPAddress:
@@ -234,65 +238,76 @@ async def _resolve_public_certificate_target(domain: str) -> tuple[str, str]:
 
 
 
+def _read_peer_certificate_bytes(
+    validated_domain: str,
+    pinned_ip: str,
+    *,
+    verify: bool,
+) -> bytes | None:
+    context = ssl.create_default_context()
+    context.check_hostname = verify
+    context.verify_mode = ssl.CERT_REQUIRED if verify else ssl.CERT_NONE
+    with socket.create_connection((pinned_ip, 443), timeout=_CERT_FETCH_TIMEOUT) as sock:
+        with context.wrap_socket(sock, server_hostname=validated_domain) as ssock:
+            return ssock.getpeercert(binary_form=True) or None
+
+
 def _fetch_remote_certificate_sync_for_target(validated_domain: str, pinned_ip: str) -> CertificateInfo:
-    """Fetch certificate info by connecting to the domain over HTTPS.
-    
-    Uses CERT_NONE to read certificates even if expired/invalid.
-    Validity is determined by notAfter date, not TLS verification.
-    """
     try:
-        # Disable verification to read expired/self-signed certs
-        context = ssl.create_default_context()
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
-        with socket.create_connection((pinned_ip, 443), timeout=_CERT_FETCH_TIMEOUT) as sock:
-            with context.wrap_socket(sock, server_hostname=validated_domain) as ssock:
-                cert = ssock.getpeercert(binary_form=True)
-                if not cert:
-                    return _certificate_fetch_error_info(
-                        status="error",
-                        error_message="No certificate was presented by the remote server.",
-                        checked_at=datetime.now(UTC),
-                    )
+        verification_error: str | None = None
+        try:
+            cert = _read_peer_certificate_bytes(validated_domain, pinned_ip, verify=True)
+        except ssl.SSLCertVerificationError as exc:
+            verification_error = exc.verify_message or str(exc)
+            cert = _read_peer_certificate_bytes(validated_domain, pinned_ip, verify=False)
 
-                # Decode binary DER certificate
-                x509_cert = x509.load_der_x509_certificate(cert)
-                issued_at = x509_cert.not_valid_before_utc
-                expires_at = x509_cert.not_valid_after_utc
+        if not cert:
+            return _certificate_fetch_error_info(
+                status="error",
+                error_message="No certificate was presented by the remote server.",
+                checked_at=datetime.now(UTC),
+            )
 
-                now = datetime.now(UTC)
-                covers, match_type, covering_name, is_wildcard = certificate_coverage_for_domain(x509_cert, validated_domain)
-                if not covers:
-                    return _certificate_fetch_error_info(
-                        status="error",
-                        error_message="served certificate does not cover this host",
-                        checked_at=now,
-                    )
+        x509_cert = x509.load_der_x509_certificate(cert)
+        issued_at = x509_cert.not_valid_before_utc
+        expires_at = x509_cert.not_valid_after_utc
 
-                info = certificate_info_from_dates(
-                    issued_at,
-                    expires_at,
-                    now,
-                    source="remote",
-                    match_type=match_type,
-                    is_wildcard=is_wildcard,
-                    covering_name=covering_name,
-                    checked_at=now,
-                )
-                if info is None:
-                    return _certificate_fetch_error_info(
-                        status="error",
-                        error_message="Certificate validity dates could not be read.",
-                        checked_at=now,
-                    )
-                return info
+        now = datetime.now(UTC)
+        covers, match_type, covering_name, is_wildcard = certificate_coverage_for_domain(x509_cert, validated_domain)
+        if not covers:
+            return _certificate_fetch_error_info(
+                status="error",
+                error_message="served certificate does not cover this host",
+                checked_at=now,
+            )
 
-    except socket.gaierror as exc:
-        logger.warning("DNS lookup failed for certificate check %s: %s", validated_domain, exc)
-        return _certificate_fetch_error_info(
-            status="remote_check_unavailable",
-            error_message=_build_certificate_fetch_error_message(exc),
+        info = certificate_info_from_dates(
+            issued_at,
+            expires_at,
+            now,
+            source="remote",
+            match_type=match_type,
+            is_wildcard=is_wildcard,
+            covering_name=covering_name,
+            checked_at=now,
         )
+        if info is None:
+            return _certificate_fetch_error_info(
+                status="error",
+                error_message="Certificate validity dates could not be read.",
+                checked_at=now,
+            )
+
+        if verification_error is not None:
+            return replace(
+                info,
+                valid=False,
+                status="error",
+                error_message=f"TLS certificate verification failed: {verification_error}",
+            )
+
+        return info
+
     except (OSError, ssl.SSLError, socket.timeout) as exc:
         logger.warning("Failed to fetch certificate for %s: %s", validated_domain, exc)
         return _certificate_fetch_error_info(
@@ -354,7 +369,7 @@ async def _get_or_start_certificate_fetch(domain: str) -> tuple[str, Certificate
             _cert_fetch_tasks[domain] = task
 
     try:
-        return await task
+        return await asyncio.shield(task)
     finally:
         async with _cert_cache_lock:
             if _cert_fetch_tasks.get(domain) is task:
@@ -399,14 +414,15 @@ async def get_certificate_info_for_domains_remote(
         logger.debug("All %d domains served from cache", len(unique_domains))
         return cert_info
 
-    logger.debug("Fetching certificates for %d domains (%d from cache)", 
+    logger.debug("Fetching certificates for %d domains (%d from cache)",
                  len(domains_to_fetch), len(cert_info))
 
-    # Fetch uncached domains
+    async with _cert_cache_lock:
+        fetch_generations = {d: _cert_cache_generations.get(d, 0) for d in domains_to_fetch}
+
     tasks = [_get_or_start_certificate_fetch(domain) for domain in domains_to_fetch]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    # Process results and update cache
     async with _cert_cache_lock:
         cached_at = datetime.now(UTC)
         for i, result in enumerate(results):
@@ -420,9 +436,10 @@ async def get_certificate_info_for_domains_remote(
                 )
             else:
                 info = result[1]
-            
+
             cert_info[domain] = info
-            _cert_cache[domain] = (cached_at, info)
+            if _cert_cache_generations.get(domain, 0) == fetch_generations[domain]:
+                _cert_cache[domain] = (cached_at, info)
         _prune_cert_cache()
 
     return cert_info
@@ -586,17 +603,18 @@ async def get_caddy_status(session: AsyncSession) -> HostServiceMetrics:
 
 
 def _collect_domain_counts(sites: Iterable[SiteLike]) -> tuple[int, int]:
-    all_domains = sorted({
-        domain_name.lower().strip()
-        for site in sites
+    sites_list = list(sites)
+    all_domains = set(normalize_domains([
+        domain_name
+        for site in sites_list
         for domain_name in split_domain_names(site.domain)
-    })
-    enabled_domains = sorted({
-        domain_name.lower().strip()
-        for site in sites
+    ]))
+    enabled_domains = set(normalize_domains([
+        domain_name
+        for site in sites_list
         if site.enabled
         for domain_name in split_domain_names(site.domain)
-    })
+    ]))
     return len(all_domains), len(enabled_domains)
 
 
@@ -628,8 +646,7 @@ async def get_dashboard_metrics(session: AsyncSession) -> DashboardMetrics:
     managed_site_states: dict[str, tuple[bool, datetime | None]] = {}
     all_domains: list[str] = []
     for site in sites:
-        for domain_name in split_domain_names(site.domain):
-            normalized = domain_name.lower().strip()
+        for normalized in normalize_domains(split_domain_names(site.domain)):
             all_domains.append(normalized)
             managed_site_states[normalized] = (site.enabled, getattr(site, "updated_at", None))
     all_domains = sorted(set(all_domains))
@@ -664,5 +681,3 @@ async def get_dashboard_metrics(session: AsyncSession) -> DashboardMetrics:
         caddy_version=host_service_metrics.version,
     )
 
-
-# Backward compatibility aliases removed.

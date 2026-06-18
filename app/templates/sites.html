@@ -232,6 +232,8 @@
                                             {% set confirm_msg = "Trigger certificate renewal for " ~ site.site_name ~ "? Caddy will request a new certificate if the current one is within the renewal window." %}
                                             {% if renewal and renewal.mode == "restart_repair" %}
                                                 {% set confirm_msg = "Trigger certificate renewal for " ~ site.site_name ~ "? This requires a full Caddy restart to repair local artifacts." %}
+                                            {% elif renewal and renewal.mode == "acquisition_sync" %}
+                                                {% set confirm_msg = "Request certificate for " ~ site.site_name ~ "? Caddy will attempt to obtain a new certificate for this domain." %}
                                             {% endif %}
                                             {% set renewal_hint = none %}
                                             {% if renewal and certificate_action_disabled %}

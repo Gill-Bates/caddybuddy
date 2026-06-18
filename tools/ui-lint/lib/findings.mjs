@@ -27,6 +27,7 @@ import {
     ONBOARDING_WIZARD_INACTIVE_OPACITY_MAX,
     SITES_TABLE_DENSE_ROW_TARGET_PX,
     SITES_TABLE_ROW_MAX_HEIGHT_PX,
+    SSLLABS_MOBILE_CARD_MIN_BORDER_RADIUS_PX,
     VISUAL_DRIFT_THRESHOLD,
 } from './constants.mjs';
 
@@ -169,6 +170,13 @@ export function summarizeFindings(result) {
         maxRowHeightPx: null,
         oversizedRows: [],
     });
+    ensureObject(metrics, 'ssllabsMobileCardLayout', {
+        present: false,
+        rowCount: 0,
+        minBorderRadius: SSLLABS_MOBILE_CARD_MIN_BORDER_RADIUS_PX,
+        theadHidden: true,
+        issues: [],
+    });
     ensureObject(metrics, 'appPageLayout', { present: false, overflowY: null, locksVerticalOverflow: false });
     ensureObject(metrics, 'mobileToggleContentAlignment', {
         present: false,
@@ -258,6 +266,7 @@ export function summarizeFindings(result) {
     ensureArray(metrics.horizontalOverflow, 'offenders');
     ensureArray(metrics.cardContainment, 'cardsPastFooter');
     ensureArray(metrics.sitesTableDensity, 'oversizedRows');
+    ensureArray(metrics.ssllabsMobileCardLayout, 'issues');
 
     ensureObject(report, 'diff', { ratio: 0, sizeMismatch: false });
     ensureObject(report, 'network', {
@@ -425,6 +434,15 @@ export function summarizeFindings(result) {
     if (metrics.sitesTableDensity.present && metrics.sitesTableDensity.oversizedRows.length) {
         pushWarning(
             `sitesTableRowsTooTall=${metrics.sitesTableDensity.oversizedRows.length}/${metrics.sitesTableDensity.maxRowHeightPx}/${metrics.sitesTableDensity.maximumRowHeight}`
+        );
+    }
+    if (
+        isMobile
+        && metrics.ssllabsMobileCardLayout.present
+        && (metrics.ssllabsMobileCardLayout.issues.length || metrics.ssllabsMobileCardLayout.theadHidden === false)
+    ) {
+        pushHard(
+            `ssllabsMobileCardLayout=${metrics.ssllabsMobileCardLayout.issues.length}/${Number(metrics.ssllabsMobileCardLayout.theadHidden)}/${metrics.ssllabsMobileCardLayout.rowCount}`
         );
     }
     if (metrics.appPageLayout.present && metrics.appPageLayout.locksVerticalOverflow) {
