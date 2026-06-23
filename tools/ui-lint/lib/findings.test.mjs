@@ -96,6 +96,26 @@ test('summarizeFindings warns when the retention scale and tick labels drift apa
     assert.ok(result.warnings.includes('ssllabsRetentionLayout=4/2/3/3/2/2/2'));
 });
 
+test('summarizeFindings treats misaligned desktop settings columns as a hard finding', () => {
+    const result = summarizeFindings({
+        name: 'desktop-settings',
+        metrics: {
+            desktopPrimaryPanelHeightAlignment: {
+                present: true,
+                heights: [612, 564],
+                delta: 48,
+                tolerance: 3,
+                passesTolerance: false,
+            },
+        },
+        diff: { ratio: 0, sizeMismatch: false },
+        network: {},
+    });
+
+    assert.ok(result.hardFindings.includes('desktopPrimaryPanelHeightAlignment=48/3'));
+    assert.ok(result.findings.includes('desktopPrimaryPanelHeightAlignment=48/3'));
+});
+
 test('summarizeFindings warns when the SSL Labs history loading shell contract is missing', () => {
     const result = summarizeFindings({
         name: 'desktop-dashboard',
@@ -579,6 +599,36 @@ test('serializeResultForOutput exposes onboarding wizard dimming summary fields'
     assert.equal(output.onboardingWizardStepInactiveOpacityMax, 0.68);
     assert.equal(output.onboardingWizardStepDimmingPass, 1);
     assert.equal(output.onboardingWizardStepAccentPass, 1);
+});
+
+test('serializeResultForOutput exposes desktop settings column alignment summary fields', () => {
+    const output = serializeResultForOutput({
+        name: 'desktop-settings',
+        url: '/settings',
+        findings: [],
+        hardFindings: [],
+        warnings: [],
+        diff: { ratio: 0, sizeMismatch: false },
+        metrics: {
+            horizontalOverflow: { offenders: [] },
+            spacing: {},
+            layoutShift: { value: 0 },
+            desktopPrimaryPanelHeightAlignment: {
+                present: true,
+                heights: [612, 564],
+                delta: 48,
+                tolerance: 3,
+                passesTolerance: false,
+            },
+        },
+        network: {},
+    }, {
+        summaryPath: '/tmp/ui-lint-summary.json',
+        visualRegressionEnabled: false,
+    });
+
+    assert.equal(output.desktopPrimaryPanelHeightAlignmentDelta, 48);
+    assert.equal(output.desktopPrimaryPanelHeightAlignmentPass, 0);
 });
 
 test('serializeResultForOutput tolerates missing network payloads', () => {

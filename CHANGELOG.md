@@ -10,6 +10,7 @@
 - `Security` Remote certificate error details are now safely escaped before being displayed in the UI.
 - `Security` Updated FastAPI and SQLAlchemy to their latest patch releases.
 
+
 <details>
 <summary>Previous versions...</summary>
 

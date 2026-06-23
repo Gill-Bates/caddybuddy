@@ -1377,7 +1377,18 @@
         if (isDesktopTwoColumnViewport && pageGrid instanceof Element) {
             const panels = Array.from(pageGrid.children)
                 .filter((child) => child instanceof Element)
-                .map((column) => column.querySelector(':scope > .panel-card'))
+                .map((column) => {
+                    const directPanel = column.querySelector(':scope > .panel-card');
+                    if (directPanel instanceof Element && isVisible(directPanel) && !isVisuallyHidden(directPanel)) {
+                        return directPanel;
+                    }
+
+                    return Array.from(column.children).find((child) => (
+                        child instanceof Element
+                        && isVisible(child)
+                        && !isVisuallyHidden(child)
+                    )) || null;
+                })
                 .filter((panel) => panel instanceof Element && isVisible(panel) && !isVisuallyHidden(panel));
 
             if (panels.length >= 2) {

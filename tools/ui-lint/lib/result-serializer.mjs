@@ -147,6 +147,10 @@ export function serializeResultForOutput(result, { summaryPath, visualRegression
         mobileTopbarClearancePass: metrics.mobileTopbarClearance?.present
             ? (metrics.mobileTopbarClearance.passesClearance ? 1 : 0)
             : null,
+        desktopPrimaryPanelHeightAlignmentDelta: metrics.desktopPrimaryPanelHeightAlignment?.delta ?? null,
+        desktopPrimaryPanelHeightAlignmentPass: metrics.desktopPrimaryPanelHeightAlignment?.present
+            ? (metrics.desktopPrimaryPanelHeightAlignment.passesTolerance ? 1 : 0)
+            : null,
         duplicateRequests: countItems(network.duplicateRequests),
         badResponseDetails: sanitizeDetails(network.badResponses),
         failedRequestDetails: sanitizeDetails(network.requestFailures),

@@ -1658,16 +1658,32 @@ body.app-body--menu-open .app-sidebar {
     align-items: stretch;
 }
 
+.settings-column {
+    display: flex;
+    flex-direction: column;
+}
+
+.settings-column--primary > .settings-panel,
+.settings-column--secondary > .settings-stack {
+    flex: 1 1 auto;
+}
+
+.settings-stack {
+    align-content: start;
+    height: 100%;
+}
+
+.settings-stack > [class*="col-"] {
+    display: flex;
+    flex-direction: column;
+}
+
 .settings-panel {
     height: 100%;
 }
 
 .settings-panel--primary {
     min-height: 100%;
-}
-
-.settings-stack {
-    align-content: start;
 }
 
 .ssllabs-status-panel {
@@ -1694,7 +1710,7 @@ body.app-body--menu-open .app-sidebar {
 }
 
 #ssllabs-settings,
-#password-settings {
+#ssllabs-retention-settings {
     height: auto;
 }
 

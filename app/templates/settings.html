@@ -13,7 +13,7 @@
     </div>
 
     <div class="row app-grid settings-layout">
-        <div class="col-12 col-xl-6">
+        <div class="col-12 col-xl-6 settings-column settings-column--primary">
             <div class="panel-card settings-panel" id="password-settings">
                 <div class="panel-card__header">
                     <h2 class="h5 mb-0">
@@ -78,7 +78,7 @@
             </div>
         </div>
 
-        <div class="col-12 col-xl-6">
+        <div class="col-12 col-xl-6 settings-column settings-column--secondary">
             <div class="row g-4 settings-stack">
                 <div class="col-12">
                     <div class="panel-card settings-panel settings-panel--primary" id="caddy-settings">
@@ -208,42 +208,43 @@
                     </div>
                 </div>
 
-                <div class="col-12">
-                    <div class="panel-card settings-panel" id="ssllabs-retention-settings">
-                        <div class="panel-card__header">
-                            <h2 class="h5 mb-0">SSL Labs History Retention</h2>
+            </div>
+        </div>
+
+        <div class="col-12 settings-column settings-column--retention">
+            <div class="panel-card settings-panel" id="ssllabs-retention-settings">
+                <div class="panel-card__header">
+                    <h2 class="h5 mb-0">SSL Labs History Retention</h2>
+                </div>
+                <div class="panel-card__body">
+                    <div class="retention-slider"
+                        data-ssllabs-retention
+                        data-retention-url="{{ request.app.url_path_for('update_ssllabs_retention') }}"
+                        data-retention-values="{{ ssllabs_retention_values | tojson }}"
+                        data-retention-current="{{ ssllabs_retention_days }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" data-retention-csrf>
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <label for="ssllabs-retention-slider" class="form-label mb-0">Rank history retention</label>
+                            <span class="badge cb-pill text-bg-secondary" id="ssllabs-retention-badge"
+                                data-retention-badge aria-live="polite">{{ ssllabs_retention_days }} days</span>
                         </div>
-                        <div class="panel-card__body">
-                            <div class="retention-slider"
-                                data-ssllabs-retention
-                                data-retention-url="{{ request.app.url_path_for('update_ssllabs_retention') }}"
-                                data-retention-values="{{ ssllabs_retention_values | tojson }}"
-                                data-retention-current="{{ ssllabs_retention_days }}">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}" data-retention-csrf>
-                                <div class="d-flex justify-content-between align-items-center mb-1">
-                                    <label for="ssllabs-retention-slider" class="form-label mb-0">Rank history retention</label>
-                                    <span class="badge cb-pill text-bg-secondary" id="ssllabs-retention-badge"
-                                        data-retention-badge aria-live="polite">{{ ssllabs_retention_days }} days</span>
-                                </div>
-                                <div class="ssllabs-retention-scale">
-                                    <input type="range" class="form-range" id="ssllabs-retention-slider"
-                                        min="0" max="{{ ssllabs_retention_values | length - 1 }}" step="1"
-                                        value="{{ current_retention_index }}"
-                                        data-retention-slider
-                                        aria-describedby="ssllabs-retention-help">
-                                    <div class="ssllabs-retention-labels" aria-hidden="true">
-                                        {% for days in ssllabs_retention_values %}
-                                        <span class="ssllabs-retention-label">
-                                            {% if days == 365 %}1y{% else %}{{ days }}d{% endif %}
-                                        </span>
-                                        {% endfor %}
-                                    </div>
-                                </div>
-                                <div class="form-text" id="ssllabs-retention-help">
-                                    How long SSL Labs grade history samples are kept for the dashboard chart. Older
-                                    samples are pruned automatically.
-                                </div>
+                        <div class="ssllabs-retention-scale">
+                            <input type="range" class="form-range" id="ssllabs-retention-slider"
+                                min="0" max="{{ ssllabs_retention_values | length - 1 }}" step="1"
+                                value="{{ current_retention_index }}"
+                                data-retention-slider
+                                aria-describedby="ssllabs-retention-help">
+                            <div class="ssllabs-retention-labels" aria-hidden="true">
+                                {% for days in ssllabs_retention_values %}
+                                <span class="ssllabs-retention-label">
+                                    {% if days == 365 %}1y{% else %}{{ days }}d{% endif %}
+                                </span>
+                                {% endfor %}
                             </div>
+                        </div>
+                        <div class="form-text" id="ssllabs-retention-help">
+                            How long SSL Labs grade history samples are kept for the dashboard chart. Older
+                            samples are pruned automatically.
                         </div>
                     </div>
                 </div>
