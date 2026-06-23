@@ -46,6 +46,6 @@ when you want the UI to trigger certificate renewals.
 
 ## Documentation
 
+- Documentation: https://gill-bates.github.io/caddybuddy/
 - GitHub: https://github.com/Gill-Bates/caddybuddy
-- README: https://github.com/Gill-Bates/caddybuddy/blob/main/README.md
 - Releases: https://github.com/Gill-Bates/caddybuddy/releases

@@ -1,0 +1,116 @@
+site_name: CaddyBuddy Documentation
+site_description: Manage one Caddy installation from a focused web control plane
+site_author: Gill-Bates
+site_url: https://gill-bates.github.io/caddybuddy/
+
+repo_name: Gill-Bates/caddybuddy
+repo_url: https://github.com/Gill-Bates/caddybuddy
+edit_uri: edit/main/docs/
+
+docs_dir: .
+site_dir: ../site
+use_directory_urls: true
+
+theme:
+  name: material
+  language: en
+  favicon: assets/favicon.svg
+  logo: assets/favicon.svg
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: caddybuddy
+      primary: teal
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: caddybuddy-dark
+      primary: teal
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font: false
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search:
+      lang: en
+      separator: '[\s\-\.]+'
+  - minify:
+      minify_html: true
+  - git-revision-date-localized:
+      enable_creation_date: true
+      type: timeago
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+extra:
+  homepage: https://gill-bates.github.io/caddybuddy/
+  generator: false
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Gill-Bates/caddybuddy
+    - icon: fontawesome/brands/docker
+      link: https://hub.docker.com/r/giiibates/caddybuddy
+
+extra_css:
+  - stylesheets/extra.css
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Quick Start: getting-started/quick-start.md
+    - Installation: getting-started/installation.md
+    - First Run: getting-started/first-run.md
+  - Features:
+    - Dashboard: features/dashboard.md
+    - Sites: features/sites.md
+    - Caddyfile Editor: features/caddyfile.md
+    - SSL Labs: features/ssl-labs.md
+  - Configuration:
+    - Environment Variables: configuration/environment.md
+    - Caddy Runtime: configuration/caddy-runtime.md
+  - Operations:
+    - Security: operations/security.md
+    - Health Checks: operations/health-checks.md
+    - Troubleshooting: troubleshooting.md
+  - Development:
+    - Local Setup: development/setup.md
+    - Architecture: development/architecture.md
+  - Changelog: changelog.md
+  - License: license.md
+
+copyright: Copyright &copy; 2026 Gill-Bates | AGPL-3.0

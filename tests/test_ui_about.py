@@ -84,6 +84,7 @@ class UIAboutTests(unittest.TestCase):
         self.assertIn("Check for Updates", response.text)
         self.assertIn("Dependencies", response.text)
         self.assertIn("Changelog", response.text)
+        self.assertIn('href="https://gill-bates.github.io/caddybuddy/"', response.text)
         # A known dependency and the update-check widget should be present.
         self.assertIn("fastapi", response.text)
         self.assertIn('id="btn-check-updates"', response.text)
