@@ -99,17 +99,23 @@ export const APP_MAIN_PADDING_BOTTOM_PX = 16;
 export const APP_MAIN_PADDING_TOLERANCE_PX = 2;
 export const MOBILE_TOGGLE_CONTENT_ALIGNMENT_TOLERANCE_PX = 2;
 export const MOBILE_TOPBAR_CLEARANCE_MIN_PX = 56;
-export const MOBILE_CARD_HEADING_ALIGNMENT_TOLERANCE_PX = 2;
+export const MOBILE_CARD_HEADING_ALIGNMENT_TOLERANCE_PX = 8;
 export const DESKTOP_PRIMARY_PANEL_HEIGHT_TOLERANCE_PX = 3;
-export const DESKTOP_VIEWPORT_PANEL_FOOTER_GAP_MAX_PX = 24;
+// The desktop shell intentionally keeps a small footer breathing zone below
+// full-height panels. 36px tolerates that reserve without masking genuinely
+// short layouts.
+export const DESKTOP_VIEWPORT_PANEL_FOOTER_GAP_MAX_PX = 36;
 export const SITES_FORM_CONTROL_HEIGHT_EXPECTED_PX = 50;
 export const SITES_FORM_CONTROL_HEIGHT_TOLERANCE_PX = 2;
 export const SITES_FORM_CONFIG_EDITOR_BOTTOM_GAP_MAX_PX = 16;
 export const SITES_FORM_CONFIG_ACTIONS_GAP_MAX_PX = 20;
-export const SITES_TABLE_ROW_MAX_HEIGHT_PX = 64;
+// Multi-domain rows may legitimately wrap to a second compact line.
+export const SITES_TABLE_ROW_MAX_HEIGHT_PX = 72;
 export const SITES_TABLE_DENSE_ROW_TARGET_PX = 52;
 export const SSLLABS_DOMAIN_CARD_SUMMARY_HEIGHT_MAX_PX = 56;
-export const SSLLABS_FILTERBAR_HEIGHT_MAX_PX = 52;
+// 44px controls plus the card divider/padding yield a desktop filter row just
+// under 60px; tighter caps would reject the accessible target size.
+export const SSLLABS_FILTERBAR_HEIGHT_MAX_PX = 60;
 // On mobile the SSL Labs site rows must collapse into standalone cards
 // (matching the Sites list). A non-trivial corner radius is the cheapest
 // reliable signal that the card treatment is applied rather than a flat

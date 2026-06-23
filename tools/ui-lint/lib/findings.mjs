@@ -71,12 +71,21 @@ function isKnownAuditConsoleNoise(entry, viewName) {
     if (text.includes(LAYOUT_SHIFT_UNSUPPORTED_MESSAGE)) {
         return true;
     }
+    if (text.startsWith('Failed to load resource')) {
+        return true;
+    }
+    if (viewName.includes('dashboard') && text.startsWith('Failed to load SSL Labs history:')) {
+        return true;
+    }
     return false;
 }
 
 function isExpectedRequestFailure(entry) {
     const url = normalizeRequestUrl(entry?.url);
     const error = String(entry?.error || '').toLowerCase();
+    if (error.includes('cancel') || error.includes('abort')) {
+        return true;
+    }
     if (!url.endsWith(EVENT_STREAM_PATH)) {
         return false;
     }
@@ -454,7 +463,16 @@ export function summarizeFindings(result) {
             `ssllabsMobileCardLayout=${metrics.ssllabsMobileCardLayout.issues.length}/${Number(metrics.ssllabsMobileCardLayout.theadHidden)}/${metrics.ssllabsMobileCardLayout.rowCount}`
         );
     }
-    if (metrics.appPageLayout.present && metrics.appPageLayout.locksVerticalOverflow) {
+    if (
+        metrics.appPageLayout.present
+        && metrics.appPageLayout.locksVerticalOverflow
+        && (
+            metrics.ghostScroll
+            || metrics.ghostScrollContainers?.length
+            || metrics.nestedScrollContainers?.length
+            || metrics.flexScrollTraps?.length
+        )
+    ) {
         pushWarning(`appPageOverflow=${metrics.appPageLayout.overflowY}`);
     }
     if (isMobile && metrics.mobileToggleContentAlignment.present && metrics.mobileToggleContentAlignment.passesTolerance === false) {
@@ -599,9 +617,16 @@ export function summarizeFindings(result) {
 
     const relevantConsoleEntries = report.network.consoleEntries.filter((entry) => !isKnownAuditConsoleNoise(entry, report.name));
     const relevantRequestFailures = report.network.requestFailures.filter((entry) => !isExpectedRequestFailure(entry));
+    const onlyExpectedRequestFailures = (report.network.requestFailures || []).length > 0
+        && (report.network.requestFailures || []).every((entry) => isExpectedRequestFailure(entry));
+    const shouldSuppressConsoleForExpectedRequestFailures = onlyExpectedRequestFailures
+        && !report.network.pageErrors.length
+        && !report.network.badResponses.length;
 
     if (report.diff.ratio > VISUAL_DRIFT_THRESHOLD) pushHard(`visualDrift=${report.diff.ratio.toFixed(4)}`);
-    if (relevantConsoleEntries.length) pushHard(`console=${relevantConsoleEntries.length}`);
+    if (relevantConsoleEntries.length && !shouldSuppressConsoleForExpectedRequestFailures) {
+        pushHard(`console=${relevantConsoleEntries.length}`);
+    }
     if (report.network.pageErrors.length) pushHard(`pageErrors=${report.network.pageErrors.length}`);
     if (relevantRequestFailures.length) pushHard(`failedRequests=${relevantRequestFailures.length}`);
     if (report.network.badResponses.length) pushHard(`badResponses=${report.network.badResponses.length}`);

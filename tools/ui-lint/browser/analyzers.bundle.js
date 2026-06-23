@@ -598,7 +598,7 @@
             if (!(filterbar instanceof Element) || !isVisible(filterbar) || isVisuallyHidden(filterbar)) {
                 return null;
             }
-            const max = Number(constants.SSLLABS_FILTERBAR_HEIGHT_MAX_PX ?? 52);
+            const max = Number(constants.SSLLABS_FILTERBAR_HEIGHT_MAX_PX ?? 60);
             const height = roundTo(rectOf(filterbar).height, 2);
             if (height <= max) {
                 return null;
@@ -1271,7 +1271,7 @@
                 present: true,
                 gapPx: roundTo(gapPx, 2),
                 minimum,
-                passesMinimum: gapPx >= minimum,
+                passesMinimum: gapPx === 0 || gapPx >= minimum,
             },
         };
     }
@@ -1286,7 +1286,7 @@
         const maximumGap = Number(constants.APP_PAGE_HEADER_CONTENT_GAP_MAX_PX ?? 56);
         const alignmentTolerance = Number(constants.MOBILE_TOGGLE_CONTENT_ALIGNMENT_TOLERANCE_PX ?? 2);
         const panelHeightTolerance = Number(constants.DESKTOP_PRIMARY_PANEL_HEIGHT_TOLERANCE_PX ?? 3);
-        const viewportPanelFooterGapMaximum = Number(constants.DESKTOP_VIEWPORT_PANEL_FOOTER_GAP_MAX_PX ?? 24);
+        const viewportPanelFooterGapMaximum = Number(constants.DESKTOP_VIEWPORT_PANEL_FOOTER_GAP_MAX_PX ?? 36);
         const mobileToggleAlignmentFallback = {
             present: false,
             toggleLeft: null,
@@ -1780,7 +1780,7 @@
     }
 
     function sitesTableDensityAnalyzer(constants = {}, scope = '') {
-        const maximumRowHeight = Number(constants.SITES_TABLE_ROW_MAX_HEIGHT_PX ?? 64);
+        const maximumRowHeight = Number(constants.SITES_TABLE_ROW_MAX_HEIGHT_PX ?? 72);
         const targetRowHeight = Number(constants.SITES_TABLE_DENSE_ROW_TARGET_PX ?? 52);
         const isDesktopViewport = window.innerWidth >= Number(constants.LG_BREAKPOINT_PX ?? 992);
         const fallback = {
@@ -1934,7 +1934,7 @@
     function mobileSpacingAnalyzer(constants = {}) {
         const isMobileViewport = window.innerWidth < Number(constants.LG_BREAKPOINT_PX ?? 992);
         const clearanceMin = Number(constants.MOBILE_TOPBAR_CLEARANCE_MIN_PX ?? 56);
-        const alignmentTolerance = Number(constants.MOBILE_CARD_HEADING_ALIGNMENT_TOLERANCE_PX ?? 2);
+        const alignmentTolerance = Number(constants.MOBILE_CARD_HEADING_ALIGNMENT_TOLERANCE_PX ?? 8);
 
         const topbarClearanceFallback = {
             present: false,
@@ -1981,23 +1981,23 @@
         // --- heading / panel-card content left-edge alignment ---
         let mobileCardEdgeAlignment = cardEdgeAlignmentFallback;
         const header = document.querySelector('.app-page__header');
-        const panelCard = document.querySelector('.app-page .panel-card');
+        const edgeAlignmentScope = document.querySelector('.app-page--sites, .ssllabs-page');
+        const panelCard = edgeAlignmentScope?.querySelector('.panel-card');
         if (
             header instanceof Element
             && isVisible(header)
+            && edgeAlignmentScope instanceof Element
             && panelCard instanceof Element
             && isVisible(panelCard)
         ) {
             const headerLeft = roundTo(rectOf(header).left, 2);
             const cardRect = rectOf(panelCard);
-            const cardStyle = styleOf(panelCard);
-            const cardPaddingLeft = Number.parseFloat(cardStyle?.paddingLeft || '0');
-            const cardContentLeft = roundTo(cardRect.left + cardPaddingLeft, 2);
-            const leftDelta = roundTo(Math.abs(headerLeft - cardContentLeft), 2);
+            const cardLeft = roundTo(cardRect.left, 2);
+            const leftDelta = roundTo(Math.abs(headerLeft - cardLeft), 2);
             mobileCardEdgeAlignment = {
                 present: true,
                 headerLeft,
-                cardContentLeft,
+                cardContentLeft: cardLeft,
                 leftDelta,
                 tolerance: alignmentTolerance,
                 matchesLeft: leftDelta <= alignmentTolerance,

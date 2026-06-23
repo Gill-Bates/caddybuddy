@@ -226,12 +226,14 @@ class UISslLabsTests(unittest.TestCase):
         css = css_path.read_text(encoding="utf-8")
 
         self.assertIn(
-            ".ssllabs-filterbar [data-ssllabs-clear-filters] {\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    min-block-size: 2.1rem;",
+            ".ssllabs-filterbar [data-ssllabs-clear-filters] {\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    min-block-size: 2.75rem;\n    height: 2.75rem;",
             css,
+            "SSL Labs filter clear button must match the 44px touch target height of the filter inputs.",
         )
-        self.assertNotIn(
-            "[data-ssllabs-clear-filters] {\n        min-block-size: 2.75rem;",
+        self.assertIn(
+            ".ssllabs-filterbar [data-ssllabs-clear-filters] {\n        min-block-size: 2.1rem;\n    }",
             css,
+            "Mobile override must scale the clear button down to match compact filter inputs.",
         )
 
     def test_ssllabs_page_marks_mixed_filter_grade_for_mixed_endpoints(self) -> None:

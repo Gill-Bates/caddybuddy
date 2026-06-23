@@ -89,6 +89,16 @@ class UISitesTests(unittest.TestCase):
         nonce = match.group(1)
         self.assertIn(f'<meta name="csp-nonce" content="{nonce}">', response.text)
 
+    def test_sites_desktop_css_expands_form_column_when_editing(self) -> None:
+        css_path = Path(__file__).resolve().parents[1] / "app/static/css/app.css"
+        css = css_path.read_text(encoding="utf-8")
+
+        self.assertIn(
+            ".app-page--sites[data-site-form-open]>.app-grid>.sites-form-column {\n        flex: 0 0 auto;\n        width: 58.33333333%;\n    }\n\n    .app-page--sites[data-site-form-open]>.app-grid>.sites-list-column {\n        flex: 0 0 auto;\n        width: 41.66666667%;\n    }",
+            css,
+            "Desktop Sites page must widen the form column and narrow the table when a site is being edited.",
+        )
+
     def test_sites_page_renders_config_textarea_and_status_toggle(self) -> None:
         app = self._build_app()
         current_user = SimpleNamespace(username="admin", role="admin")

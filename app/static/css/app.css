@@ -1669,13 +1669,17 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .settings-stack {
+    --bs-gutter-x: 0;
+    --bs-gutter-y: 1.5rem;
     align-content: start;
     height: 100%;
+    margin: 0;
 }
 
 .settings-stack > [class*="col-"] {
     display: flex;
     flex-direction: column;
+    padding: 0;
 }
 
 .settings-panel {
@@ -1705,7 +1709,8 @@ body.app-body--menu-open .app-sidebar {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-height: 1.75rem;
+    min-height: var(--cb-pill-min-height);
+    line-height: 1;
     vertical-align: middle;
 }
 
@@ -1821,8 +1826,9 @@ body.app-body--menu-open .app-sidebar {
 
 .ssllabs-filterbar .form-control,
 .ssllabs-filterbar .form-select {
-    min-height: 2.1rem;
-    padding-block: 0.35rem;
+    min-height: 2.75rem;
+    height: 2.75rem;
+    padding-block: 0.5rem;
     font-size: 0.82rem;
     font-family: inherit;
     color: var(--cb-text);
@@ -1853,8 +1859,9 @@ body.app-body--menu-open .app-sidebar {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-block-size: 2.1rem;
-    padding: 0.35rem 0.85rem;
+    min-block-size: 2.75rem;
+    height: 2.75rem;
+    padding: 0.5rem 0.85rem;
     font-size: 0.82rem;
     line-height: 1;
     border-radius: 999px;
@@ -2279,6 +2286,16 @@ body.app-body--menu-open .app-sidebar {
     .app-page--sites>.app-grid>.sites-form-column,
     .app-page--sites>.app-grid>.sites-list-column {
         min-height: 0;
+    }
+
+    .app-page--sites[data-site-form-open]>.app-grid>.sites-form-column {
+        flex: 0 0 auto;
+        width: 58.33333333%;
+    }
+
+    .app-page--sites[data-site-form-open]>.app-grid>.sites-list-column {
+        flex: 0 0 auto;
+        width: 41.66666667%;
     }
 
     .sites-form-column,
