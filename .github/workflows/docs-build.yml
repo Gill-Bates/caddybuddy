@@ -41,8 +41,13 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-          cache: pip
-          cache-dependency-path: docs/requirements-docs.txt
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        if: hashFiles('docs/requirements-docs.txt') != ''
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('docs/requirements-docs.txt') }}
 
       - name: Install dependencies
         run: |
@@ -73,8 +78,13 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-          cache: pip
-          cache-dependency-path: docs/requirements-docs.txt
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        if: hashFiles('docs/requirements-docs.txt') != ''
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('docs/requirements-docs.txt') }}
 
       - name: Install dependencies
         run: |
@@ -107,7 +117,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
+      - name: Check docs requirements exist
+        id: check_docs
+        run: |
+          if [ -f docs/requirements-docs.txt ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::docs/requirements-docs.txt not found — skipping security scan"
+          fi
+
       - name: Scan documentation dependencies
+        if: steps.check_docs.outputs.exists == 'true'
         uses: aquasecurity/trivy-action@master
         with:
           cache: "false"
