@@ -38,6 +38,9 @@
         {% elif icon == 'settings' %}
         <path
             d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.07-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.03 7.03 0 0 0-1.66-.96l-.36-2.54A.5.5 0 0 0 13.86 2h-3.72a.5.5 0 0 0-.5.42l-.36 2.54c-.6.24-1.16.56-1.66.96l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.5a.5.5 0 0 0 .12.64l2.03 1.58c-.05.31-.08.63-.08.94s.03.63.08.94L2.83 14.2a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.4 1.06.72 1.66.96l.36 2.54a.5.5 0 0 0 .5.42h3.72a.5.5 0 0 0 .5-.42l.36-2.54c.6-.24 1.16-.56 1.66-.96l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64zM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5z" />
+        {% elif icon == 'info' %}
+        <path
+            d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" />
         {% endif %}
     </svg>
     {%- endmacro %}
@@ -99,6 +102,10 @@
                     {% set settings_path = optional_url_path_for(request, 'settings_page') %}
                     {% if settings_path %}
                     {{ nav_link(settings_path, 'Settings', 'settings') }}
+                    {% endif %}
+                    {% set about_path = optional_url_path_for(request, 'about_page') %}
+                    {% if about_path %}
+                    {{ nav_link(about_path, 'About', 'info') }}
                     {% endif %}
                 </nav>
             </div>

@@ -1,0 +1,202 @@
+{% extends 'base.html' %}
+
+{% set page_title = "About" %}
+
+{% block content %}
+<section class="app-page app-page--about">
+    <div class="app-page__header">
+        <div class="app-page__lede">
+            <p class="eyebrow mb-2">Information</p>
+            <h1 class="page-title mb-0">About</h1>
+        </div>
+    </div>
+
+    <div class="row app-grid about-top-row">
+        <!-- Application Details -->
+        <div class="col-12 col-lg-4 d-flex">
+            <div class="panel-card about-card flex-grow-1">
+                <div class="panel-card__header">
+                    <h2 class="h5 mb-0">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor"
+                            class="bi me-2" viewBox="0 0 16 16" aria-hidden="true">
+                            <path
+                                d="M10.478 1.647a.5.5 0 1 0-.956-.294l-4 13a.5.5 0 0 0 .956.294zM4.854 4.146a.5.5 0 0 1 0 .708L1.707 8l3.147 3.146a.5.5 0 0 1-.708.708l-3.5-3.5a.5.5 0 0 1 0-.708l3.5-3.5a.5.5 0 0 1 .708 0m6.292 0a.5.5 0 0 0 0 .708L14.293 8l-3.147 3.146a.5.5 0 0 0 .708.708l3.5-3.5a.5.5 0 0 0 0-.708l-3.5-3.5a.5.5 0 0 0-.708 0" />
+                        </svg>
+                        Application Details
+                    </h2>
+                </div>
+                <div class="panel-card__body">
+                    <table class="table table-sm table-borderless mb-0 about-meta-table">
+                        <thead class="visually-hidden">
+                            <tr>
+                                <th scope="col">Property</th>
+                                <th scope="col">Value</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td class="ps-0"><strong>{{ app_name }}</strong></td>
+                                <td class="text-end"><code class="about-meta-value">{{ version }}</code></td>
+                            </tr>
+                            <tr>
+                                <td class="ps-0"><strong>Build</strong></td>
+                                <td class="text-end"><code class="about-meta-value">{{ commit[:7] if commit and commit != 'unknown' else 'unknown' }}</code></td>
+                            </tr>
+                            <tr>
+                                <td class="ps-0"><strong>Python</strong></td>
+                                <td class="text-end"><code class="about-meta-value">{{ python_version }}</code></td>
+                            </tr>
+                            <tr>
+                                <td class="ps-0"><strong>Timezone</strong></td>
+                                <td class="text-end"><code class="about-meta-value">{{ timezone }}</code></td>
+                            </tr>
+                        </tbody>
+                    </table>
+
+                    <div class="about-divider"></div>
+                    <h3 class="h6 text-body-secondary mb-2">Author</h3>
+                    <div class="d-flex align-items-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor"
+                            class="bi me-2 about-accent-icon" viewBox="0 0 16 16" aria-hidden="true">
+                            <path d="M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6m2-3a2 2 0 1 1-4 0 2 2 0 0 1 4 0m4 8c0 1-1 1-1 1H3s-1 0-1-1 1-4 6-4 6 3 6 4m-1-.004c-.001-.246-.154-.986-.832-1.664C11.516 10.68 10.289 10 8 10s-3.516.68-4.168 1.332c-.678.678-.83 1.418-.832 1.664z" />
+                        </svg>
+                        <div>
+                            <strong>Gill-Bates</strong><br>
+                            <a href="https://github.com/Gill-Bates/caddybuddy" target="_blank" rel="noopener noreferrer"
+                                class="text-decoration-none small">github.com/Gill-Bates/caddybuddy</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Check for Updates + Documentation -->
+        <div class="col-12 col-lg-4 d-flex flex-column gap-3">
+            <div class="panel-card about-card about-update-card">
+                <div class="panel-card__header">
+                    <h2 class="h5 mb-0">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor"
+                            class="bi me-2" viewBox="0 0 16 16" aria-hidden="true">
+                            <path fill-rule="evenodd" d="M8 0a8 8 0 0 0-2.915 15.452 8 8 0 0 0 5.83 0A8 8 0 0 0 8 0M4.732 8.732a.5.5 0 0 1 .707 0L7.5 10.793V4a.5.5 0 0 1 1 0v6.793l2.06-2.06a.5.5 0 1 1 .708.706l-2.915 2.915a.5.5 0 0 1-.707 0L4.732 9.44a.5.5 0 0 1 0-.707" />
+                        </svg>
+                        Check for Updates
+                    </h2>
+                    <button type="button" class="btn btn-sm btn-outline-secondary text-nowrap" id="btn-check-updates"
+                        title="Check now" data-is-admin="{{ 'true' if current_user.role == 'admin' else 'false' }}">
+                        Check Now
+                    </button>
+                </div>
+                <div class="panel-card__body">
+                    <div id="update-check-loading" class="text-center py-2">
+                        <div class="spinner-border spinner-border-sm text-primary" role="status">
+                            <span class="visually-hidden">Checking...</span>
+                        </div>
+                        <span class="ms-2 text-body-secondary small">Checking for updates...</span>
+                    </div>
+
+                    <div id="update-check-result" class="d-none">
+                        <div id="update-status-badge" class="mb-2"></div>
+                        <table class="table table-borderless table-sm mb-0 about-meta-table">
+                            <thead class="visually-hidden">
+                                <tr>
+                                    <th scope="col">Field</th>
+                                    <th scope="col">Version</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="ps-0"><strong>Current</strong></td>
+                                    <td class="text-end"><code class="about-meta-value" id="update-current-version">–</code></td>
+                                </tr>
+                                <tr>
+                                    <td class="ps-0"><strong>Latest</strong></td>
+                                    <td class="text-end"><code class="about-meta-value" id="update-latest-version">–</code></td>
+                                </tr>
+                                <tr id="update-published-row" class="d-none">
+                                    <td class="ps-0"><strong>Released</strong></td>
+                                    <td class="text-end"><code class="about-meta-value" id="update-published-at">–</code></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        <div id="update-error" class="alert alert-warning mt-2 mb-0 py-1 d-none">
+                            <small id="update-error-text"></small>
+                        </div>
+                        <div id="update-available-section" class="d-none mt-2">
+                            <a id="update-release-link" href="#" target="_blank" rel="noopener noreferrer"
+                                class="btn btn-sm btn-primary w-100">View Release on GitHub</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel-card about-card about-doc-card">
+                <div class="panel-card__body d-flex align-items-center justify-content-center">
+                    <a class="btn btn-outline-secondary w-100"
+                        href="https://github.com/Gill-Bates/caddybuddy#readme" target="_blank" rel="noopener noreferrer">
+                        Documentation
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dependencies -->
+        <div class="col-12 col-lg-4 d-flex">
+            <div class="panel-card about-card flex-grow-1">
+                <div class="panel-card__header">
+                    <h2 class="h5 mb-0">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor"
+                            class="bi me-2" viewBox="0 0 16 16" aria-hidden="true">
+                            <path d="M8.186 1.113a.5.5 0 0 0-.372 0L1.846 3.5 8 5.961 14.154 3.5zM15 4.239l-6.5 2.6v7.922l6.5-2.6V4.24zM7.5 14.762V6.838L1 4.239v7.923zM7.443.184a1.5 1.5 0 0 1 1.114 0l7.129 2.852A.5.5 0 0 1 16 3.5v8.662a1 1 0 0 1-.629.928l-7.185 2.874a.5.5 0 0 1-.372 0L.63 13.09a1 1 0 0 1-.63-.928V3.5a.5.5 0 0 1 .314-.464z" />
+                        </svg>
+                        Dependencies
+                    </h2>
+                </div>
+                <div class="panel-card__body about-card__body--flush">
+                    <div class="table-responsive about-deps-scroll" tabindex="0" aria-label="Dependencies table">
+                        <table class="table table-sm table-hover mb-0 about-deps-table">
+                            <thead>
+                                <tr>
+                                    <th>Package</th>
+                                    <th class="text-end">Version</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for pkg, ver in dependencies %}
+                                <tr>
+                                    <td><code>{{ pkg }}</code></td>
+                                    <td class="text-end"><code class="about-meta-value">{{ ver }}</code></td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Changelog -->
+    <div class="row app-grid about-changelog-row">
+        <div class="col-12">
+            <div class="panel-card about-card">
+                <div class="panel-card__header">
+                    <h2 class="h5 mb-0">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor"
+                            class="bi me-2" viewBox="0 0 16 16" aria-hidden="true">
+                            <path d="M8.515 1.019A7 7 0 0 0 8 1V0a8 8 0 0 1 .589.022zm2.004.45a7 7 0 0 0-.985-.299l.219-.976q.576.129 1.126.342zm1.37.71a7 7 0 0 0-.439-.27l.493-.87a8 8 0 0 1 .979.654l-.615.789a7 7 0 0 0-.418-.302zm1.834 1.79a7 7 0 0 0-.653-.796l.724-.69q.406.429.747.91zm.744 1.352a7 7 0 0 0-.214-.468l.893-.45a8 8 0 0 1 .45 1.088l-.95.313a7 7 0 0 0-.179-.483m.53 2.507a7 7 0 0 0-.1-1.025l.985-.17q.1.58.116 1.17zm-.131 1.538q.05-.254.081-.51l.993.123a8 8 0 0 1-.23 1.155l-.964-.267q.069-.247.12-.501m-.952 2.379q.276-.436.486-.908l.914.405q-.24.54-.555 1.038zm-.964 1.205q.183-.183.35-.378l.758.653a8 8 0 0 1-.401.432zM8 16a8 8 0 0 1-.589-.022l.078-.997A7 7 0 0 0 8 15zm-2.004-.45a7 7 0 0 0 .985.299l-.219.976A8 8 0 0 1 5.636 14.7zm-1.37-.71a7 7 0 0 0 .439.27l-.493.87a8 8 0 0 1-.979-.654l.615-.789q.2.158.418.302zm-1.834-1.79a7 7 0 0 0 .653.796l-.724.69a8 8 0 0 1-.747-.91zm-.744-1.352a7 7 0 0 0 .214.468l-.893.45a8 8 0 0 1-.45-1.088l.95-.313q.075.247.179.483zm-.53-2.507a7 7 0 0 0 .1 1.025l-.985.17A8 8 0 0 1 .12 7.793zm.131-1.538a7 7 0 0 0-.081.51L.035 8.42a8 8 0 0 1 .23-1.155l.964.267q-.069.247-.12.501zm.952-2.379q-.276.436-.486.908l-.914-.405q.24-.54.555-1.038zm.964-1.205q-.183.183-.35.378l-.758-.653q.19-.22.401-.432zM8 4.466a.5.5 0 0 0-.5.5v3.5l-1.5 1.5a.5.5 0 0 0 .708.708l1.646-1.647A.5.5 0 0 0 8.5 8.466v-3.5a.5.5 0 0 0-.5-.5" />
+                        </svg>
+                        Changelog
+                    </h2>
+                </div>
+                <div class="panel-card__body about-changelog-content">
+                    {{ changelog_html | safe }}
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ request.app.url_path_for('static', path='js/about.js') }}"></script>
+{% endblock %}
