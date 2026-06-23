@@ -38,12 +38,10 @@ from app.services.runtime_settings import get_caddy_config, get_ssllabs_email
 from app.utils.caddyfile import (
     build_generated_site_block,
     directives_have_import,
-    directives_have_log_block,
     directives_have_security_header_block,
     inject_global_options,
     parse_caddyfile,
     snippet_is_defined,
-    SNIPPET_DEFAULT_LOG,
     SNIPPET_SECURITY_HEADERS,
 )
 from app.utils.domains import split_domain_names
@@ -481,7 +479,6 @@ def _render_generated_site_block(
     site,
     *,
     has_security_headers_snippet: bool,
-    has_default_log_snippet: bool,
 ) -> str:
     directives = site.caddy_directives
     return build_generated_site_block(
@@ -493,11 +490,6 @@ def _render_generated_site_block(
             has_security_headers_snippet
             and not directives_have_import(directives, "security_headers")
             and not directives_have_security_header_block(directives)
-        ),
-        import_default_log=(
-            has_default_log_snippet
-            and not directives_have_import(directives, "default_log")
-            and not directives_have_log_block(directives)
         ),
     )
 
@@ -514,8 +506,6 @@ async def build_site_validation_caddyfile(
 
     if not snippet_is_defined(baseline, "security_headers"):
         parts.append(SNIPPET_SECURITY_HEADERS)
-    if not snippet_is_defined(baseline, "default_log"):
-        parts.append(SNIPPET_DEFAULT_LOG)
     if baseline:
         parts.append(baseline)
 
@@ -527,8 +517,6 @@ async def build_site_validation_caddyfile(
             ssl_enabled=True,
             import_security_headers=not directives_have_import(caddy_directives, "security_headers")
             and not directives_have_security_header_block(caddy_directives),
-            import_default_log=not directives_have_import(caddy_directives, "default_log")
-            and not directives_have_log_block(caddy_directives),
         )
     )
     return "\n\n".join(parts)
@@ -543,22 +531,18 @@ async def build_full_caddyfile(session: AsyncSession) -> str:
     # Prepend standard snippets that are not already defined in the baseline
     if not snippet_is_defined(baseline, "security_headers"):
         parts.append(SNIPPET_SECURITY_HEADERS)
-    if not snippet_is_defined(baseline, "default_log"):
-        parts.append(SNIPPET_DEFAULT_LOG)
 
     if baseline:
         parts.append(baseline)
 
     # Snippets are now guaranteed to be present in the output
     has_security_snippet = True
-    has_log_snippet = True
 
     sites = await site_repository.list_all(session, enabled_only=True)
     for site in sorted(sites, key=lambda item: item.domain):
         parts.append(_render_generated_site_block(
             site,
             has_security_headers_snippet=has_security_snippet,
-            has_default_log_snippet=has_log_snippet,
         ))
 
     return "\n\n".join(parts)

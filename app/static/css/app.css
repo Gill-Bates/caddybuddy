@@ -486,6 +486,11 @@ body.app-body--menu-open .app-sidebar {
     --bs-gutter-x: 1rem;
     --bs-gutter-y: 1rem;
     margin-inline: 0;
+    /* Grid item of the .app-page grid: without min-width:0 its automatic
+       minimum is min-content, so wide scrollable children (the Caddyfile
+       editor, the sites table) blow the layout past the viewport and get
+       clipped by the shell's overflow-x:hidden instead of scrolling. */
+    min-width: 0;
 }
 
 .metric-grid {
@@ -1828,6 +1833,17 @@ body.app-body--menu-open .app-sidebar {
     outline: none;
 }
 
+.ssllabs-filterbar [data-ssllabs-clear-filters] {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-block-size: 2.1rem;
+    padding: 0.35rem 0.85rem;
+    font-size: 0.82rem;
+    line-height: 1;
+    border-radius: 999px;
+}
+
 .ssllabs-scrollbox {
     flex: 1 1 auto;
     min-height: 0;
@@ -1901,6 +1917,27 @@ body.app-body--menu-open .app-sidebar {
     align-items: center;
     gap: 0.5rem;
     min-width: 0;
+}
+
+/* In the fixed-layout sites table the title must fill (and be bounded by) its
+   cell, otherwise inline-flex sizes to its content, the name's ellipsis never
+   engages, and the handler badge spills into the Domain column. Applies in
+   table mode at every width (the <768px card mode media query overrides). */
+.sites-list-scroll .sites-table .site-row-title {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+}
+
+.sites-list-scroll .sites-table .site-handler-badge {
+    flex: 0 0 auto;
+}
+
+.sites-list-scroll .sites-table .site-row-title .fw-semibold {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .site-status-dot {
@@ -2960,8 +2997,8 @@ body.app-body--menu-open .app-sidebar {
         grid-template-columns: minmax(0, 1fr);
     }
 
-    [data-ssllabs-clear-filters] {
-        min-block-size: 2.75rem;
+    .ssllabs-filterbar [data-ssllabs-clear-filters] {
+        min-block-size: 2.1rem;
     }
 
     /* Flatten the panel so each site renders as a standalone card tile

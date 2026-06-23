@@ -245,6 +245,12 @@ export function summarizeFindings(result) {
         hasPeriodList: false,
         passesShell: true,
     });
+    ensureObject(metrics, 'ssllabsFilterbarHeightIssue', {
+        present: false,
+        height: null,
+        maximum: null,
+        passesMaximum: true,
+    });
     ensureObject(metrics, 'primaryPanelPadding', { present: false, tolerance: 0, panels: [], mismatches: [] });
     ensureObject(metrics, 'pageHeaderContentGap', {
         present: false,
@@ -325,6 +331,9 @@ export function summarizeFindings(result) {
     if (metrics.clippedButtons.length) pushWarning(`clippedButtons=${metrics.clippedButtons.length}`);
     if (metrics.ssllabsPrematureDesktopLayoutIssues?.length) {
         pushHard(`ssllabsPrematureDesktopLayout=${metrics.ssllabsPrematureDesktopLayoutIssues.length}`);
+    }
+    if (isDesktop && metrics.ssllabsFilterbarHeightIssue?.passesMaximum === false) {
+        pushHard(`ssllabsFilterbarHeight=${metrics.ssllabsFilterbarHeightIssue.height}/${metrics.ssllabsFilterbarHeightIssue.maximum}`);
     }
     if (metrics.ssllabsInlineSchedulerLayout?.tooNarrow?.length) {
         pushWarning(`ssllabsInlineSchedulerTooNarrow=${metrics.ssllabsInlineSchedulerLayout.tooNarrow.length}`);

@@ -5,15 +5,19 @@
     log {
         level info
         format json
-        output stdout
+        output file /var/log/caddy/runtime.json {
+            roll_size 10MiB
+            roll_keep 5
+            roll_keep_for 168h
+        }
     }
 
     # Nur aktivieren, wenn Caddy hinter einem vertrauenswürdigen Proxy/CDN läuft.
     #
-    servers {
+    # servers {
     #     trusted_proxies static private_ranges
     #     trusted_proxies_strict
-    }
+    # }
 }
 
 (security_headers) {
@@ -37,12 +41,5 @@
 
         -Server
         -X-Powered-By
-    }
-}
-
-(default_log) {
-    log {
-        output stdout
-        format json
     }
 }

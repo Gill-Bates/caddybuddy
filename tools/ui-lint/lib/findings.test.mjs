@@ -118,6 +118,42 @@ test('summarizeFindings warns when the SSL Labs history loading shell contract i
     assert.ok(result.warnings.includes('ssllabsHistoryLoadingShell=0/1/1/0/1/0'));
 });
 
+test('summarizeFindings treats an oversized SSL Labs desktop filterbar as a hard finding', () => {
+    const result = summarizeFindings({
+        name: 'desktop-ssllabs-light',
+        metrics: {
+            ssllabsFilterbarHeightIssue: {
+                present: true,
+                height: 58,
+                maximum: 52,
+                passesMaximum: false,
+            },
+        },
+        diff: { ratio: 0, sizeMismatch: false },
+        network: {},
+    });
+
+    assert.ok(result.hardFindings.includes('ssllabsFilterbarHeight=58/52'));
+});
+
+test('summarizeFindings ignores the SSL Labs filterbar height metric on mobile', () => {
+    const result = summarizeFindings({
+        name: 'mobile-ssllabs-light',
+        metrics: {
+            ssllabsFilterbarHeightIssue: {
+                present: true,
+                height: 142,
+                maximum: 52,
+                passesMaximum: false,
+            },
+        },
+        diff: { ratio: 0, sizeMismatch: false },
+        network: {},
+    });
+
+    assert.ok(!result.findings.some((entry) => entry.startsWith('ssllabsFilterbarHeight=')));
+});
+
 test('summarizeFindings flags SSL Labs mobile site rows that fail the card contract', () => {
     const result = summarizeFindings({
         name: 'mobile-ssllabs-light',
@@ -471,6 +507,11 @@ test('serializeResultForOutput exposes scheduler and hero metric summary fields'
                 tooWide: [{ width: 212 }],
                 alignmentVariance: 6,
             },
+            ssllabsFilterbarHeightIssue: {
+                present: true,
+                height: 48,
+                passesMaximum: true,
+            },
             ssllabsRetentionLayout: {
                 present: true,
                 widthDelta: 1,
@@ -490,6 +531,8 @@ test('serializeResultForOutput exposes scheduler and hero metric summary fields'
 
     assert.equal(output.ssllabsInlineSchedulerTooWide, 1);
     assert.equal(output.ssllabsInlineSchedulerAlignmentVariance, 6);
+    assert.equal(output.ssllabsFilterbarHeightPx, 48);
+    assert.equal(output.ssllabsFilterbarHeightPass, 1);
     assert.equal(output.ssllabsRetentionLayoutWidthDelta, 1);
     assert.equal(output.ssllabsRetentionLayoutEdgeDelta, 2);
     assert.equal(output.ssllabsRetentionLayoutSpacingVariance, 1);

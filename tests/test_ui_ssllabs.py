@@ -221,6 +221,19 @@ class UISslLabsTests(unittest.TestCase):
             css,
         )
 
+    def test_ssllabs_filter_clear_button_matches_input_height(self) -> None:
+        css_path = Path(__file__).resolve().parents[1] / "app/static/css/app.css"
+        css = css_path.read_text(encoding="utf-8")
+
+        self.assertIn(
+            ".ssllabs-filterbar [data-ssllabs-clear-filters] {\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    min-block-size: 2.1rem;",
+            css,
+        )
+        self.assertNotIn(
+            "[data-ssllabs-clear-filters] {\n        min-block-size: 2.75rem;",
+            css,
+        )
+
     def test_ssllabs_page_marks_mixed_filter_grade_for_mixed_endpoints(self) -> None:
         app = self._build_app()
         current_user = SimpleNamespace(username="admin", role="admin")

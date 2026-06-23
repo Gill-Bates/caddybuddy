@@ -529,15 +529,14 @@ class UISitesTests(unittest.TestCase):
         form_data = {
             "site_name": "App",
             "domain": "example.com",
-            "caddy_directives": "import security_headers\nimport default_log\n\nreverse_proxy 10.30.0.10:8000",
+            "caddy_directives": "import security_headers\n\nreverse_proxy 10.30.0.10:8000",
             "enabled": "true",
         }
-        baseline = "(security_headers) {\n\theader X-Frame-Options DENY\n}\n\n(default_log) {\n\tlog\n}"
+        baseline = "(security_headers) {\n\theader X-Frame-Options DENY\n}"
         rendered_caddyfile = (
             f"{baseline}\n\n"
             "example.com {\n"
             "    import security_headers\n"
-            "    import default_log\n"
             "    reverse_proxy 10.30.0.10:8000\n"
             "}"
         )
@@ -550,7 +549,7 @@ class UISitesTests(unittest.TestCase):
                 new=AsyncMock(return_value=rendered_caddyfile),
             ) as build_mock,
             patch("app.routers.ui.sites.caddy_service.validate_caddyfile", new=AsyncMock(return_value=(True, "Configuration is valid"))) as validate_mock,
-            patch("app.routers.ui.sites.caddy_service.format_site_directives", new=AsyncMock(return_value="import security_headers\nimport default_log\n\nreverse_proxy 10.30.0.10:8000")),
+            patch("app.routers.ui.sites.caddy_service.format_site_directives", new=AsyncMock(return_value="import security_headers\n\nreverse_proxy 10.30.0.10:8000")),
             patch("app.routers.ui.sites.get_caddy_config", new=AsyncMock(return_value=SimpleNamespace(admin_url="http://localhost:2019"))),
         ):
             with TestClient(app) as client:
@@ -561,21 +560,20 @@ class UISitesTests(unittest.TestCase):
         self.assertEqual(response.json()["message"], "Site configuration for 'App' is valid.")
         self.assertEqual(
             response.json()["formatted_caddy_directives"],
-            "import security_headers\nimport default_log\n\nreverse_proxy 10.30.0.10:8000",
+            "import security_headers\n\nreverse_proxy 10.30.0.10:8000",
         )
 
         build_mock.assert_awaited_once()
         self.assertEqual(build_mock.await_args.kwargs["domain"], "example.com")
         self.assertEqual(
             build_mock.await_args.kwargs["caddy_directives"],
-            "import security_headers\nimport default_log\n\nreverse_proxy 10.30.0.10:8000",
+            "import security_headers\n\nreverse_proxy 10.30.0.10:8000",
         )
         validate_mock.assert_awaited_once()
         validated_caddyfile = validate_mock.await_args.args[0]
         self.assertIn("(security_headers)", validated_caddyfile)
-        self.assertIn("(default_log)", validated_caddyfile)
         self.assertIn("import security_headers", validated_caddyfile)
-        self.assertIn("import default_log", validated_caddyfile)
+        self.assertNotIn("import default_log", validated_caddyfile)
         self.assertIn("example.com {", validated_caddyfile)
 
     def test_validate_site_rejects_non_admin_user(self) -> None:

@@ -1,5 +1,14 @@
 ## [1.5] - 2026-xx-xx
 
+- `New` SSL Labs domain cards redesigned: per-endpoint grades (with IP version) and the next scheduled run are now shown at a glance.
+- `New` Smarter certificate renewal: forced renewal now works even without a configured Caddy control mode (safe Admin API reload fallback), and offers a "Request certificate" action for domains that don't have one yet.
+- `Fix` The Caddyfile editor can now be scrolled horizontally on small screens — long lines were previously cut off and unreachable.
+- `Fix` The "All Sites" table no longer overlaps columns and stays readable across window sizes.
+- `Fix` SSL Labs page layout and filter bar now render cleanly across screen sizes.
+- `Fix` Certificate renewals no longer hang: Caddy restart, reload, and artifact-purge steps now time out gracefully with a clear message.
+- `Fix` Per-site certificate problems now show the specific reason (e.g. hostname not covered by the certificate, TLS verification failed) instead of a generic message.
+- `Security` Remote certificate error details are now safely escaped before being displayed in the UI.
+- `Security` Updated FastAPI and SQLAlchemy to their latest patch releases.
 
 <details>
 <summary>Previous versions...</summary>

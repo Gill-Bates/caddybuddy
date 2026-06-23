@@ -1269,6 +1269,13 @@ class CaddyOnboardingServiceTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             _render_default_config(template, acme_email="", admin_api_url="http://localhost:2019")
 
+    def test_bundled_default_caddyfile_uses_central_runtime_log(self) -> None:
+        bundled = (Path(__file__).resolve().parents[1] / "Caddyfile").read_text(encoding="utf-8")
+
+        self.assertIn("output file /var/log/caddy/runtime.json", bundled)
+        self.assertIn("roll_keep_for 168h", bundled)
+        self.assertNotIn("(default_log)", bundled)
+
     async def test_host_preflight_does_not_set_api_only_takeover(self) -> None:
         async with self.session_factory() as session:
             await start_onboarding(session, mode="host")

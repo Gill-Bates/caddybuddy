@@ -113,6 +113,13 @@ class SettingsValidationTests(unittest.TestCase):
                 )
             )
 
+    def test_default_caddy_baseline_uses_central_runtime_log(self) -> None:
+        settings = Settings(**_settings_kwargs())
+
+        self.assertIn("output file /var/log/caddy/runtime.json", settings.caddy_baseline_caddyfile)
+        self.assertIn("roll_size 10MiB", settings.caddy_baseline_caddyfile)
+        self.assertNotIn("(default_log)", settings.caddy_baseline_caddyfile)
+
     def test_ssllabs_url_is_normalized_and_email_env_is_ignored(self) -> None:
         settings = Settings(
             **_settings_kwargs(

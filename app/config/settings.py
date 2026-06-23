@@ -244,7 +244,11 @@ class Settings(BaseSettings):
     log {
         level info
         format json
-        output stdout
+        output file /var/log/caddy/runtime.json {
+            roll_size 10MiB
+            roll_keep 5
+            roll_keep_for 168h
+        }
     }
 
     # Only enable when Caddy runs behind a trusted proxy/CDN.
@@ -276,13 +280,6 @@ class Settings(BaseSettings):
 
         -Server
         -X-Powered-By
-    }
-}
-
-(default_log) {
-    log {
-        output stdout
-        format json
     }
 }""",
         validation_alias=AliasChoices(

@@ -93,6 +93,10 @@ export function serializeResultForOutput(result, { summaryPath, visualRegression
             ? (metrics.ssllabsMobileCardLayout.theadHidden ? 1 : 0)
             : null,
         ssllabsMobileCardIssues: countItems(metrics.ssllabsMobileCardLayout?.issues),
+        ssllabsFilterbarHeightPx: metrics.ssllabsFilterbarHeightIssue?.height ?? null,
+        ssllabsFilterbarHeightPass: metrics.ssllabsFilterbarHeightIssue?.present
+            ? (metrics.ssllabsFilterbarHeightIssue.passesMaximum ? 1 : 0)
+            : null,
         ssllabsInlineSchedulerTooNarrow: countItems(metrics.ssllabsInlineSchedulerLayout?.tooNarrow),
         ssllabsInlineSchedulerTooWide: countItems(metrics.ssllabsInlineSchedulerLayout?.tooWide),
         ssllabsInlineSchedulerAlignmentVariance: metrics.ssllabsInlineSchedulerLayout?.alignmentVariance ?? null,

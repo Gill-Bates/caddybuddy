@@ -226,6 +226,48 @@ example.com {
         self.assertIn("admin 127.0.0.1:2019", baseline)
         self.assertIn("(security_headers)", baseline)
 
+    async def test_build_site_validation_caddyfile_does_not_add_default_log_snippet(self) -> None:
+        caddyfile_path = self.temp_path / "Caddyfile"
+        self.current_caddyfile_path = caddyfile_path
+        caddyfile_path.write_text("", encoding="utf-8")
+
+        async with self.session_factory() as session:
+            rendered = await caddyfile_manager.build_site_validation_caddyfile(
+                session,
+                domain="example.com",
+                caddy_directives="reverse_proxy backend:8080",
+            )
+
+        self.assertIn("(security_headers)", rendered)
+        self.assertIn("import security_headers", rendered)
+        self.assertNotIn("(default_log)", rendered)
+        self.assertNotIn("import default_log", rendered)
+
+    async def test_build_full_caddyfile_uses_global_logging_only(self) -> None:
+        caddyfile_path = self.temp_path / "Caddyfile"
+        self.current_caddyfile_path = caddyfile_path
+        caddyfile_path.write_text("", encoding="utf-8")
+
+        async with self.session_factory() as session:
+            session.add(
+                Site(
+                    site_name="App",
+                    domain="app.example.com",
+                    upstream_url="http://backend:8080",
+                    caddy_directives="reverse_proxy backend:8080",
+                    enabled=True,
+                )
+            )
+            await session.commit()
+
+            rendered = await caddyfile_manager.build_full_caddyfile(session)
+
+        self.assertIn("(security_headers)", rendered)
+        self.assertIn("import security_headers", rendered)
+        self.assertNotIn("(default_log)", rendered)
+        self.assertNotIn("import default_log", rendered)
+        self.assertIn("app.example.com {", rendered)
+
     async def test_onboard_imports_snapshot_replaces_marker_and_syncs(self) -> None:
         caddyfile_path = self.temp_path / "Caddyfile"
         self.current_caddyfile_path = caddyfile_path
