@@ -3220,6 +3220,11 @@ body.app-body--menu-open .app-sidebar {
         -webkit-overflow-scrolling: touch;
     }
 
+    .caddyfile-editor-panel .cm-content,
+    .sites-form-panel__config .cm-content {
+        min-width: 0;
+    }
+
     .caddyfile-editor-panel__actions {
         min-width: 0;
     }

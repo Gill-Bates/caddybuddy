@@ -375,7 +375,7 @@ class UISitesTests(unittest.TestCase):
                         "requires_confirmation": False,
                         "scope_name": "example.com",
                         "scope_type": "domain",
-                        "wait_domains": ["example.com"],
+                        "wait_domains": ["example.com", "www.example.com"],
                     }
                 }
             },

@@ -270,7 +270,7 @@ class DashboardServiceTests(unittest.IsolatedAsyncioTestCase):
 
         result = dashboard_module._apply_pending_status(
             certificate_info,
-            managed_site_states={"example.com": (True, now - timedelta(days=1))},
+            managed_site_states={"example.com": (True, now - timedelta(minutes=15))},
         )
 
         self.assertEqual(result["example.com"].status, "pending")
@@ -404,7 +404,7 @@ class DashboardServiceTests(unittest.IsolatedAsyncioTestCase):
 
     def test_load_x509_certificate_from_path_raises_oserror_for_unreadable_file(self) -> None:
         cert_path = Path("/tmp/unreadable.crt")
-        with patch.object(Path, "stat", side_effect=PermissionError("denied")):
+        with patch.object(Path, "open", side_effect=PermissionError("denied")):
             with self.assertRaises(PermissionError):
                 certs_module.load_x509_certificate_from_path(cert_path)
 
@@ -474,7 +474,7 @@ class DashboardServiceTests(unittest.IsolatedAsyncioTestCase):
             status="error",
             error_message="cert check failed",
         )
-        managed_states = {"example.com": (True, datetime.now(UTC) - timedelta(hours=1))}
+        managed_states = {"example.com": (True, datetime.now(UTC) - timedelta(minutes=15))}
 
         with patch.object(
             dashboard_module,
