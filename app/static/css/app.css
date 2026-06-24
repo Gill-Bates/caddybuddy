@@ -2617,6 +2617,78 @@ body.app-body--menu-open .app-sidebar {
     }
 }
 
+/* Compact card layout via container query — fires when the right panel is
+   narrow (e.g. form open on desktop) before the viewport hits 768px mobile */
+@container sites-list-panel (max-width: 46rem) {
+
+    .sites-list-scroll {
+        overflow-x: hidden;
+    }
+
+    .sites-list-scroll .sites-table {
+        min-width: 0;
+    }
+
+    .sites-list-scroll .sites-table colgroup,
+    .sites-list-scroll .sites-table thead {
+        display: none;
+    }
+
+    .sites-list-scroll .sites-table,
+    .sites-list-scroll .sites-table tbody {
+        display: block;
+        width: 100%;
+    }
+
+    .sites-list-scroll .sites-table tr {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas:
+            "site    actions"
+            "domain  actions"
+            "cert    actions";
+        gap: 0.65rem 0.85rem;
+        padding: 0.9rem 1rem;
+        border-bottom: 1px solid var(--cb-border);
+    }
+
+    .sites-list-scroll .sites-table tr:first-child {
+        border-top: 1px solid var(--cb-border);
+    }
+
+    .sites-list-scroll .sites-table td {
+        display: block;
+        width: auto;
+        min-width: 0;
+        padding: 0;
+        border: 0;
+    }
+
+    .sites-list-scroll .sites-table td[data-label="Site"]        { grid-area: site; }
+    .sites-list-scroll .sites-table td[data-label="Domain"]      { grid-area: domain; }
+    .sites-list-scroll .sites-table td[data-label="Certificate"] { grid-area: cert; }
+
+    .sites-list-scroll .sites-table td[data-label="Actions"] {
+        grid-area: actions;
+        align-self: start;
+        overflow: visible;
+        padding-inline-end: 0;
+    }
+
+    .sites-list-scroll .sites-table .cell-actions {
+        flex-direction: column;
+        flex-wrap: nowrap;
+        justify-content: flex-start;
+        align-items: flex-end;
+    }
+
+    /* Empty-state row: span full grid width */
+    .sites-list-scroll .sites-table tr td[colspan] {
+        grid-column: 1 / -1;
+        text-align: center;
+    }
+}
+
 /* Sites search field */
 .sites-search {
     position: relative;
