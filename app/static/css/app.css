@@ -2662,6 +2662,15 @@ body.app-body--menu-open .app-sidebar {
         min-width: 0;
         padding: 0;
         border: 0;
+        /* Bootstrap applies table-active background per-td via CSS vars;
+           reset here so each cell doesn't render its own grey box in grid layout */
+        background-color: transparent;
+    }
+
+    .sites-list-scroll .sites-table tr.table-active {
+        border-color: var(--cb-accent);
+        background: rgba(15, 118, 110, 0.05);
+        box-shadow: inset 0 0 0 1px var(--cb-accent);
     }
 
     .sites-list-scroll .sites-table td[data-label="Site"]        { grid-area: site; }
