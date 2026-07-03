@@ -1,4 +1,5 @@
 :root {
+    /* ── Core palette ────────────────────────────────────────────────── */
     --cb-bg: #ebe3d2;
     --cb-surface: rgba(255, 255, 255, 0.88);
     --cb-surface-strong: rgba(21, 34, 46, 0.92);
@@ -7,7 +8,61 @@
     --cb-accent: #0f766e;
     --cb-accent-strong: #115e59;
     --cb-border: rgba(21, 34, 46, 0.1);
+
+    /* ── Semantic colour tokens ──────────────────────────────────────── */
+    /* Success — green scale */
+    --cb-success: #15803d;
+    /* text / icon */
+    --cb-success-strong: #166534;
+    /* headings / emphasis */
+    --cb-success-subtle: #16a34a;
+    /* secondary text */
+    --cb-success-bg: rgba(16, 185, 129, 0.14);
+    /* Danger — red scale */
+    --cb-danger: #b91c1c;
+    /* text / icon (most common) */
+    --cb-danger-strong: #991b1b;
+    /* headings / emphasis */
+    --cb-danger-bg: rgba(239, 68, 68, 0.12);
+    --cb-danger-dot: #ef4444;
+    /* status-dot fill */
+    /* Info / link — blue scale */
+    --cb-info: #1d4ed8;
+    /* text / icon */
+    --cb-info-bg: rgba(59, 130, 246, 0.12);
+    /* Warning — amber */
+    --cb-warning: #d97706;
+    --cb-warning-bg: rgba(245, 158, 11, 0.12);
+    /* Neutral / muted badge */
+    --cb-neutral: #64748b;
+
+    /* ── Shadow tokens ───────────────────────────────────────────────── */
+    /* Generic card shadow used by .cb-shadow and similar utilities */
     --cb-shadow: 0 18px 42px rgba(21, 34, 46, 0.1);
+    /* Elevated surface (modals, dropdowns, popovers) */
+    --cb-shadow-elevated: 0 20px 48px -18px rgba(5, 23, 49, 0.3), 0 8px 18px rgba(5, 23, 49, 0.12);
+    /* Subtle card / badge lift */
+    --cb-shadow-sm: 0 2px 8px rgba(21, 34, 46, 0.08);
+    /* Card hover / focus accent */
+    --cb-shadow-accent: 0 4px 12px rgba(15, 118, 110, 0.08);
+    /* Inline card (mobile list tiles) */
+    --cb-shadow-card: 0 6px 16px -10px rgba(5, 23, 49, 0.25), 0 2px 6px rgba(5, 23, 49, 0.05);
+    /* Panel medium lift */
+    --cb-shadow-panel: 0 10px 20px rgba(21, 34, 46, 0.08);
+
+    /* ── Transition duration tokens ─────────────────────────────────── */
+    /* Fast interactions: hover colours, opacity toggles */
+    --cb-duration-fast: 120ms;
+    /* Standard UI transitions: buttons, inputs, nav links */
+    --cb-duration-normal: 160ms;
+    /* Slightly heavier transitions: toggles, dropdowns */
+    --cb-duration-medium: 180ms;
+    /* Fade-in/out of overlays and backdrops */
+    --cb-duration-slow: 240ms;
+    /* Panels sliding in (sidebar, modals) */
+    --cb-duration-slide: 280ms;
+
+    /* ── Layout ──────────────────────────────────────────────────────── */
     --cb-sidebar-width: 15.75rem;
     --cb-content-max: 110rem;
     --cb-gutter: 1rem;
@@ -20,6 +75,8 @@
     --cb-footer-safe-gap: 0.75rem;
     --cb-footer-viewport-reserve: calc(3.55rem + 1rem + var(--cb-footer-safe-gap));
     --cb-app-main-vertical-padding: 2.5rem;
+
+    /* ── Feature-specific layout ─────────────────────────────────────── */
     --cb-ssllabs-site-column-width: clamp(11rem, 14vw, 14.5rem);
     --cb-ssllabs-scheduler-column-width: 10.75rem;
     --cb-ssllabs-actions-column-width: 9.25rem;
@@ -28,10 +85,14 @@
     --cb-sites-site-column-width: clamp(12rem, 24%, 15rem);
     --cb-sites-certificate-column-width: 15rem;
     --cb-sites-actions-column-width: 9.75rem;
+
+    /* ── Z-index scale ───────────────────────────────────────────────── */
     --cb-z-backdrop: 1029;
     --cb-z-sidebar: 1030;
     --cb-z-mobile-toggle: 1040;
     --cb-z-skip-link: 1100;
+
+    /* ── Pill / badge sizing ─────────────────────────────────────────── */
     /* Single source of truth for compact badge/pill sizing.
        Based on the .site-cert__days reference pill. */
     --cb-pill-min-height: 1.35rem;
@@ -207,7 +268,7 @@ body.app-body--menu-open .app-sidebar {
     font-weight: 600;
     line-height: 1.2;
     text-decoration: none;
-    transition: background-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+    transition: background-color var(--cb-duration-normal) ease, color var(--cb-duration-normal) ease, box-shadow var(--cb-duration-normal) ease;
 }
 
 .app-nav__icon {
@@ -416,7 +477,7 @@ body.app-body--menu-open .app-sidebar {
 .app-toast-stack .toast.fade {
     opacity: 0;
     transform: translate3d(1.2rem, 0, 0);
-    transition: transform 180ms ease, opacity 180ms ease;
+    transition: transform var(--cb-duration-medium) ease, opacity var(--cb-duration-medium) ease;
 }
 
 .app-toast-stack .toast.fade.show,
@@ -436,7 +497,7 @@ body.app-body--menu-open .app-sidebar {
 
 @media (prefers-reduced-motion: reduce) {
     .app-toast-stack .toast.fade {
-        transition: opacity 120ms linear;
+        transition: opacity var(--cb-duration-fast) linear;
         transform: none;
     }
 
@@ -553,7 +614,7 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .status-dot--offline {
-    background: #ef4444;
+    background: var(--cb-danger-dot);
 }
 
 .version-badge {
@@ -594,7 +655,7 @@ body.app-body--menu-open .app-sidebar {
     padding: 0;
     border-radius: 1.5rem;
     background: var(--cb-surface);
-    box-shadow: 0 20px 48px -18px rgba(5, 23, 49, 0.3), 0 8px 18px rgba(5, 23, 49, 0.12);
+    box-shadow: var(--cb-shadow-elevated);
 }
 
 .auth-card--shake {
@@ -646,7 +707,7 @@ body.app-body--menu-open .app-sidebar {
     border-radius: 1rem;
     background: var(--cb-surface);
     border: 1px solid rgba(15, 118, 110, 0.1);
-    box-shadow: 0 4px 12px rgba(15, 118, 110, 0.08);
+    box-shadow: var(--cb-shadow-accent);
 }
 
 .auth-brand__logo-wrap--wordmark {
@@ -834,7 +895,6 @@ body.app-body--menu-open .app-sidebar {
 .panel-card--highlight {
     border-color: var(--bs-primary);
     border-width: 2px;
-    height: auto;
 }
 
 .panel-card--highlight .panel-card__header {
@@ -963,7 +1023,7 @@ body.app-body--menu-open .app-sidebar {
     color: var(--cb-text);
     padding: 0.8rem 0.95rem;
     text-align: left;
-    transition: transform 180ms ease, background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+    transition: transform var(--cb-duration-medium) ease, background-color var(--cb-duration-medium) ease, border-color var(--cb-duration-medium) ease, box-shadow var(--cb-duration-medium) ease;
 }
 
 .cb-onboarding-wizard__step-button.is-inactive {
@@ -975,7 +1035,7 @@ body.app-body--menu-open .app-sidebar {
 .cb-onboarding-wizard__step-button:focus-visible {
     border-color: rgba(21, 34, 46, 0.18);
     background: rgba(255, 255, 255, 0.9);
-    box-shadow: 0 10px 20px rgba(21, 34, 46, 0.08);
+    box-shadow: var(--cb-shadow-panel);
     transform: translateY(-1px);
 }
 
@@ -1126,7 +1186,7 @@ body.app-body--menu-open .app-sidebar {
     transform: translate(-50%, -50%);
     font-size: 2rem;
     font-weight: 700;
-    color: #16a34a;
+    color: var(--cb-success-subtle);
     text-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
     pointer-events: none;
     z-index: 9999;
@@ -1209,7 +1269,7 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .cb-field-check[data-field-check-status="passed"] {
-    color: #166534;
+    color: var(--cb-success-strong);
     border-color: rgba(22, 101, 52, 0.18);
     background: rgba(34, 197, 94, 0.12);
 }
@@ -1255,7 +1315,7 @@ body.app-body--menu-open .app-sidebar {
     border-radius: 0.9rem;
     background: rgba(255, 255, 255, 0.7);
     cursor: pointer;
-    transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+    transition: border-color var(--cb-duration-normal) ease, background-color var(--cb-duration-normal) ease, box-shadow var(--cb-duration-normal) ease;
 }
 
 .cb-choice-card:hover {
@@ -1390,6 +1450,10 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .table-active>* {
+    /* Bootstrap 5.3 fills cells via box-shadow using --bs-table-bg-state;
+       the legacy --bs-table-accent-bg is kept only as a fallback. Set both
+       so the active row uses our accent tint instead of Bootstrap's grey. */
+    --bs-table-bg-state: rgba(15, 118, 110, 0.09);
     --bs-table-accent-bg: rgba(15, 118, 110, 0.09);
 }
 
@@ -1508,7 +1572,7 @@ body.app-body--menu-open .app-sidebar {
 
 .hero-metric--valid .hero-metric__icon {
     background: rgba(22, 163, 74, 0.12);
-    color: #15803d;
+    color: var(--cb-success);
 }
 
 .hero-metric--expired {
@@ -1517,7 +1581,7 @@ body.app-body--menu-open .app-sidebar {
 
 .hero-metric--expired .hero-metric__icon {
     background: rgba(220, 38, 38, 0.12);
-    color: #b91c1c;
+    color: var(--cb-danger);
 }
 
 .hero-metric__hint {
@@ -1571,8 +1635,7 @@ body.app-body--menu-open .app-sidebar {
    :where() list keeps existing class colours intact while forcing
    one consistent geometry across the app. */
 .cb-pill,
-:where(
-    .status-pill,
+:where(.status-pill,
     .site-domain-badge,
     .site-handler-badge,
     .ssllabs-site-domain-badge,
@@ -1580,8 +1643,7 @@ body.app-body--menu-open .app-sidebar {
     .site-cert__days,
     .ssllabs-result__grade,
     .ssllabs-result__status-badge,
-    .ssllabs-endpoint-chip__grade
-) {
+    .ssllabs-endpoint-chip__grade) {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1628,13 +1690,13 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .status-pill--offline {
-    background: rgba(239, 68, 68, 0.12);
-    color: #991b1b;
+    background: var(--cb-danger-bg);
+    color: var(--cb-danger-strong);
 }
 
 .status-pill--unknown {
-    background: rgba(59, 130, 246, 0.12);
-    color: #1d4ed8;
+    background: var(--cb-info-bg);
+    color: var(--cb-info);
 }
 
 .status-pill--warning {
@@ -1643,16 +1705,11 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .badge {
-    box-shadow: 0 2px 8px rgba(21, 34, 46, 0.08);
+    box-shadow: var(--cb-shadow-sm);
 }
 
-.ssllabs-callout {
-    height: auto;
-}
-
-#ssllabs-api-config {
-    height: auto;
-}
+/* .ssllabs-callout and #ssllabs-api-config need no height override —
+   height is auto by default. */
 
 .settings-layout {
     align-items: stretch;
@@ -1663,8 +1720,8 @@ body.app-body--menu-open .app-sidebar {
     flex-direction: column;
 }
 
-.settings-column--primary > .settings-panel,
-.settings-column--secondary > .settings-stack {
+.settings-column--primary>.settings-panel,
+.settings-column--secondary>.settings-stack {
     flex: 1 1 auto;
 }
 
@@ -1676,7 +1733,7 @@ body.app-body--menu-open .app-sidebar {
     margin: 0;
 }
 
-.settings-stack > [class*="col-"] {
+.settings-stack>[class*="col-"] {
     display: flex;
     flex-direction: column;
     padding: 0;
@@ -1714,10 +1771,8 @@ body.app-body--menu-open .app-sidebar {
     vertical-align: middle;
 }
 
-#ssllabs-settings,
-#ssllabs-retention-settings {
-    height: auto;
-}
+/* #ssllabs-settings and #ssllabs-retention-settings need no height override —
+   height is auto by default. */
 
 .ssllabs-callout__body {
     display: flex;
@@ -1761,6 +1816,11 @@ body.app-body--menu-open .app-sidebar {
 
 .ssllabs-table td {
     vertical-align: top;
+    /* The base .table cell padding is 0.8rem top/bottom, which — stacked on
+       top of each domain card's own padding and min-height — makes the rows
+       look very airy. Tighten the vertical rhythm here; the card border
+       already provides visual separation between site rows. */
+    padding-block: 0.35rem;
 }
 
 .ssllabs-table .ssllabs-schedule-form {
@@ -1835,7 +1895,7 @@ body.app-body--menu-open .app-sidebar {
     background: rgba(255, 255, 255, 0.7);
     border: 1px solid rgba(21, 34, 46, 0.12);
     border-radius: 999px;
-    transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+    transition: border-color var(--cb-duration-normal) ease, box-shadow var(--cb-duration-normal) ease, background var(--cb-duration-normal) ease;
 }
 
 .ssllabs-filterbar .form-control {
@@ -1889,15 +1949,81 @@ body.app-body--menu-open .app-sidebar {
 
 @media (min-width: 1200px) {
 
-    .app-page--sites,
     .ssllabs-page {
         display: flex;
+        flex: 1 1 0;
         flex-direction: column;
-        min-height: calc(100dvh - var(--cb-footer-viewport-reserve) - var(--cb-app-main-vertical-padding));
+        min-height: 0;
     }
 
-    .app-page--sites>.app-grid,
     .ssllabs-page>.app-grid {
+        flex: 1 1 auto;
+        min-height: 0;
+    }
+
+    /* SSL Labs is a full-height table view: lock the shell to the viewport
+       (like the Caddyfile/Sites pages) so the panel fills the available
+       space and scrolls internally, instead of growing with its rows and
+       pushing the footer past the viewport. */
+    body:has(.ssllabs-page) .app-content {
+        height: 100dvh;
+        min-height: 0;
+    }
+
+    body:has(.ssllabs-page) .app-main {
+        flex: 1 1 0;
+        min-height: 0;
+    }
+
+    body:has(.ssllabs-page) .app-footer {
+        flex: 0 0 auto;
+    }
+
+    body:has(.ssllabs-page) .app-container {
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 0;
+        min-height: 0;
+        height: 100%;
+    }
+
+    /* Sites edit view is a full-height editor layout (like the Caddyfile
+       page). Lock the shell to the viewport height and let the inner panels
+       flex, so the footer stays pinned to the bottom instead of being pushed
+       past the viewport when the editor/list content is tall. A bare
+       min-height on the page (the previous approach) is a floor, not a cap,
+       so any extra overhead spilled the content — and the footer — below the
+       fold. */
+    body:has(.app-page--sites) .app-content {
+        height: 100dvh;
+        min-height: 0;
+    }
+
+    body:has(.app-page--sites) .app-main {
+        flex: 1 1 0;
+        min-height: 0;
+    }
+
+    body:has(.app-page--sites) .app-footer {
+        flex: 0 0 auto;
+    }
+
+    body:has(.app-page--sites) .app-container {
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 0;
+        min-height: 0;
+        height: 100%;
+    }
+
+    .app-page--sites {
+        display: flex;
+        flex: 1 1 0;
+        flex-direction: column;
+        min-height: 0;
+    }
+
+    .app-page--sites>.app-grid {
         flex: 1 1 auto;
         min-height: 0;
     }
@@ -1908,10 +2034,14 @@ body.app-body--menu-open .app-sidebar {
         min-height: 0;
     }
 
+    .ssllabs-page>.app-grid>.col-12>.ssllabs-callout {
+        flex: 0 0 auto;
+    }
+
     .ssllabs-panel {
         flex: 1 1 auto;
         height: auto;
-        min-height: 30rem;
+        min-height: 0;
         max-height: none;
     }
 }
@@ -1998,15 +2128,13 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .sites-list-panel {
-    height: auto;
     padding-bottom: 0;
     container-name: sites-list-panel;
     container-type: inline-size;
 }
 
-.sites-form-panel {
-    height: auto;
-}
+/* .sites-form-panel needs no height override — panel-card base sets no
+   fixed height, so auto is already the computed value. */
 
 .sites-form-panel__form {
     min-height: 0;
@@ -2200,18 +2328,18 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .site-cert__summary--valid .site-cert__status {
-    background: rgba(16, 185, 129, 0.14);
+    background: var(--cb-success-bg);
     color: #047857;
 }
 
 .site-cert__summary--expired .site-cert__status {
-    background: rgba(239, 68, 68, 0.12);
-    color: #b91c1c;
+    background: var(--cb-danger-bg);
+    color: var(--cb-danger);
 }
 
 .site-cert__summary--renewing .site-cert__status {
-    background: rgba(59, 130, 246, 0.12);
-    color: #1d4ed8;
+    background: var(--cb-info-bg);
+    color: var(--cb-info);
 }
 
 .site-cert__summary .status-dot {
@@ -2266,7 +2394,7 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .site-cert__error-title {
-    color: #b91c1c;
+    color: var(--cb-danger);
     font-size: 0.84rem;
     font-weight: 700;
 }
@@ -2278,9 +2406,15 @@ body.app-body--menu-open .app-sidebar {
 }
 
 @media (min-width: 1200px) {
+
     .app-page--sites .app-page__header,
     .ssllabs-page .app-page__header {
         margin-bottom: 0.25rem;
+    }
+
+    .app-page--sites .app-page__header,
+    .ssllabs-page .app-page__header {
+        flex: 0 0 auto;
     }
 
     .app-page--sites>.app-grid>.sites-form-column,
@@ -2398,14 +2532,14 @@ body.app-body--menu-open .app-sidebar {
         margin-bottom: 0.75rem;
     }
 
-    .app-page--caddyfile > .app-grid {
+    .app-page--caddyfile>.app-grid {
         display: flex;
         flex: 1 1 0;
         min-height: 0;
         overflow: visible;
     }
 
-    .app-page--caddyfile > .app-grid > .col-12 {
+    .app-page--caddyfile>.app-grid>.col-12 {
         display: flex;
         flex: 1 1 0;
         flex-direction: column;
@@ -2544,7 +2678,7 @@ body.app-body--menu-open .app-sidebar {
         border: 1px solid var(--cb-border);
         border-radius: 1.1rem;
         background: var(--cb-surface);
-        box-shadow: 0 6px 16px -10px rgba(5, 23, 49, 0.25), 0 2px 6px rgba(5, 23, 49, 0.05);
+        box-shadow: var(--cb-shadow-card);
     }
 
     .sites-list-scroll .table tr:last-child {
@@ -2560,6 +2694,11 @@ body.app-body--menu-open .app-sidebar {
     .sites-list-scroll .table td {
         padding: 0;
         border-bottom: 0;
+        /* Reset Bootstrap's per-cell background fill (applied via inset
+           box-shadow) so each field doesn't render its own grey box inside
+           the card. The card <tr> owns the active/hover background. */
+        background-color: transparent;
+        box-shadow: none;
     }
 
     /* Divider + spacing between fields inside the card */
@@ -2662,9 +2801,11 @@ body.app-body--menu-open .app-sidebar {
         min-width: 0;
         padding: 0;
         border: 0;
-        /* Bootstrap applies table-active background per-td via CSS vars;
-           reset here so each cell doesn't render its own grey box in grid layout */
+        /* Bootstrap applies the table-active background per-td via an inset
+           box-shadow (and CSS vars); reset both here so each cell doesn't
+           render its own grey box in grid layout — the <tr> owns it. */
         background-color: transparent;
+        box-shadow: none;
     }
 
     .sites-list-scroll .sites-table tr.table-active {
@@ -2673,9 +2814,17 @@ body.app-body--menu-open .app-sidebar {
         box-shadow: inset 0 0 0 1px var(--cb-accent);
     }
 
-    .sites-list-scroll .sites-table td[data-label="Site"]        { grid-area: site; }
-    .sites-list-scroll .sites-table td[data-label="Domain"]      { grid-area: domain; }
-    .sites-list-scroll .sites-table td[data-label="Certificate"] { grid-area: cert; }
+    .sites-list-scroll .sites-table td[data-label="Site"] {
+        grid-area: site;
+    }
+
+    .sites-list-scroll .sites-table td[data-label="Domain"] {
+        grid-area: domain;
+    }
+
+    .sites-list-scroll .sites-table td[data-label="Certificate"] {
+        grid-area: cert;
+    }
 
     .sites-list-scroll .sites-table td[data-label="Actions"] {
         grid-area: actions;
@@ -2729,7 +2878,7 @@ body.app-body--menu-open .app-sidebar {
     border: 1px solid rgba(21, 34, 46, 0.12);
     border-radius: 999px;
     outline: none;
-    transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+    transition: border-color var(--cb-duration-normal) ease, box-shadow var(--cb-duration-normal) ease, background var(--cb-duration-normal) ease;
     appearance: none;
 }
 
@@ -3177,7 +3326,7 @@ body.app-body--menu-open .app-sidebar {
         border: 1px solid var(--cb-border);
         border-radius: 1.1rem;
         background: var(--cb-surface);
-        box-shadow: 0 6px 16px -10px rgba(5, 23, 49, 0.25), 0 2px 6px rgba(5, 23, 49, 0.05);
+        box-shadow: var(--cb-shadow-card);
     }
 
     .ssllabs-table tr[data-ssllabs-site-row]:last-child {
@@ -3190,7 +3339,7 @@ body.app-body--menu-open .app-sidebar {
     }
 
     /* Divider + spacing between the Site heading and the Domains block */
-    .ssllabs-table td + td {
+    .ssllabs-table td+td {
         margin-top: 0.7rem;
         padding-top: 0.7rem;
         border-top: 1px solid var(--cb-border);
@@ -3291,6 +3440,7 @@ body.app-body--menu-open .app-sidebar {
 }
 
 @media (min-width: 768px) {
+
     .caddyfile-editor-panel__textarea,
     #site-caddy-directives {
         white-space: pre;
@@ -3300,6 +3450,7 @@ body.app-body--menu-open .app-sidebar {
 }
 
 @media (max-width: 767.98px) {
+
     .caddyfile-editor-panel__textarea,
     #site-caddy-directives {
         white-space: pre;
@@ -3561,7 +3712,7 @@ body.app-body--menu-open .app-sidebar {
 
 .site-enabled-label {
     color: var(--cb-muted);
-    transition: color 160ms ease;
+    transition: color var(--cb-duration-normal) ease;
 }
 
 .form-check-input:checked+.site-enabled-label {
@@ -3614,9 +3765,9 @@ body.app-body--menu-open .app-sidebar {
     border-radius: 0.75rem;
     background: var(--cb-accent);
     color: #fff;
-    box-shadow: 0 4px 12px rgba(15, 118, 110, 0.35);
+    box-shadow: var(--cb-shadow-accent);
     cursor: pointer;
-    transition: transform 160ms ease, background-color 160ms ease;
+    transition: transform var(--cb-duration-normal) ease, background-color var(--cb-duration-normal) ease;
 }
 
 .mobile-menu-toggle:hover {
@@ -3677,7 +3828,7 @@ body.app-body--menu-open .app-sidebar {
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
-    transition: opacity 240ms ease, visibility 240ms ease;
+    transition: opacity var(--cb-duration-slow) ease, visibility var(--cb-duration-slow) ease;
 }
 
 @supports (backdrop-filter: blur(4px)) {
@@ -3782,7 +3933,7 @@ body.app-body--menu-open .app-sidebar {
         overscroll-behavior: contain;
         -webkit-overflow-scrolling: touch;
         transform: translateX(-100%);
-        transition: transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        transition: transform var(--cb-duration-slide) cubic-bezier(0.4, 0, 0.2, 1);
         box-shadow: none;
     }
 
@@ -4128,18 +4279,44 @@ body.app-body--menu-open .app-sidebar {
     height: 0.75rem;
     border-radius: 0.2rem;
     flex: 0 0 auto;
-    background-color: #64748b;
+    background-color: var(--cb-neutral);
 }
 
-[data-grade-rank="7"]  { background-color: #15803d; }
-[data-grade-rank="6"]  { background-color: #65a30d; }
-[data-grade-rank="5"]  { background-color: #84cc16; }
-[data-grade-rank="4"]  { background-color: #eab308; }
-[data-grade-rank="3"]  { background-color: #f97316; }
-[data-grade-rank="2"]  { background-color: #ea580c; }
-[data-grade-rank="1"]  { background-color: #dc2626; }
-[data-grade-rank="0"]  { background-color: #991b1b; }
-[data-grade-rank="-1"] { background-color: #64748b; }
+[data-grade-rank="7"] {
+    background-color: var(--cb-success);
+}
+
+[data-grade-rank="6"] {
+    background-color: #65a30d;
+}
+
+[data-grade-rank="5"] {
+    background-color: #84cc16;
+}
+
+[data-grade-rank="4"] {
+    background-color: #eab308;
+}
+
+[data-grade-rank="3"] {
+    background-color: var(--cb-warning);
+}
+
+[data-grade-rank="2"] {
+    background-color: #ea580c;
+}
+
+[data-grade-rank="1"] {
+    background-color: #dc2626;
+}
+
+[data-grade-rank="0"] {
+    background-color: var(--cb-danger-strong);
+}
+
+[data-grade-rank="-1"] {
+    background-color: var(--cb-neutral);
+}
 
 .ssllabs-domain-search {
     min-width: 12rem;
