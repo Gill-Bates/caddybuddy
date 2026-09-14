@@ -2,6 +2,7 @@
 
 - `New` Added CSRF protection to the onboarding wizard's form submissions.
 - `Fix` Fixed Docker startup failing with "could not resolve CB_CADDY_CERTIFICATES_PATH" when no Caddy certificate storage was mounted.
+- `Security` The Docker image now applies pending Debian security updates at build time and ships without pip, closing known vulnerabilities in base image packages.
 - `Security` Added rate limiting to the Caddy status and settings endpoints.
 - `Security` Login attempts with a malformed username no longer skip the dummy password check, keeping response timing consistent with normal failed logins.
 - `Security` Restricted the internal systemd control helper to an explicit action allowlist.

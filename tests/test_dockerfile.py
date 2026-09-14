@@ -25,11 +25,23 @@ def test_runtime_image_does_not_install_caddy_binary() -> None:
         )
 
 
-def test_dockerfile_cleans_apt_lists_after_install() -> None:
+def test_dockerfile_does_not_bake_apt_lists_into_layers() -> None:
+    """Every apt-get invocation must keep /var/lib/apt on a cache mount.
+
+    Package lists then live in the BuildKit cache rather than an image layer,
+    which is why no `rm -rf /var/lib/apt/lists/*` cleanup appears (or would
+    help: deleting inside a cache mount leaves the layer size unchanged).
+    """
     dockerfile = Path("docker/Dockerfile").read_text(encoding="utf-8")
 
-    cleanup_token = "rm -rf /var/lib/apt/lists/*"
-    assert cleanup_token in dockerfile, "Dockerfile should clean apt lists after installation"
+    apt_invocations = dockerfile.count("apt-get update")
+    cache_mounts = dockerfile.count("--mount=type=cache,target=/var/lib/apt")
+
+    assert apt_invocations > 0, "Dockerfile no longer runs apt-get at all"
+    assert cache_mounts == apt_invocations, (
+        f"{apt_invocations} 'apt-get update' invocation(s) but {cache_mounts} "
+        "/var/lib/apt cache mount(s); package lists would land in an image layer"
+    )
 
 
 def test_caddy_service_does_not_use_local_caddy_cli() -> None:
