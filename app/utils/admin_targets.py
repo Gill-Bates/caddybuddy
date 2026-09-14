@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from ipaddress import IPv4Address, IPv6Address, ip_address
 
-
 _ALLOWED_ADMIN_HOSTS = frozenset({"localhost", "host.docker.internal", "caddy"})
 _FORBIDDEN_ADMIN_HOSTS = frozenset({"169.254.169.254", "metadata.google.internal"})
 _FORBIDDEN_ADMIN_IPS = frozenset({ip_address("169.254.169.254")})

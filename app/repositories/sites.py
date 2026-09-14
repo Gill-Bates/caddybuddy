@@ -7,10 +7,10 @@
 from __future__ import annotations
 
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.base import utc_now
 from app.models.entities import (
@@ -20,9 +20,11 @@ from app.models.entities import (
     _normalize_site_name,
     _normalize_upstream_url,
 )
-from app.utils.caddyfile import extract_upstream_from_directives, normalize_caddy_directives
+from app.utils.caddyfile import (
+    extract_upstream_from_directives,
+    normalize_caddy_directives,
+)
 from app.utils.domains import split_domain_names
-
 
 _MAX_LIST_LIMIT = 500
 _LEGACY_UPSTREAM_PLACEHOLDER = "http://placeholder.invalid"

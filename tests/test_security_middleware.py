@@ -14,7 +14,6 @@ from unittest.mock import patch
 
 from app.config.settings import get_settings
 
-
 _ENV_OVERRIDES = {
     "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
     "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
@@ -25,6 +24,7 @@ _ENV_OVERRIDES = {
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 from fastapi.testclient import TestClient
+
 from app.middleware.session import RequestAwareSessionMiddleware
 
 
@@ -145,11 +145,12 @@ class CSRFMiddlewareTests(_SecurityTestEnvMixin, unittest.TestCase):
     def test_api_request_uses_configured_session_cookie_name_for_csrf_enforcement(self) -> None:
         app = self._build_app()
 
-        with self._settings_patch():
-            with TestClient(app) as client:
-                csrf_token = client.get("/login").text
-                client.cookies.set("caddybuddy_session", client.cookies.get("session") or "session-cookie")
-                response = client.post("/api/protected")
+        with self._settings_patch(), TestClient(app) as client:
+            # The GET seeds the session cookie the middleware reads; its CSRF token
+            # is deliberately not sent so the POST must be rejected.
+            client.get("/login")
+            client.cookies.set("caddybuddy_session", client.cookies.get("session") or "session-cookie")
+            response = client.post("/api/protected")
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.json(), {"detail": "CSRF token missing or invalid"})
@@ -157,17 +158,19 @@ class CSRFMiddlewareTests(_SecurityTestEnvMixin, unittest.TestCase):
     def test_origin_check_rejects_same_host_different_port(self) -> None:
         app = self._build_app()
 
-        with self._settings_patch():
-            with TestClient(app, base_url="https://example.test") as client:
-                csrf_token = client.get("/login").text
-                client.cookies.set("caddybuddy_session", client.cookies.get("session") or "session-cookie")
-                response = client.post(
-                    "/api/protected",
-                    headers={
-                        "Origin": "https://example.test:444",
-                        "X-CSRF-Token": csrf_token,
-                    },
-                )
+        with (
+            self._settings_patch(),
+            TestClient(app, base_url="https://example.test") as client,
+        ):
+            csrf_token = client.get("/login").text
+            client.cookies.set("caddybuddy_session", client.cookies.get("session") or "session-cookie")
+            response = client.post(
+                "/api/protected",
+                headers={
+                    "Origin": "https://example.test:444",
+                    "X-CSRF-Token": csrf_token,
+                },
+            )
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.json(), {"detail": "Cross-origin request blocked"})
@@ -175,14 +178,16 @@ class CSRFMiddlewareTests(_SecurityTestEnvMixin, unittest.TestCase):
     def test_bearer_header_does_not_bypass_cookie_authenticated_api_request(self) -> None:
         app = self._build_app()
 
-        with self._settings_patch():
-            with TestClient(app) as client:
-                client.get("/login")
-                client.cookies.set("caddybuddy_session", client.cookies.get("session") or "session-cookie")
-                response = client.post(
-                    "/api/protected",
-                    headers={"Authorization": "bearer token-value"},
-                )
+        with (
+            self._settings_patch(),
+            TestClient(app) as client,
+        ):
+            client.get("/login")
+            client.cookies.set("caddybuddy_session", client.cookies.get("session") or "session-cookie")
+            response = client.post(
+                "/api/protected",
+                headers={"Authorization": "bearer token-value"},
+            )
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.json(), {"detail": "CSRF token missing or invalid"})
@@ -190,12 +195,11 @@ class CSRFMiddlewareTests(_SecurityTestEnvMixin, unittest.TestCase):
     def test_stateless_bearer_api_request_skips_csrf(self) -> None:
         app = self._build_app()
 
-        with self._settings_patch():
-            with TestClient(app) as client:
-                response = client.post(
-                    "/api/protected",
-                    headers={"Authorization": "Bearer token-value"},
-                )
+        with self._settings_patch(), TestClient(app) as client:
+            response = client.post(
+                "/api/protected",
+                headers={"Authorization": "Bearer token-value"},
+            )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.text, "ok")
@@ -203,15 +207,17 @@ class CSRFMiddlewareTests(_SecurityTestEnvMixin, unittest.TestCase):
     def test_multipart_request_requires_header_without_parsing_form_body(self) -> None:
         app = self._build_app()
 
-        with self._settings_patch():
-            with TestClient(app) as client:
-                csrf_token = client.get("/login").text
-                client.cookies.set("caddybuddy_session", client.cookies.get("session") or "session-cookie")
-                with patch("starlette.requests.Request.form", side_effect=AssertionError("form() should not be called")):
-                    response = client.post(
-                        "/api/protected",
-                        files={"csrf_token": (None, csrf_token)},
-                    )
+        with (
+            self._settings_patch(),
+            TestClient(app) as client,
+        ):
+            csrf_token = client.get("/login").text
+            client.cookies.set("caddybuddy_session", client.cookies.get("session") or "session-cookie")
+            with patch("starlette.requests.Request.form", side_effect=AssertionError("form() should not be called")):
+                response = client.post(
+                    "/api/protected",
+                    files={"csrf_token": (None, csrf_token)},
+                )
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.json(), {"detail": "CSRF token missing or invalid"})
@@ -219,14 +225,16 @@ class CSRFMiddlewareTests(_SecurityTestEnvMixin, unittest.TestCase):
     def test_cookie_authenticated_api_request_accepts_valid_csrf_header(self) -> None:
         app = self._build_app()
 
-        with self._settings_patch():
-            with TestClient(app) as client:
-                csrf_token = client.get("/login").text
-                client.cookies.set("caddybuddy_session", client.cookies.get("session") or "session-cookie")
-                response = client.post(
-                    "/api/protected",
-                    headers={"X-CSRF-Token": csrf_token},
-                )
+        with (
+            self._settings_patch(),
+            TestClient(app) as client,
+        ):
+            csrf_token = client.get("/login").text
+            client.cookies.set("caddybuddy_session", client.cookies.get("session") or "session-cookie")
+            response = client.post(
+                "/api/protected",
+                headers={"X-CSRF-Token": csrf_token},
+            )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.text, "ok")
@@ -234,9 +242,8 @@ class CSRFMiddlewareTests(_SecurityTestEnvMixin, unittest.TestCase):
     def test_safe_api_requests_do_not_prime_session_csrf_token(self) -> None:
         app = self._build_app()
 
-        with self._settings_patch():
-            with TestClient(app) as client:
-                response = client.get("/api/public")
+        with self._settings_patch(), TestClient(app) as client:
+            response = client.get("/api/public")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.text, "ok")
@@ -245,14 +252,16 @@ class CSRFMiddlewareTests(_SecurityTestEnvMixin, unittest.TestCase):
     def test_cookie_authenticated_api_request_rejects_invalid_csrf_header(self) -> None:
         app = self._build_app()
 
-        with self._settings_patch():
-            with TestClient(app) as client:
-                client.get("/login")
-                client.cookies.set("caddybuddy_session", client.cookies.get("session") or "session-cookie")
-                response = client.post(
-                    "/api/protected",
-                    headers={"X-CSRF-Token": "invalid"},
-                )
+        with (
+            self._settings_patch(),
+            TestClient(app) as client,
+        ):
+            client.get("/login")
+            client.cookies.set("caddybuddy_session", client.cookies.get("session") or "session-cookie")
+            response = client.post(
+                "/api/protected",
+                headers={"X-CSRF-Token": "invalid"},
+            )
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.json(), {"detail": "CSRF token missing or invalid"})

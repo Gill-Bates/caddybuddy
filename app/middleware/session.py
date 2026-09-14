@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import json
 from base64 import b64decode, b64encode
-from typing import Any, Iterable, Literal, Mapping
+from collections.abc import Iterable, Mapping
+from typing import Any, Literal
 
 import itsdangerous
 from starlette.datastructures import MutableHeaders
@@ -130,12 +131,9 @@ class RequestAwareSessionMiddleware(SessionMiddleware):
         if self.same_site == "none" and not self.https_only:
             raise ValueError("same_site='none' requires https_only=True")
 
-    def _request_is_https(self, scope: Scope) -> bool:
-        return request_is_https(scope)
-
     def _security_flags(self, scope: Scope) -> str:
         flags = f"httponly; samesite={self.same_site}"
-        if self.https_only and self._request_is_https(scope):
+        if self.https_only and request_is_https(scope):
             flags += "; secure"
         if self.domain is not None:
             flags += f"; domain={self.domain}"

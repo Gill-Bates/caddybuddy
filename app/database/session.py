@@ -7,28 +7,31 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import json
 import logging
 import os
 import re
 import threading
-from datetime import UTC, datetime
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import UniqueConstraint, event, inspect
 from sqlalchemy.engine import URL, make_url
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.pool import NullPool, StaticPool
-
-import fcntl
 
 from app.config.settings import Settings, get_settings
 from app.models import entities as _entities  # noqa: F401
 from app.models.base import Base
-from app.models.entities import _APP_SETTING_KEYS
+from app.models.entities import _APP_SETTING_KEYS, _sql_string_list
 from app.schemas.ssllabs import SSLLABS_SCHEDULE_FREQUENCIES
-
 
 logger = logging.getLogger(__name__)
 _engine: AsyncEngine | None = None
@@ -337,11 +340,12 @@ def _apply_known_schema_migrations(
         ) or migrated
 
     if existing_columns.get("ssllabs_targets") is not None:
-        # The scheduler is On/Off (weekly only); unsupported persisted frequencies are disabled.
+        # Keep only supported persisted scheduler frequencies.
         migrated = _execute_sqlite_repair(
             sync_connection,
             "UPDATE ssllabs_targets SET schedule_frequency = NULL "
-            f"WHERE schedule_frequency IS NOT NULL AND schedule_frequency != '{SSLLABS_SCHEDULE_FREQUENCIES[0]}'",
+            "WHERE schedule_frequency IS NOT NULL "
+            f"AND schedule_frequency NOT IN ({_sql_string_list(SSLLABS_SCHEDULE_FREQUENCIES)})",
             log_message="Disabling unsupported SSL Labs schedule frequencies",
         ) or migrated
 

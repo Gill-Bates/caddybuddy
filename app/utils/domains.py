@@ -6,9 +6,8 @@
 
 from __future__ import annotations
 
-from ipaddress import ip_address
 import re
-
+from ipaddress import ip_address
 
 _DOMAIN_RE = re.compile(
     r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$",

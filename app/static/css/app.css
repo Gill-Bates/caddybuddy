@@ -1,4 +1,5 @@
 :root {
+    /* ── Core palette ────────────────────────────────────────────────── */
     --cb-bg: #ebe3d2;
     --cb-surface: rgba(255, 255, 255, 0.88);
     --cb-surface-strong: rgba(21, 34, 46, 0.92);
@@ -7,7 +8,61 @@
     --cb-accent: #0f766e;
     --cb-accent-strong: #115e59;
     --cb-border: rgba(21, 34, 46, 0.1);
+
+    /* ── Semantic colour tokens ──────────────────────────────────────── */
+    /* Success — green scale */
+    --cb-success: #15803d;
+    /* text / icon */
+    --cb-success-strong: #166534;
+    /* headings / emphasis */
+    --cb-success-subtle: #16a34a;
+    /* secondary text */
+    --cb-success-bg: rgba(16, 185, 129, 0.14);
+    /* Danger — red scale */
+    --cb-danger: #b91c1c;
+    /* text / icon (most common) */
+    --cb-danger-strong: #991b1b;
+    /* headings / emphasis */
+    --cb-danger-bg: rgba(239, 68, 68, 0.12);
+    --cb-danger-dot: #ef4444;
+    /* status-dot fill */
+    /* Info / link — blue scale */
+    --cb-info: #1d4ed8;
+    /* text / icon */
+    --cb-info-bg: rgba(59, 130, 246, 0.12);
+    /* Warning — amber */
+    --cb-warning: #d97706;
+    --cb-warning-bg: rgba(245, 158, 11, 0.12);
+    /* Neutral / muted badge */
+    --cb-neutral: #64748b;
+
+    /* ── Shadow tokens ───────────────────────────────────────────────── */
+    /* Generic card shadow used by .cb-shadow and similar utilities */
     --cb-shadow: 0 18px 42px rgba(21, 34, 46, 0.1);
+    /* Elevated surface (modals, dropdowns, popovers) */
+    --cb-shadow-elevated: 0 20px 48px -18px rgba(5, 23, 49, 0.3), 0 8px 18px rgba(5, 23, 49, 0.12);
+    /* Subtle card / badge lift */
+    --cb-shadow-sm: 0 2px 8px rgba(21, 34, 46, 0.08);
+    /* Card hover / focus accent */
+    --cb-shadow-accent: 0 4px 12px rgba(15, 118, 110, 0.08);
+    /* Inline card (mobile list tiles) */
+    --cb-shadow-card: 0 6px 16px -10px rgba(5, 23, 49, 0.25), 0 2px 6px rgba(5, 23, 49, 0.05);
+    /* Panel medium lift */
+    --cb-shadow-panel: 0 10px 20px rgba(21, 34, 46, 0.08);
+
+    /* ── Transition duration tokens ─────────────────────────────────── */
+    /* Fast interactions: hover colours, opacity toggles */
+    --cb-duration-fast: 120ms;
+    /* Standard UI transitions: buttons, inputs, nav links */
+    --cb-duration-normal: 160ms;
+    /* Slightly heavier transitions: toggles, dropdowns */
+    --cb-duration-medium: 180ms;
+    /* Fade-in/out of overlays and backdrops */
+    --cb-duration-slow: 240ms;
+    /* Panels sliding in (sidebar, modals) */
+    --cb-duration-slide: 280ms;
+
+    /* ── Layout ──────────────────────────────────────────────────────── */
     --cb-sidebar-width: 15.75rem;
     --cb-content-max: 110rem;
     --cb-gutter: 1rem;
@@ -20,6 +75,8 @@
     --cb-footer-safe-gap: 0.75rem;
     --cb-footer-viewport-reserve: calc(3.55rem + 1rem + var(--cb-footer-safe-gap));
     --cb-app-main-vertical-padding: 2.5rem;
+
+    /* ── Feature-specific layout ─────────────────────────────────────── */
     --cb-ssllabs-site-column-width: clamp(11rem, 14vw, 14.5rem);
     --cb-ssllabs-scheduler-column-width: 10.75rem;
     --cb-ssllabs-actions-column-width: 9.25rem;
@@ -28,10 +85,14 @@
     --cb-sites-site-column-width: clamp(12rem, 24%, 15rem);
     --cb-sites-certificate-column-width: 15rem;
     --cb-sites-actions-column-width: 9.75rem;
+
+    /* ── Z-index scale ───────────────────────────────────────────────── */
     --cb-z-backdrop: 1029;
     --cb-z-sidebar: 1030;
     --cb-z-mobile-toggle: 1040;
     --cb-z-skip-link: 1100;
+
+    /* ── Pill / badge sizing ─────────────────────────────────────────── */
     /* Single source of truth for compact badge/pill sizing.
        Based on the .site-cert__days reference pill. */
     --cb-pill-min-height: 1.35rem;
@@ -154,11 +215,15 @@ body.app-body--menu-open .app-sidebar {
     text-transform: uppercase;
     letter-spacing: 0.14em;
     font-size: 0.72rem;
-    color: rgba(15, 23, 42, 0.55);
+    /* Small (0.72rem) uppercase label: rgba(...,0.55) lands at ~3.8:1 on the
+       page background, below WCAG AA for small text. 0.65 reaches ~5:1. */
+    color: rgba(15, 23, 42, 0.65);
 }
 
 .app-sidebar .brand-mark__kicker {
-    color: rgba(248, 250, 252, 0.6);
+    /* Light label over the teal end of the sidebar gradient: 0.6 opacity is
+       ~2.9:1. Strengthen to clear AA across the whole gradient. */
+    color: rgba(248, 250, 252, 0.92);
 }
 
 .brand-mark__name {
@@ -196,11 +261,14 @@ body.app-body--menu-open .app-sidebar {
     border-radius: 0.95rem;
     min-block-size: var(--cb-sidebar-link-block);
     padding: 0.85rem 1rem;
-    color: rgba(248, 250, 252, 0.78);
+    /* Inactive nav label over the teal gradient end sits at ~3.9:1 at 0.78;
+       0.92 clears AA without losing the active/inactive distinction (active
+       links also gain a background highlight). */
+    color: rgba(248, 250, 252, 0.92);
     font-weight: 600;
     line-height: 1.2;
     text-decoration: none;
-    transition: background-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+    transition: background-color var(--cb-duration-normal) ease, color var(--cb-duration-normal) ease, box-shadow var(--cb-duration-normal) ease;
 }
 
 .app-nav__icon {
@@ -355,10 +423,10 @@ body.app-body--menu-open .app-sidebar {
     flex: 0 0 auto;
     align-items: center;
     justify-content: center;
-    gap: 0.3rem;
-    min-width: 2.75rem;
+    gap: 0.2rem;
+    min-width: 0;
     min-height: 2.75rem;
-    padding: 0.45rem 0.75rem;
+    padding: 0.45rem 0.3rem;
     border-radius: 999px;
 }
 
@@ -397,44 +465,30 @@ body.app-body--menu-open .app-sidebar {
     max-width: min(100vw - 1.5rem, 24rem);
 }
 
-.app-toast-stack .toast {
+.app-toast-stack .toast.toast-slide {
+    display: block;
     width: 100%;
-    will-change: transform, opacity;
+    box-shadow: var(--cb-shadow-sm);
+    will-change: transform;
+    transform: translate3d(calc(100% + 1.25rem), 0, 0);
+    transition: transform var(--cb-duration-medium) cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .app-toast-stack .toast-body {
     padding-inline-end: 0.25rem;
 }
 
-.app-toast-stack .toast.fade {
-    opacity: 0;
-    transform: translate3d(1.2rem, 0, 0);
-    transition: transform 180ms ease, opacity 180ms ease;
-}
-
-.app-toast-stack .toast.fade.show,
-.app-toast-stack .toast.fade.showing {
-    display: block;
-}
-
-.app-toast-stack .toast.fade.show {
-    opacity: 1;
+.app-toast-stack .toast.toast-slide.show {
     transform: translate3d(0, 0, 0);
 }
 
-.app-toast-stack .toast.fade.showing {
-    opacity: 0;
-    transform: translate3d(1.2rem, 0, 0);
+.app-toast-stack .toast.toast-slide.showing {
+    transform: translate3d(calc(100% + 1.25rem), 0, 0);
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .app-toast-stack .toast.fade {
-        transition: opacity 120ms linear;
-        transform: none;
-    }
-
-    .app-toast-stack .toast.fade.show,
-    .app-toast-stack .toast.fade.showing {
+    .app-toast-stack .toast.toast-slide {
+        transition: none;
         transform: none;
     }
 }
@@ -479,6 +533,11 @@ body.app-body--menu-open .app-sidebar {
     --bs-gutter-x: 1rem;
     --bs-gutter-y: 1rem;
     margin-inline: 0;
+    /* Grid item of the .app-page grid: without min-width:0 its automatic
+       minimum is min-content, so wide scrollable children (the Caddyfile
+       editor, the sites table) blow the layout past the viewport and get
+       clipped by the shell's overflow-x:hidden instead of scrolling. */
+    min-width: 0;
 }
 
 .metric-grid {
@@ -541,7 +600,7 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .status-dot--offline {
-    background: #ef4444;
+    background: var(--cb-danger-dot);
 }
 
 .version-badge {
@@ -582,7 +641,7 @@ body.app-body--menu-open .app-sidebar {
     padding: 0;
     border-radius: 1.5rem;
     background: var(--cb-surface);
-    box-shadow: 0 20px 48px -18px rgba(5, 23, 49, 0.3), 0 8px 18px rgba(5, 23, 49, 0.12);
+    box-shadow: var(--cb-shadow-elevated);
 }
 
 .auth-card--shake {
@@ -634,7 +693,7 @@ body.app-body--menu-open .app-sidebar {
     border-radius: 1rem;
     background: var(--cb-surface);
     border: 1px solid rgba(15, 118, 110, 0.1);
-    box-shadow: 0 4px 12px rgba(15, 118, 110, 0.08);
+    box-shadow: var(--cb-shadow-accent);
 }
 
 .auth-brand__logo-wrap--wordmark {
@@ -822,7 +881,6 @@ body.app-body--menu-open .app-sidebar {
 .panel-card--highlight {
     border-color: var(--bs-primary);
     border-width: 2px;
-    height: auto;
 }
 
 .panel-card--highlight .panel-card__header {
@@ -951,7 +1009,7 @@ body.app-body--menu-open .app-sidebar {
     color: var(--cb-text);
     padding: 0.8rem 0.95rem;
     text-align: left;
-    transition: transform 180ms ease, background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+    transition: transform var(--cb-duration-medium) ease, background-color var(--cb-duration-medium) ease, border-color var(--cb-duration-medium) ease, box-shadow var(--cb-duration-medium) ease;
 }
 
 .cb-onboarding-wizard__step-button.is-inactive {
@@ -963,7 +1021,7 @@ body.app-body--menu-open .app-sidebar {
 .cb-onboarding-wizard__step-button:focus-visible {
     border-color: rgba(21, 34, 46, 0.18);
     background: rgba(255, 255, 255, 0.9);
-    box-shadow: 0 10px 20px rgba(21, 34, 46, 0.08);
+    box-shadow: var(--cb-shadow-panel);
     transform: translateY(-1px);
 }
 
@@ -1076,10 +1134,10 @@ body.app-body--menu-open .app-sidebar {
 .cb-onboarding-detected {
     display: grid;
     gap: 0.15rem;
-    padding: 0.85rem 1rem;
-    border: 1px solid rgba(15, 118, 110, 0.22);
+    padding: 0.7rem 1rem;
+    border: 1px solid rgba(21, 34, 46, 0.12);
     border-radius: 0.85rem;
-    background: rgba(15, 118, 110, 0.06);
+    background: rgba(21, 34, 46, 0.035);
 }
 
 .cb-onboarding-detected__label {
@@ -1114,7 +1172,7 @@ body.app-body--menu-open .app-sidebar {
     transform: translate(-50%, -50%);
     font-size: 2rem;
     font-weight: 700;
-    color: #16a34a;
+    color: var(--cb-success-subtle);
     text-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
     pointer-events: none;
     z-index: 9999;
@@ -1197,7 +1255,7 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .cb-field-check[data-field-check-status="passed"] {
-    color: #166534;
+    color: var(--cb-success-strong);
     border-color: rgba(22, 101, 52, 0.18);
     background: rgba(34, 197, 94, 0.12);
 }
@@ -1239,11 +1297,12 @@ body.app-body--menu-open .app-sidebar {
     align-items: start;
     gap: 0.7rem;
     padding: 0.85rem 0.95rem;
-    border: 1px solid rgba(21, 34, 46, 0.14);
+    border: 1px solid rgba(21, 34, 46, 0.22);
     border-radius: 0.9rem;
-    background: rgba(255, 255, 255, 0.7);
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(21, 34, 46, 0.05);
     cursor: pointer;
-    transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+    transition: border-color var(--cb-duration-normal) ease, background-color var(--cb-duration-normal) ease, box-shadow var(--cb-duration-normal) ease;
 }
 
 .cb-choice-card:hover {
@@ -1378,6 +1437,10 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .table-active>* {
+    /* Bootstrap 5.3 fills cells via box-shadow using --bs-table-bg-state;
+       the legacy --bs-table-accent-bg is kept only as a fallback. Set both
+       so the active row uses our accent tint instead of Bootstrap's grey. */
+    --bs-table-bg-state: rgba(15, 118, 110, 0.09);
     --bs-table-accent-bg: rgba(15, 118, 110, 0.09);
 }
 
@@ -1496,7 +1559,7 @@ body.app-body--menu-open .app-sidebar {
 
 .hero-metric--valid .hero-metric__icon {
     background: rgba(22, 163, 74, 0.12);
-    color: #15803d;
+    color: var(--cb-success);
 }
 
 .hero-metric--expired {
@@ -1505,7 +1568,7 @@ body.app-body--menu-open .app-sidebar {
 
 .hero-metric--expired .hero-metric__icon {
     background: rgba(220, 38, 38, 0.12);
-    color: #b91c1c;
+    color: var(--cb-danger);
 }
 
 .hero-metric__hint {
@@ -1559,8 +1622,7 @@ body.app-body--menu-open .app-sidebar {
    :where() list keeps existing class colours intact while forcing
    one consistent geometry across the app. */
 .cb-pill,
-:where(
-    .status-pill,
+:where(.status-pill,
     .site-domain-badge,
     .site-handler-badge,
     .ssllabs-site-domain-badge,
@@ -1568,8 +1630,7 @@ body.app-body--menu-open .app-sidebar {
     .site-cert__days,
     .ssllabs-result__grade,
     .ssllabs-result__status-badge,
-    .ssllabs-endpoint-chip__grade
-) {
+    .ssllabs-endpoint-chip__grade) {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1616,13 +1677,13 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .status-pill--offline {
-    background: rgba(239, 68, 68, 0.12);
-    color: #991b1b;
+    background: var(--cb-danger-bg);
+    color: var(--cb-danger-strong);
 }
 
 .status-pill--unknown {
-    background: rgba(59, 130, 246, 0.12);
-    color: #1d4ed8;
+    background: var(--cb-info-bg);
+    color: var(--cb-info);
 }
 
 .status-pill--warning {
@@ -1631,19 +1692,44 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .badge {
-    box-shadow: 0 2px 8px rgba(21, 34, 46, 0.08);
+    box-shadow: var(--cb-shadow-sm);
 }
 
-.ssllabs-callout {
-    height: auto;
-}
-
-#ssllabs-api-config {
-    height: auto;
-}
+/* .ssllabs-callout and #ssllabs-api-config need no height override —
+   height is auto by default. */
 
 .settings-layout {
     align-items: stretch;
+}
+
+.settings-column {
+    display: flex;
+    flex-direction: column;
+}
+
+.settings-column--primary>.settings-panel,
+.settings-column--secondary>.settings-stack {
+    flex: 1 1 auto;
+}
+
+.settings-stack {
+    --bs-gutter-x: 0;
+    --bs-gutter-y: 1.5rem;
+    align-content: start;
+    height: 100%;
+    margin: 0;
+}
+
+.settings-stack>[class*="col-"] {
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+}
+
+@media (min-width: 1200px) {
+    .settings-stack>[class*="col-"]:first-child {
+        margin-top: 0;
+    }
 }
 
 .settings-panel {
@@ -1652,10 +1738,6 @@ body.app-body--menu-open .app-sidebar {
 
 .settings-panel--primary {
     min-height: 100%;
-}
-
-.settings-stack {
-    align-content: start;
 }
 
 .ssllabs-status-panel {
@@ -1677,14 +1759,13 @@ body.app-body--menu-open .app-sidebar {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-height: 1.75rem;
+    min-height: var(--cb-pill-min-height);
+    line-height: 1;
     vertical-align: middle;
 }
 
-#ssllabs-settings,
-#password-settings {
-    height: auto;
-}
+/* #ssllabs-settings and #ssllabs-retention-settings need no height override —
+   height is auto by default. */
 
 .ssllabs-callout__body {
     display: flex;
@@ -1728,6 +1809,11 @@ body.app-body--menu-open .app-sidebar {
 
 .ssllabs-table td {
     vertical-align: top;
+    /* The base .table cell padding is 0.8rem top/bottom, which — stacked on
+       top of each domain card's own padding and min-height — makes the rows
+       look very airy. Tighten the vertical rhythm here; the card border
+       already provides visual separation between site rows. */
+    padding-block: 0.35rem;
 }
 
 .ssllabs-table .ssllabs-schedule-form {
@@ -1794,14 +1880,15 @@ body.app-body--menu-open .app-sidebar {
 .ssllabs-filterbar .form-control,
 .ssllabs-filterbar .form-select {
     min-height: 2.75rem;
-    padding-block: 0.35rem;
+    height: 2.75rem;
+    padding-block: 0.5rem;
     font-size: 0.82rem;
     font-family: inherit;
     color: var(--cb-text);
     background: rgba(255, 255, 255, 0.7);
     border: 1px solid rgba(21, 34, 46, 0.12);
     border-radius: 999px;
-    transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+    transition: border-color var(--cb-duration-normal) ease, box-shadow var(--cb-duration-normal) ease, background var(--cb-duration-normal) ease;
 }
 
 .ssllabs-filterbar .form-control {
@@ -1819,6 +1906,18 @@ body.app-body--menu-open .app-sidebar {
     border-color: color-mix(in srgb, var(--cb-accent) 60%, white 40%);
     box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--cb-accent) 16%, transparent);
     outline: none;
+}
+
+.ssllabs-filterbar [data-ssllabs-clear-filters] {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-block-size: 2.75rem;
+    height: 2.75rem;
+    padding: 0.5rem 0.85rem;
+    font-size: 0.82rem;
+    line-height: 1;
+    border-radius: 999px;
 }
 
 .ssllabs-scrollbox {
@@ -1843,15 +1942,81 @@ body.app-body--menu-open .app-sidebar {
 
 @media (min-width: 1200px) {
 
-    .app-page--sites,
     .ssllabs-page {
         display: flex;
+        flex: 1 1 0;
         flex-direction: column;
-        min-height: calc(100dvh - var(--cb-footer-viewport-reserve) - var(--cb-app-main-vertical-padding));
+        min-height: 0;
     }
 
-    .app-page--sites>.app-grid,
     .ssllabs-page>.app-grid {
+        flex: 1 1 auto;
+        min-height: 0;
+    }
+
+    /* SSL Labs is a full-height table view: lock the shell to the viewport
+       (like the Caddyfile/Sites pages) so the panel fills the available
+       space and scrolls internally, instead of growing with its rows and
+       pushing the footer past the viewport. */
+    body:has(.ssllabs-page) .app-content {
+        height: 100dvh;
+        min-height: 0;
+    }
+
+    body:has(.ssllabs-page) .app-main {
+        flex: 1 1 0;
+        min-height: 0;
+    }
+
+    body:has(.ssllabs-page) .app-footer {
+        flex: 0 0 auto;
+    }
+
+    body:has(.ssllabs-page) .app-container {
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 0;
+        min-height: 0;
+        height: 100%;
+    }
+
+    /* Sites edit view is a full-height editor layout (like the Caddyfile
+       page). Lock the shell to the viewport height and let the inner panels
+       flex, so the footer stays pinned to the bottom instead of being pushed
+       past the viewport when the editor/list content is tall. A bare
+       min-height on the page (the previous approach) is a floor, not a cap,
+       so any extra overhead spilled the content — and the footer — below the
+       fold. */
+    body:has(.app-page--sites) .app-content {
+        height: 100dvh;
+        min-height: 0;
+    }
+
+    body:has(.app-page--sites) .app-main {
+        flex: 1 1 0;
+        min-height: 0;
+    }
+
+    body:has(.app-page--sites) .app-footer {
+        flex: 0 0 auto;
+    }
+
+    body:has(.app-page--sites) .app-container {
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 0;
+        min-height: 0;
+        height: 100%;
+    }
+
+    .app-page--sites {
+        display: flex;
+        flex: 1 1 0;
+        flex-direction: column;
+        min-height: 0;
+    }
+
+    .app-page--sites>.app-grid {
         flex: 1 1 auto;
         min-height: 0;
     }
@@ -1862,10 +2027,14 @@ body.app-body--menu-open .app-sidebar {
         min-height: 0;
     }
 
+    .ssllabs-page>.app-grid>.col-12>.ssllabs-callout {
+        flex: 0 0 auto;
+    }
+
     .ssllabs-panel {
         flex: 1 1 auto;
         height: auto;
-        min-height: 30rem;
+        min-height: 0;
         max-height: none;
     }
 }
@@ -1894,6 +2063,27 @@ body.app-body--menu-open .app-sidebar {
     align-items: center;
     gap: 0.5rem;
     min-width: 0;
+}
+
+/* In the fixed-layout sites table the title must fill (and be bounded by) its
+   cell, otherwise inline-flex sizes to its content, the name's ellipsis never
+   engages, and the handler badge spills into the Domain column. Applies in
+   table mode at every width (the <768px card mode media query overrides). */
+.sites-list-scroll .sites-table .site-row-title {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+}
+
+.sites-list-scroll .sites-table .site-handler-badge {
+    flex: 0 0 auto;
+}
+
+.sites-list-scroll .sites-table .site-row-title .fw-semibold {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .site-status-dot {
@@ -1931,15 +2121,13 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .sites-list-panel {
-    height: auto;
     padding-bottom: 0;
     container-name: sites-list-panel;
     container-type: inline-size;
 }
 
-.sites-form-panel {
-    height: auto;
-}
+/* .sites-form-panel needs no height override — panel-card base sets no
+   fixed height, so auto is already the computed value. */
 
 .sites-form-panel__form {
     min-height: 0;
@@ -2133,18 +2321,18 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .site-cert__summary--valid .site-cert__status {
-    background: rgba(16, 185, 129, 0.14);
+    background: var(--cb-success-bg);
     color: #047857;
 }
 
 .site-cert__summary--expired .site-cert__status {
-    background: rgba(239, 68, 68, 0.12);
-    color: #b91c1c;
+    background: var(--cb-danger-bg);
+    color: var(--cb-danger);
 }
 
 .site-cert__summary--renewing .site-cert__status {
-    background: rgba(59, 130, 246, 0.12);
-    color: #1d4ed8;
+    background: var(--cb-info-bg);
+    color: var(--cb-info);
 }
 
 .site-cert__summary .status-dot {
@@ -2199,7 +2387,7 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .site-cert__error-title {
-    color: #b91c1c;
+    color: var(--cb-danger);
     font-size: 0.84rem;
     font-weight: 700;
 }
@@ -2211,14 +2399,30 @@ body.app-body--menu-open .app-sidebar {
 }
 
 @media (min-width: 1200px) {
+
     .app-page--sites .app-page__header,
     .ssllabs-page .app-page__header {
         margin-bottom: 0.25rem;
     }
 
+    .app-page--sites .app-page__header,
+    .ssllabs-page .app-page__header {
+        flex: 0 0 auto;
+    }
+
     .app-page--sites>.app-grid>.sites-form-column,
     .app-page--sites>.app-grid>.sites-list-column {
         min-height: 0;
+    }
+
+    .app-page--sites[data-site-form-open]>.app-grid>.sites-form-column {
+        flex: 0 0 auto;
+        width: 58.33333333%;
+    }
+
+    .app-page--sites[data-site-form-open]>.app-grid>.sites-list-column {
+        flex: 0 0 auto;
+        width: 41.66666667%;
     }
 
     .sites-form-column,
@@ -2321,14 +2525,14 @@ body.app-body--menu-open .app-sidebar {
         margin-bottom: 0.75rem;
     }
 
-    .app-page--caddyfile > .app-grid {
+    .app-page--caddyfile>.app-grid {
         display: flex;
         flex: 1 1 0;
         min-height: 0;
         overflow: visible;
     }
 
-    .app-page--caddyfile > .app-grid > .col-12 {
+    .app-page--caddyfile>.app-grid>.col-12 {
         display: flex;
         flex: 1 1 0;
         flex-direction: column;
@@ -2467,7 +2671,7 @@ body.app-body--menu-open .app-sidebar {
         border: 1px solid var(--cb-border);
         border-radius: 1.1rem;
         background: var(--cb-surface);
-        box-shadow: 0 6px 16px -10px rgba(5, 23, 49, 0.25), 0 2px 6px rgba(5, 23, 49, 0.05);
+        box-shadow: var(--cb-shadow-card);
     }
 
     .sites-list-scroll .table tr:last-child {
@@ -2483,6 +2687,11 @@ body.app-body--menu-open .app-sidebar {
     .sites-list-scroll .table td {
         padding: 0;
         border-bottom: 0;
+        /* Reset Bootstrap's per-cell background fill (applied via inset
+           box-shadow) so each field doesn't render its own grey box inside
+           the card. The card <tr> owns the active/hover background. */
+        background-color: transparent;
+        box-shadow: none;
     }
 
     /* Divider + spacing between fields inside the card */
@@ -2540,6 +2749,97 @@ body.app-body--menu-open .app-sidebar {
     }
 }
 
+/* Compact card layout via container query — fires when the right panel is
+   narrow (e.g. form open on desktop) before the viewport hits 768px mobile */
+@container sites-list-panel (max-width: 46rem) {
+
+    .sites-list-scroll {
+        overflow-x: hidden;
+    }
+
+    .sites-list-scroll .sites-table {
+        min-width: 0;
+    }
+
+    .sites-list-scroll .sites-table colgroup,
+    .sites-list-scroll .sites-table thead {
+        display: none;
+    }
+
+    .sites-list-scroll .sites-table,
+    .sites-list-scroll .sites-table tbody {
+        display: block;
+        width: 100%;
+    }
+
+    .sites-list-scroll .sites-table tr {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas:
+            "site    actions"
+            "domain  actions"
+            "cert    actions";
+        gap: 0.65rem 0.85rem;
+        padding: 0.9rem 1rem;
+        border-bottom: 1px solid var(--cb-border);
+    }
+
+    .sites-list-scroll .sites-table tr:first-child {
+        border-top: 1px solid var(--cb-border);
+    }
+
+    .sites-list-scroll .sites-table td {
+        display: block;
+        width: auto;
+        min-width: 0;
+        padding: 0;
+        border: 0;
+        /* Bootstrap applies the table-active background per-td via an inset
+           box-shadow (and CSS vars); reset both here so each cell doesn't
+           render its own grey box in grid layout — the <tr> owns it. */
+        background-color: transparent;
+        box-shadow: none;
+    }
+
+    .sites-list-scroll .sites-table tr.table-active {
+        border-color: var(--cb-accent);
+        background: rgba(15, 118, 110, 0.05);
+        box-shadow: inset 0 0 0 1px var(--cb-accent);
+    }
+
+    .sites-list-scroll .sites-table td[data-label="Site"] {
+        grid-area: site;
+    }
+
+    .sites-list-scroll .sites-table td[data-label="Domain"] {
+        grid-area: domain;
+    }
+
+    .sites-list-scroll .sites-table td[data-label="Certificate"] {
+        grid-area: cert;
+    }
+
+    .sites-list-scroll .sites-table td[data-label="Actions"] {
+        grid-area: actions;
+        align-self: start;
+        overflow: visible;
+        padding-inline-end: 0;
+    }
+
+    .sites-list-scroll .sites-table .cell-actions {
+        flex-direction: column;
+        flex-wrap: nowrap;
+        justify-content: flex-start;
+        align-items: flex-end;
+    }
+
+    /* Empty-state row: span full grid width */
+    .sites-list-scroll .sites-table tr td[colspan] {
+        grid-column: 1 / -1;
+        text-align: center;
+    }
+}
+
 /* Sites search field */
 .sites-search {
     position: relative;
@@ -2571,7 +2871,7 @@ body.app-body--menu-open .app-sidebar {
     border: 1px solid rgba(21, 34, 46, 0.12);
     border-radius: 999px;
     outline: none;
-    transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+    transition: border-color var(--cb-duration-normal) ease, box-shadow var(--cb-duration-normal) ease, background var(--cb-duration-normal) ease;
     appearance: none;
 }
 
@@ -2644,8 +2944,12 @@ body.app-body--menu-open .app-sidebar {
         align-items: stretch;
         max-width: none;
         width: 100%;
+        /* Use the stable small-viewport height as the baseline and let the
+           dialog grow with its content. Forcing height: 100dvh made the modal
+           resize and jump on iOS as the URL bar / on-screen keyboard toggled;
+           the modal body already handles its own scrolling. */
         min-height: 100svh;
-        height: 100dvh;
+        height: auto;
         margin: 0;
     }
 
@@ -2668,32 +2972,13 @@ body.app-body--menu-open .app-sidebar {
     background: rgba(21, 34, 46, 0.03);
 }
 
-.ssllabs-domain-card[open] {
-    background: rgba(21, 34, 46, 0.04);
-}
-
 .ssllabs-domain-card__summary {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     align-items: center;
     gap: 0.75rem;
     min-height: 46px;
     padding: 0.35rem 0.75rem 0.35rem 0.85rem;
-    cursor: pointer;
-    list-style: none;
-}
-
-.ssllabs-domain-card__summary::-webkit-details-marker {
-    display: none;
-}
-
-.ssllabs-domain-card__summary::marker {
-    content: "";
-}
-
-.ssllabs-domain-card__summary:focus-visible {
-    outline: 2px solid rgba(74, 110, 250, 0.45);
-    outline-offset: -2px;
 }
 
 .ssllabs-domain-card__main {
@@ -2732,15 +3017,6 @@ body.app-body--menu-open .app-sidebar {
     white-space: nowrap;
 }
 
-.ssllabs-domain-card__chevron {
-    color: var(--cb-muted);
-    transition: transform 0.15s ease;
-}
-
-.ssllabs-domain-card[open] .ssllabs-domain-card__chevron {
-    transform: rotate(180deg);
-}
-
 .ssllabs-domain-card__details {
     display: grid;
     gap: 0.6rem;
@@ -2748,17 +3024,12 @@ body.app-body--menu-open .app-sidebar {
     border-top: 1px solid rgba(21, 34, 46, 0.08);
 }
 
-.ssllabs-domain-card__actions {
-    display: grid;
-    grid-template-columns: var(--cb-ssllabs-domain-grid);
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0 0.75rem 0.55rem 0.85rem;
-}
-
 .ssllabs-domain-card__inline-scheduler {
-    display: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
     min-width: 0;
+    align-items: flex-start;
 }
 
 /* Grade keeps a heavier weight and a stable min-width for alignment,
@@ -2778,7 +3049,7 @@ body.app-body--menu-open .app-sidebar {
     display: flex;
     flex-wrap: wrap;
     gap: 0.35rem;
-    margin-top: 0.2rem;
+    margin-top: 0;
 }
 
 .ssllabs-endpoint-chip {
@@ -2864,16 +3135,15 @@ body.app-body--menu-open .app-sidebar {
     }
 
     .ssllabs-domain-card__summary {
-        grid-template-columns: var(--cb-ssllabs-domain-grid);
+        grid-template-columns: minmax(0, 1fr) var(--cb-ssllabs-scheduler-column-width) var(--cb-ssllabs-actions-column-width);
         min-height: 44px;
         padding-block: 0.25rem;
     }
 
     .ssllabs-domain-card__inline-scheduler {
-        display: flex;
-        align-items: center;
+        align-items: flex-start;
         min-width: 0;
-        width: var(--cb-ssllabs-scheduler-column-width);
+        width: 100%;
     }
 
     .ssllabs-domain-card__inline-scheduler .ssllabs-schedule-form {
@@ -2896,20 +3166,6 @@ body.app-body--menu-open .app-sidebar {
         justify-content: flex-end;
     }
 
-    .ssllabs-domain-card__actions {
-        grid-template-columns: var(--cb-ssllabs-domain-grid);
-    }
-
-    .ssllabs-domain-card__actions .ssllabs-schedule-form {
-        width: 100%;
-        min-width: 0;
-    }
-
-    .ssllabs-domain-card__actions .ssllabs-schedule-form .form-select {
-        width: 100%;
-        min-width: 0;
-    }
-
     .ssllabs-table .ssllabs-actions {
         width: 100%;
     }
@@ -2920,7 +3176,7 @@ body.app-body--menu-open .app-sidebar {
     }
 
     .ssllabs-domain-card .btn-sm {
-        min-block-size: 2.75rem;
+        min-block-size: 2.1rem;
         padding-inline: 0.65rem;
         border-radius: 999px;
         font-size: 0.78rem;
@@ -2928,7 +3184,7 @@ body.app-body--menu-open .app-sidebar {
     }
 
     .ssllabs-domain-card .form-select-sm {
-        min-height: 2.75rem;
+        min-height: 2.1rem;
         padding-block: 0.35rem;
         padding-inline: 0.65rem 2rem;
         border-radius: 999px;
@@ -2952,33 +3208,29 @@ body.app-body--menu-open .app-sidebar {
     }
 
     .ssllabs-domain-card__summary {
-        grid-template-columns: minmax(0, 1fr);
-        align-items: stretch;
+        grid-template-columns: minmax(0, 1fr) var(--cb-ssllabs-actions-column-width);
+        align-items: center;
     }
 
     .ssllabs-domain-card__main {
+        grid-column: 1 / -1;
         flex-wrap: wrap;
         white-space: normal;
     }
 
+    .ssllabs-domain-card__inline-scheduler {
+        grid-column: 1;
+        align-items: flex-start;
+    }
+
     .ssllabs-domain-card__quick-actions {
-        justify-content: space-between;
+        grid-column: 2;
+        justify-content: flex-end;
+        align-self: center;
     }
 
     .ssllabs-domain-card__details {
         gap: 0.7rem;
-    }
-
-    .ssllabs-domain-card__actions {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr);
-        align-items: stretch;
-        padding-top: 0;
-    }
-
-    .ssllabs-domain-card__inline-scheduler {
-        display: flex;
-        align-items: center;
     }
 }
 
@@ -3001,13 +3253,50 @@ body.app-body--menu-open .app-sidebar {
         grid-template-columns: minmax(0, 1fr);
     }
 
-    [data-ssllabs-clear-filters] {
-        min-block-size: 2.75rem;
+    .ssllabs-filterbar [data-ssllabs-clear-filters] {
+        min-block-size: 2.1rem;
+    }
+
+    /* Flatten the panel so each site renders as a standalone card tile
+       (mirroring the Sites list), and let the page scroll naturally instead
+       of a short, fixed-height inner scroll box. */
+    .ssllabs-panel {
+        height: auto;
+        min-height: 0;
+        max-height: none;
+        padding: 0;
+        overflow: visible;
+        background: transparent;
+        border: 0;
+        box-shadow: none;
+        backdrop-filter: none;
+    }
+
+    /* With the panel flattened, the cards run full-width to the panel edge.
+       Pull the header and filter controls out to the same edge so the side
+       spacing matches the cards (and the Sites list) instead of keeping the
+       panel's 1.05rem inset, which left the search/filter looking narrower
+       than the cards below them. */
+    .ssllabs-page .ssllabs-panel .panel-card__header,
+    .ssllabs-page .ssllabs-panel .ssllabs-filterbar {
+        padding-inline: 0.25rem;
+    }
+
+    .ssllabs-page .ssllabs-panel .ssllabs-filterbar {
+        border-bottom: 0;
+        margin-bottom: 0.75rem;
+    }
+
+    .ssllabs-scrollbox {
+        flex: 0 0 auto;
+        overflow: visible;
+        padding: 0;
+        scrollbar-gutter: auto;
     }
 
     .ssllabs-table-wrap {
         overflow: visible;
-        padding: 0 0.75rem 0.75rem;
+        padding: 0;
     }
 
     .ssllabs-table,
@@ -3018,29 +3307,42 @@ body.app-body--menu-open .app-sidebar {
         width: 100%;
     }
 
+    .ssllabs-table colgroup,
     .ssllabs-table thead {
         display: none;
     }
 
-    .ssllabs-table tr {
-        padding: 0.85rem 0;
-        border-top: 1px solid rgba(21, 34, 46, 0.08);
+    /* Each configured site renders as a self-contained card / tile */
+    .ssllabs-table tr[data-ssllabs-site-row] {
+        padding: 1rem 1.05rem;
+        margin-bottom: 0.85rem;
+        border: 1px solid var(--cb-border);
+        border-radius: 1.1rem;
+        background: var(--cb-surface);
+        box-shadow: var(--cb-shadow-card);
     }
 
-    .ssllabs-table tr:first-child {
-        border-top: 0;
+    .ssllabs-table tr[data-ssllabs-site-row]:last-child {
+        margin-bottom: 0;
     }
 
     .ssllabs-table td {
-        display: grid;
-        grid-template-columns: minmax(5.75rem, 34%) minmax(0, 1fr);
-        gap: 0.75rem;
-        padding: 0.45rem 0;
+        padding: 0;
         border-bottom: 0;
     }
 
-    .ssllabs-table td::before {
+    /* Divider + spacing between the Site heading and the Domains block */
+    .ssllabs-table td+td {
+        margin-top: 0.7rem;
+        padding-top: 0.7rem;
+        border-top: 1px solid var(--cb-border);
+    }
+
+    /* Field labels sit above their value, not beside it */
+    .ssllabs-table td[data-label="Domains"]::before {
         content: attr(data-label);
+        display: block;
+        margin-bottom: 0.45rem;
         color: var(--cb-muted);
         font-size: 0.68rem;
         font-weight: 700;
@@ -3048,12 +3350,19 @@ body.app-body--menu-open .app-sidebar {
         text-transform: uppercase;
     }
 
-    .ssllabs-table td[colspan] {
-        display: block;
+    /* Site name is the card heading; no label needed */
+    .ssllabs-table td[data-label="Site"]::before {
+        display: none;
     }
 
-    .ssllabs-table td[colspan]::before {
-        content: none;
+    .ssllabs-table td[data-label="Site"] .site-row-title .fw-semibold {
+        font-size: 1rem;
+    }
+
+    /* Empty-state row keeps a plain look, not a tile */
+    .ssllabs-table tr td[colspan] {
+        display: block;
+        text-align: center;
     }
 
     .ssllabs-schedule-form {
@@ -3084,40 +3393,47 @@ body.app-body--menu-open .app-sidebar {
         font-size: 0.75rem;
     }
 
+    .ssllabs-domain-list {
+        gap: 0.7rem;
+    }
+
     .ssllabs-domain-card__summary {
-        grid-template-columns: minmax(0, 1fr);
-        align-items: stretch;
-        padding-inline: 0.75rem;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: start;
+        padding: 0.7rem 0.75rem;
     }
 
     .ssllabs-domain-card__main {
+        grid-column: 1 / -1;
         flex-wrap: wrap;
         white-space: normal;
     }
 
     .ssllabs-domain-card__inline-scheduler {
-        display: flex;
-        align-items: center;
+        align-items: stretch;
+        width: 100%;
     }
 
     .ssllabs-domain-card__quick-actions {
+        grid-column: 1 / -1;
         justify-content: space-between;
     }
 
-    .ssllabs-domain-card__actions {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr);
-        align-items: stretch;
-        padding-top: 0;
+    .ssllabs-domain-card .ssllabs-schedule-form {
+        display: flex;
+        width: 100%;
+        min-width: 0;
     }
 
-    .ssllabs-domain-card .ssllabs-schedule-form {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
+    .ssllabs-domain-card .ssllabs-schedule-form .form-select {
+        width: 100%;
+        min-width: 0;
+        flex: 1 1 auto;
     }
 }
 
 @media (min-width: 768px) {
+
     .caddyfile-editor-panel__textarea,
     #site-caddy-directives {
         white-space: pre;
@@ -3127,6 +3443,7 @@ body.app-body--menu-open .app-sidebar {
 }
 
 @media (max-width: 767.98px) {
+
     .caddyfile-editor-panel__textarea,
     #site-caddy-directives {
         white-space: pre;
@@ -3388,7 +3705,7 @@ body.app-body--menu-open .app-sidebar {
 
 .site-enabled-label {
     color: var(--cb-muted);
-    transition: color 160ms ease;
+    transition: color var(--cb-duration-normal) ease;
 }
 
 .form-check-input:checked+.site-enabled-label {
@@ -3441,9 +3758,9 @@ body.app-body--menu-open .app-sidebar {
     border-radius: 0.75rem;
     background: var(--cb-accent);
     color: #fff;
-    box-shadow: 0 4px 12px rgba(15, 118, 110, 0.35);
+    box-shadow: var(--cb-shadow-accent);
     cursor: pointer;
-    transition: transform 160ms ease, background-color 160ms ease;
+    transition: transform var(--cb-duration-normal) ease, background-color var(--cb-duration-normal) ease;
 }
 
 .mobile-menu-toggle:hover {
@@ -3504,7 +3821,7 @@ body.app-body--menu-open .app-sidebar {
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
-    transition: opacity 240ms ease, visibility 240ms ease;
+    transition: opacity var(--cb-duration-slow) ease, visibility var(--cb-duration-slow) ease;
 }
 
 @supports (backdrop-filter: blur(4px)) {
@@ -3555,9 +3872,27 @@ body.app-body--menu-open .app-sidebar {
         padding-top: env(safe-area-inset-top);
         padding-left: var(--cb-mobile-gutter-left);
         padding-right: var(--cb-mobile-gutter-right);
+        /* Solid fallback first: where color-mix or backdrop-filter is
+           unavailable (or the user prefers reduced transparency) the topbar
+           must stay opaque enough to keep the logo legible over page content.
+           Enhancements are layered on top behind feature/preference guards,
+           mirroring the panel-card treatment elsewhere in this file. */
+        background: var(--cb-bg);
         background: color-mix(in srgb, var(--cb-bg) 86%, transparent);
-        backdrop-filter: blur(10px);
         border-bottom: 1px solid var(--cb-border);
+    }
+
+    @supports (backdrop-filter: blur(10px)) {
+        .mobile-topbar {
+            backdrop-filter: blur(10px);
+        }
+    }
+
+    @media (prefers-reduced-transparency: reduce) {
+        .mobile-topbar {
+            background: var(--cb-bg);
+            backdrop-filter: none;
+        }
     }
 
     /* The logo now lives in the persistent top bar, so drop it from the flyout. */
@@ -3591,7 +3926,7 @@ body.app-body--menu-open .app-sidebar {
         overscroll-behavior: contain;
         -webkit-overflow-scrolling: touch;
         transform: translateX(-100%);
-        transition: transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        transition: transform var(--cb-duration-slide) cubic-bezier(0.4, 0, 0.2, 1);
         box-shadow: none;
     }
 
@@ -3937,18 +4272,44 @@ body.app-body--menu-open .app-sidebar {
     height: 0.75rem;
     border-radius: 0.2rem;
     flex: 0 0 auto;
-    background-color: #64748b;
+    background-color: var(--cb-neutral);
 }
 
-[data-grade-rank="7"]  { background-color: #15803d; }
-[data-grade-rank="6"]  { background-color: #65a30d; }
-[data-grade-rank="5"]  { background-color: #84cc16; }
-[data-grade-rank="4"]  { background-color: #eab308; }
-[data-grade-rank="3"]  { background-color: #f97316; }
-[data-grade-rank="2"]  { background-color: #ea580c; }
-[data-grade-rank="1"]  { background-color: #dc2626; }
-[data-grade-rank="0"]  { background-color: #991b1b; }
-[data-grade-rank="-1"] { background-color: #64748b; }
+[data-grade-rank="7"] {
+    background-color: var(--cb-success);
+}
+
+[data-grade-rank="6"] {
+    background-color: #65a30d;
+}
+
+[data-grade-rank="5"] {
+    background-color: #84cc16;
+}
+
+[data-grade-rank="4"] {
+    background-color: #eab308;
+}
+
+[data-grade-rank="3"] {
+    background-color: var(--cb-warning);
+}
+
+[data-grade-rank="2"] {
+    background-color: #ea580c;
+}
+
+[data-grade-rank="1"] {
+    background-color: #dc2626;
+}
+
+[data-grade-rank="0"] {
+    background-color: var(--cb-danger-strong);
+}
+
+[data-grade-rank="-1"] {
+    background-color: var(--cb-neutral);
+}
 
 .ssllabs-domain-search {
     min-width: 12rem;
@@ -4104,30 +4465,86 @@ body.app-body--menu-open .app-sidebar {
     gap: 0.35rem;
 }
 
+.ssllabs-retention-track {
+    position: relative;
+}
+
+.ssllabs-retention-ticks {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    align-items: center;
+    padding-inline: 0.55rem;
+    pointer-events: none;
+    z-index: 2;
+}
+
+.ssllabs-retention-tick {
+    grid-row: 1;
+    justify-self: start;
+    width: 0.8rem;
+    height: 0.8rem;
+    border: 1px solid color-mix(in srgb, var(--cb-muted) 26%, var(--cb-surface));
+    border-radius: var(--cb-pill-radius);
+    background: color-mix(in srgb, var(--cb-muted) 15%, var(--cb-surface));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--cb-surface) 82%, transparent);
+    transform: translate(-50%, -50%);
+}
+
+.ssllabs-retention-tick:nth-child(1) { grid-column: 1; }
+.ssllabs-retention-tick:nth-child(2) { grid-column: 2; }
+.ssllabs-retention-tick:nth-child(3) { grid-column: 3; }
+.ssllabs-retention-tick:nth-child(4) { grid-column: 4; }
+.ssllabs-retention-tick:nth-child(5) { grid-column: 5; }
+.ssllabs-retention-tick:nth-child(6) { grid-column: 6; }
+
+.ssllabs-retention-tick:nth-child(7) {
+    grid-column: 6;
+    justify-self: end;
+    transform: translate(50%, -50%);
+}
+
+#ssllabs-retention-slider[data-active-index="0"] ~ .ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(1),
+#ssllabs-retention-slider[data-active-index="1"] ~ .ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(2),
+#ssllabs-retention-slider[data-active-index="2"] ~ .ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(3),
+#ssllabs-retention-slider[data-active-index="3"] ~ .ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(4),
+#ssllabs-retention-slider[data-active-index="4"] ~ .ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(5),
+#ssllabs-retention-slider[data-active-index="5"] ~ .ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(6),
+#ssllabs-retention-slider[data-active-index="6"] ~ .ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(7) {
+    visibility: hidden;
+}
+
 .ssllabs-retention-labels {
     display: grid;
-    grid-template-columns: 1fr 2fr 2fr 1fr;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     width: 100%;
+    padding-inline: 0.55rem;
     user-select: none;
     pointer-events: none;
 }
 
 .ssllabs-retention-label {
+    grid-row: 1;
+    justify-self: start;
     font-size: 0.675rem;
     color: var(--bs-secondary-color);
-    justify-self: center;
     line-height: 1;
     white-space: nowrap;
+    transform: translateX(-50%);
 }
 
-.ssllabs-retention-label:first-child {
-    justify-self: start;
-    text-align: left;
-}
+.ssllabs-retention-label:nth-child(1) { grid-column: 1; }
+.ssllabs-retention-label:nth-child(2) { grid-column: 2; }
+.ssllabs-retention-label:nth-child(3) { grid-column: 3; }
+.ssllabs-retention-label:nth-child(4) { grid-column: 4; }
+.ssllabs-retention-label:nth-child(5) { grid-column: 5; }
+.ssllabs-retention-label:nth-child(6) { grid-column: 6; }
 
-.ssllabs-retention-label:last-child {
+.ssllabs-retention-label:nth-child(7) {
+    grid-column: 6;
     justify-self: end;
-    text-align: right;
+    transform: translateX(50%);
 }
 
 .ssllabs-focus-chart-canvas-wrap {
@@ -4154,4 +4571,118 @@ body.app-body--menu-open .app-sidebar {
     .ssllabs-focus-chart-canvas-wrap {
         height: 200px;
     }
+}
+
+/* ==========================================================================
+   About page
+   ========================================================================== */
+
+.about-top-row {
+    align-items: stretch;
+}
+
+.about-card {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.about-card .panel-card__body {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.about-card__body--flush {
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.about-meta-table td {
+    padding-block: 0.3rem;
+    vertical-align: middle;
+}
+
+.about-meta-value {
+    font-size: 0.82rem;
+    color: var(--cb-text);
+    word-break: break-word;
+}
+
+.about-divider {
+    height: 1px;
+    margin: 1rem 0 0.85rem;
+    background: var(--cb-border);
+}
+
+.about-accent-icon {
+    color: var(--cb-accent);
+    flex: 0 0 auto;
+}
+
+.about-deps-scroll {
+    max-height: 19rem;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.about-deps-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--cb-surface);
+    border-bottom: 1px solid var(--cb-border);
+}
+
+.about-deps-table code {
+    font-size: 0.82rem;
+}
+
+.about-changelog-content {
+    max-height: 32rem;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    font-size: 0.82rem;
+    line-height: 1.35;
+}
+
+.about-changelog-content h2 {
+    font-size: 0.92rem;
+    margin-top: 0.7rem;
+    margin-bottom: 0.35rem;
+}
+
+.about-changelog-content h2:first-child {
+    margin-top: 0;
+}
+
+.about-changelog-content ul {
+    margin-bottom: 0.5rem;
+    padding-left: 1.1rem;
+}
+
+.about-changelog-content li {
+    margin-bottom: 0.1rem;
+}
+
+.about-changelog-content p {
+    margin-bottom: 0.4rem;
+}
+
+.about-changelog-content code {
+    font-size: 0.75rem;
+    padding: 0.05rem 0.3rem;
+    border-radius: 0.3rem;
+    background: var(--bs-tertiary-bg);
+}
+
+.about-changelog-content details {
+    margin-top: 0.35rem;
+}
+
+.about-changelog-content summary {
+    cursor: pointer;
+    color: var(--cb-muted);
+    font-weight: 600;
+    font-size: 0.82rem;
 }

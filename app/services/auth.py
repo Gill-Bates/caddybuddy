@@ -19,13 +19,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import (
-    get_settings,
     _INSECURE_ADMIN_PASSWORD_VALUES,
     _MIN_ADMIN_PASSWORD_LENGTH,
+    get_settings,
 )
 from app.models.entities import User
 from app.repositories.users import user_repository
-
 
 _DUMMY_BCRYPT_HASH = "$2b$12$XoxrmnloUyPG.UR9bJMmh.jZY3PuHalwrTlwknAY8hcepqC8VZ0.K"
 _MIN_PASSWORD_LENGTH = 8
@@ -84,7 +83,7 @@ class AuthService:
     @classmethod
     def _validate_password_input(cls, password: str) -> None:
         if not isinstance(password, str):
-            raise ValueError("Password must be a string.")
+            raise TypeError("Password must be a string.")
         if len(password) > _MAX_PASSWORD_LENGTH:
             raise ValueError(f"Password must not exceed {_MAX_PASSWORD_LENGTH} characters.")
 
@@ -151,7 +150,7 @@ class AuthService:
         """
         try:
             self._validate_password_input(password)
-        except ValueError:
+        except (TypeError, ValueError):
             logger.info("Authentication attempt rejected due to invalid password input")
             return None
 

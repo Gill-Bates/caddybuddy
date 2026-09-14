@@ -300,7 +300,7 @@ class EventStreamTests(unittest.IsolatedAsyncioTestCase):
             def __init__(self) -> None:
                 self.closed = False
 
-            def __aiter__(self) -> "_ClosableIterator":
+            def __aiter__(self) -> _ClosableIterator:
                 return self
 
             async def __anext__(self):

@@ -14,7 +14,6 @@ from datetime import UTC, datetime
 from uvicorn.config import LOGGING_CONFIG
 from uvicorn.logging import AccessFormatter, DefaultFormatter
 
-
 _DARK_GRAY = "\033[90m"
 _RESET = "\033[0m"
 _VALID_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})

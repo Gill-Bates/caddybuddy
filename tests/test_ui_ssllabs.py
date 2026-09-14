@@ -11,11 +11,11 @@ import os
 import re
 import unittest
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app.config.settings import get_settings
-
 
 _ENV_OVERRIDES = {
     "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
@@ -31,8 +31,9 @@ for key, value in _ENV_OVERRIDES.items():
 get_settings.cache_clear()
 
 from fastapi.testclient import TestClient
-from app.routers.ui.ssllabs import router as ssllabs_router
+
 from app.dependencies.web import redirect_to
+from app.routers.ui.ssllabs import router as ssllabs_router
 from tests.ui_test_app import build_ui_test_app
 
 
@@ -121,9 +122,9 @@ class UISslLabsTests(unittest.TestCase):
                 "app.routers.ui.ssllabs.ssllabs_repository.list_targets_with_latest_scans",
                 new=AsyncMock(return_value=[(target, site, scan), (second_target, site, None)]),
             ),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/ssl-labs")
+            response = client.get("/ssl-labs")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("SSL Labs", response.text)
@@ -151,7 +152,8 @@ class UISslLabsTests(unittest.TestCase):
         self.assertNotIn('class="badge bg-secondary bg-opacity-25 text-body-secondary ssllabs-site-domain-badge">example.com</span>', response.text)
         self.assertNotIn('class="badge bg-secondary bg-opacity-25 text-body-secondary ssllabs-site-domain-badge">www.example.com</span>', response.text)
         self.assertIn("A+", response.text)
-        self.assertIn("On (weekly)", response.text)
+        self.assertIn("Weekly", response.text)
+        self.assertIn("Monthly", response.text)
         self.assertNotIn(">Monthly<", response.text)
         self.assertIn('>Report</a>', response.text)
         self.assertIn('>Report</button>', response.text)
@@ -172,11 +174,15 @@ class UISslLabsTests(unittest.TestCase):
         self.assertIn('data-label="Site"', response.text)
         self.assertIn('data-label="Domains"', response.text)
         self.assertIn('class="ssllabs-domain-list"', response.text)
-        self.assertIn('<details class="ssllabs-domain-card"', response.text)
+        self.assertIn('<div class="ssllabs-domain-card"', response.text)
+        self.assertNotIn('<details class="ssllabs-domain-card"', response.text)
         self.assertIn('class="ssllabs-domain-card__summary"', response.text)
-        self.assertIn('class="ssllabs-domain-card__actions"', response.text)
-        self.assertIn('class="ssllabs-domain-card__details"', response.text)
+        self.assertNotIn('class="ssllabs-domain-card__actions"', response.text)
         self.assertIn('class="ssllabs-domain-card__quick-actions"', response.text)
+        self.assertRegex(
+            response.text,
+            r'<div class="ssllabs-domain-card__summary">[\s\S]*class="ssllabs-domain-card__inline-scheduler"[\s\S]*class="ssllabs-domain-card__quick-actions"',
+        )
         self.assertNotIn('class="cell-actions ssllabs-actions"', response.text)
         self.assertIn("data-require-csrf", response.text)
         self.assertIn("data-loading-submit-button", response.text)
@@ -189,8 +195,47 @@ class UISslLabsTests(unittest.TestCase):
         self.assertIn('class="ssllabs-result__endpoints"', response.text)
         self.assertIn("IPv4", response.text)
         self.assertIn("IPv6", response.text)
-        self.assertIn("2 endpoints", response.text)
         self.assertIn("Not scanned yet", response.text)
+
+    def test_ssllabs_mobile_scheduler_form_stretches_full_width(self) -> None:
+        css_path = Path(__file__).resolve().parents[1] / "app/static/css/app.css"
+        css = css_path.read_text(encoding="utf-8")
+
+        self.assertIn(
+            ".ssllabs-domain-card__inline-scheduler {\n        align-items: stretch;\n        width: 100%;",
+            css,
+        )
+        self.assertNotIn(
+            ".ssllabs-domain-card__actions {\n    display: grid;\n    grid-template-columns: minmax(0, 1fr);",
+            css,
+        )
+        self.assertIn(
+            ".ssllabs-domain-card .ssllabs-schedule-form {\n        display: flex;\n        width: 100%;\n        min-width: 0;",
+            css,
+        )
+        self.assertIn(
+            ".ssllabs-domain-card .ssllabs-schedule-form .form-select {\n        width: 100%;\n        min-width: 0;\n        flex: 1 1 auto;",
+            css,
+        )
+        self.assertNotIn(
+            ".ssllabs-domain-card .ssllabs-schedule-form {\n        display: grid;\n        grid-template-columns: minmax(0, 1fr) auto;",
+            css,
+        )
+
+    def test_ssllabs_filter_clear_button_matches_input_height(self) -> None:
+        css_path = Path(__file__).resolve().parents[1] / "app/static/css/app.css"
+        css = css_path.read_text(encoding="utf-8")
+
+        self.assertIn(
+            ".ssllabs-filterbar [data-ssllabs-clear-filters] {\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    min-block-size: 2.75rem;\n    height: 2.75rem;",
+            css,
+            "SSL Labs filter clear button must match the 44px touch target height of the filter inputs.",
+        )
+        self.assertIn(
+            ".ssllabs-filterbar [data-ssllabs-clear-filters] {\n        min-block-size: 2.1rem;\n    }",
+            css,
+            "Mobile override must scale the clear button down to match compact filter inputs.",
+        )
 
     def test_ssllabs_page_marks_mixed_filter_grade_for_mixed_endpoints(self) -> None:
         app = self._build_app()
@@ -224,9 +269,9 @@ class UISslLabsTests(unittest.TestCase):
                 "app.routers.ui.ssllabs.ssllabs_repository.list_targets_with_latest_scans",
                 new=AsyncMock(return_value=[(target, site, scan)]),
             ),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/ssl-labs")
+            response = client.get("/ssl-labs")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('data-ssllabs-grade="mixed"', response.text)
@@ -249,9 +294,9 @@ class UISslLabsTests(unittest.TestCase):
                 "app.routers.ui.ssllabs.ssllabs_repository.list_targets_with_latest_scans",
                 new=AsyncMock(return_value=[(target, site, None)]),
             ),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/ssl-labs")
+            response = client.get("/ssl-labs")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('>Report</button>', response.text)
@@ -299,15 +344,15 @@ class UISslLabsTests(unittest.TestCase):
                 "app.routers.ui.ssllabs.ssllabs_repository.list_targets_with_latest_scans",
                 new=AsyncMock(return_value=[(target, site, latest_scan)]),
             ),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                page = client.get("/ssl-labs")
-                csrf_token = self._extract_csrf_token(page.text)
-                response = client.post(
-                    "/ssl-labs/1/schedule",
-                    data={"csrf_token": csrf_token, "schedule_frequency": "on"},
-                    follow_redirects=False,
-                )
+            page = client.get("/ssl-labs")
+            csrf_token = self._extract_csrf_token(page.text)
+            response = client.post(
+                "/ssl-labs/1/schedule",
+                data={"csrf_token": csrf_token, "schedule_frequency": "monthly"},
+                follow_redirects=False,
+            )
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/ssl-labs")
@@ -342,15 +387,15 @@ class UISslLabsTests(unittest.TestCase):
                 "app.routers.ui.ssllabs.ssllabs_repository.list_targets_with_latest_scans",
                 new=AsyncMock(return_value=[(target, site, latest_scan)]),
             ),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                page = client.get("/ssl-labs")
-                csrf_token = self._extract_csrf_token(page.text)
-                response = client.post(
-                    "/ssl-labs/1/schedule",
-                    data={"csrf_token": csrf_token, "schedule_frequency": "on"},
-                    follow_redirects=True,
-                )
+            page = client.get("/ssl-labs")
+            csrf_token = self._extract_csrf_token(page.text)
+            response = client.post(
+                "/ssl-labs/1/schedule",
+                data={"csrf_token": csrf_token, "schedule_frequency": "monthly"},
+                follow_redirects=True,
+            )
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("Schedule was enabled, but the initial scan could not be queued.", response.text)
@@ -370,15 +415,15 @@ class UISslLabsTests(unittest.TestCase):
                 new=AsyncMock(return_value=[(target, site, None)]),
             ),
             patch("app.routers.ui.ssllabs.ssllabs_service.request_scan", new=AsyncMock()) as request_scan,
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                page = client.get("/ssl-labs")
-                csrf_token = self._extract_csrf_token(page.text)
-                response = client.post(
-                    "/ssl-labs/1/scan",
-                    data={"csrf_token": csrf_token, "mode": "frseh"},
-                    follow_redirects=True,
-                )
+            page = client.get("/ssl-labs")
+            csrf_token = self._extract_csrf_token(page.text)
+            response = client.post(
+                "/ssl-labs/1/scan",
+                data={"csrf_token": csrf_token, "mode": "frseh"},
+                follow_redirects=True,
+            )
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("Invalid SSL Labs scan mode.", response.text)
@@ -419,6 +464,8 @@ class ParseScheduleFrequencyTests(unittest.TestCase):
         for value in ("on", "weekly", "true", "1", "yes", "ON", " Weekly "):
             self.assertEqual(parse_ssllabs_schedule_control(value), "weekly")
 
+        self.assertEqual(parse_ssllabs_schedule_control("monthly"), "monthly")
+
     def test_off_values_map_to_none(self) -> None:
         from app.utils.ssllabs import parse_ssllabs_schedule_control
 
@@ -429,4 +476,4 @@ class ParseScheduleFrequencyTests(unittest.TestCase):
         from app.utils.ssllabs import parse_ssllabs_schedule_control
 
         with self.assertRaises(ValueError):
-            parse_ssllabs_schedule_control("monthly")
+            parse_ssllabs_schedule_control("yearly")

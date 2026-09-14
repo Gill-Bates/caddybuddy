@@ -6,9 +6,9 @@
 
 from __future__ import annotations
 
-import threading
-import tempfile
 import json
+import tempfile
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -32,7 +32,7 @@ class DatabaseSessionLazyInitTests(_SessionModuleStateMixin, unittest.TestCase):
         def guarded_worker() -> None:
             try:
                 worker()
-            except BaseException as exc:
+            except BaseException as exc:  # noqa: BLE001 -- must capture any worker-thread failure to re-raise on the main thread
                 errors.append(exc)
 
         threads = [threading.Thread(target=guarded_worker) for _ in range(count)]
@@ -232,9 +232,11 @@ class DatabaseSessionInitTests(_SessionModuleStateMixin, unittest.IsolatedAsynci
             def connect(self):
                 return FakeConnection()
 
-        with patch.object(session_module, "get_engine", return_value=FakeEngine()):
-            with self.assertRaisesRegex(RuntimeError, "journal_mode='delete'"):
-                await session_module._ensure_sqlite_wal_mode()
+        with (
+            patch.object(session_module, "get_engine", return_value=FakeEngine()),
+            self.assertRaisesRegex(RuntimeError, "journal_mode='delete'"),
+        ):
+            await session_module._ensure_sqlite_wal_mode()
 
     async def test_dispose_engine_closes_engine_and_resets_lazy_state(self) -> None:
         fake_engine = AsyncMock()
@@ -364,7 +366,8 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
         self.assertTrue(migrated)
         self.assertIn(
             "UPDATE ssllabs_targets SET schedule_frequency = NULL "
-            "WHERE schedule_frequency IS NOT NULL AND schedule_frequency != 'weekly'",
+            "WHERE schedule_frequency IS NOT NULL "
+            "AND schedule_frequency NOT IN ('weekly', 'monthly')",
             executed_sql,
         )
 
@@ -409,11 +412,13 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
             @staticmethod
             def first():
                 return (
-                    "CREATE TABLE app_settings (id INTEGER NOT NULL, key VARCHAR(64) NOT NULL, "
-                    "value TEXT NOT NULL, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, "
-                    "CONSTRAINT ck_app_settings_key CHECK (key IN "
-                    "('caddy_api_url', 'caddyfile_path', 'rate_limit_enabled', "
-                    "'ssllabs_email', 'ssllabs_history_retention_days')))",
+                    (
+                        "CREATE TABLE app_settings (id INTEGER NOT NULL, key VARCHAR(64) NOT NULL, "
+                        "value TEXT NOT NULL, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, "
+                        "CONSTRAINT ck_app_settings_key CHECK (key IN "
+                        "('caddy_api_url', 'caddyfile_path', 'rate_limit_enabled', "
+                        "'ssllabs_email', 'ssllabs_history_retention_days')))"
+                    ),
                 )
 
         class FakeConnection:
@@ -495,10 +500,12 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
             @staticmethod
             def first() -> tuple[str] | None:
                 return (
-                    "CREATE TABLE app_settings (id INTEGER NOT NULL, \"key\" VARCHAR(64) NOT NULL, "
-                    "value TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, "
-                    "CONSTRAINT ck_app_settings_key CHECK (key IN ('caddy_api_url', 'caddyfile_path', 'rate_limit_enabled')))"
-                ,)
+                    (
+                        "CREATE TABLE app_settings (id INTEGER NOT NULL, \"key\" VARCHAR(64) NOT NULL, "
+                        "value TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, "
+                        "CONSTRAINT ck_app_settings_key CHECK (key IN ('caddy_api_url', 'caddyfile_path', 'rate_limit_enabled')))"
+                    ),
+                )
 
         class FakeConnection:
             dialect = SimpleNamespace(name="sqlite")

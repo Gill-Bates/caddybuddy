@@ -32,8 +32,12 @@ from app.utils.ssllabs import (
     validate_ssllabs_host,
 )
 
-from ._common import require_admin, require_onboarding_completed, require_user, validated_form
-
+from ._common import (
+    require_admin,
+    require_onboarding_completed,
+    require_user,
+    validated_form,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -217,7 +221,7 @@ async def update_ssllabs_schedule(
     if frequency is None:
         push_flash(request, "success", "SSL Labs schedule disabled.")
     else:
-        push_flash(request, "success", "SSL Labs schedule enabled (weekly).")
+        push_flash(request, "success", f"SSL Labs schedule enabled ({frequency}).")
         latest_scan = await ssllabs_repository.get_latest_scan_for_target(session, target_id)
         _completed = _as_utc(getattr(latest_scan, "completed_at", None))
         scan_stale = (

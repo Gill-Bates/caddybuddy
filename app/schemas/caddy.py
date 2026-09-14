@@ -15,7 +15,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.utils.caddyfile import normalize_caddy_directives
 from app.utils.domains import split_domain_names
 
-
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]", re.ASCII)
 _MAX_SITE_DIRECTIVES_BYTES = 256 * 1024
 _MAX_SITE_DOMAIN_COUNT = 25

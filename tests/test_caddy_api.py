@@ -6,9 +6,9 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import os
 import unittest
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -24,9 +24,9 @@ _ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}
 for key, value in _ENV_OVERRIDES.items():
     os.environ[key] = value
 
-import app.routers.caddy_api as caddy_api
 from app.config.limiter import limiter
 from app.database.session import get_db_session
+from app.routers import caddy_api
 from app.services.caddyfile_manager import CaddyOnboardingResult, CaddySyncResult
 
 

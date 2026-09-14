@@ -23,9 +23,11 @@ from app.repositories.sites import site_repository
 from app.repositories.ssllabs import ssllabs_repository
 from app.schemas.ssllabs import SslLabsScanStatus, SslLabsScheduleFrequency
 from app.services.events import try_publish_resource_event
-from app.services.runtime_settings import get_ssllabs_email, get_ssllabs_history_retention_days
+from app.services.runtime_settings import (
+    get_ssllabs_email,
+    get_ssllabs_history_retention_days,
+)
 from app.utils.ssllabs import (
-    GRADE_RANKS,
     grade_to_rank,
     is_ssllabs_scan_terminal,
     mask_email,
@@ -33,7 +35,6 @@ from app.utils.ssllabs import (
     ssllabs_scan_event_action,
     validate_ssllabs_host,
 )
-
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ _MAX_RETRY_AFTER_SECONDS = 60 * 60
 # Spread weekly scheduled scans across a full day (deterministic per host) so a large
 # fleet does not fire at the SSL Labs API simultaneously.
 _WEEKLY_SCHEDULE_JITTER = timedelta(hours=24)
+_MONTHLY_SCHEDULE_JITTER = timedelta(days=2)
 _MAX_SCAN_DURATION_SECONDS = 2 * 60 * 60
 _MAX_SSL_LABS_RESPONSE_BYTES = 2 * 1024 * 1024
 _ALLOWED_SSL_LABS_API_HOST = "api.ssllabs.com"
@@ -82,7 +84,6 @@ class SslLabsClientError(RuntimeError):
 class SslLabsEmailNotRegisteredError(SslLabsClientError):
     """Raised when the email is not yet registered with SSL Labs."""
 
-    pass
 
 
 class SslLabsRetryableError(SslLabsClientError):
@@ -142,7 +143,7 @@ def _next_scheduled_at_for_target(target, reference: datetime) -> datetime | Non
         frequency,
         reference,
         jitter_key=jitter_key,
-        max_jitter=_WEEKLY_SCHEDULE_JITTER,
+        max_jitter=_MONTHLY_SCHEDULE_JITTER if frequency == "monthly" else _WEEKLY_SCHEDULE_JITTER,
     )
 
 
@@ -690,7 +691,11 @@ class SslLabsService:
                         target.schedule_frequency,
                         target.next_scheduled_at,
                         jitter_key=jitter_key,
-                        max_jitter=_WEEKLY_SCHEDULE_JITTER,
+                        max_jitter=(
+                            _MONTHLY_SCHEDULE_JITTER
+                            if target.schedule_frequency == "monthly"
+                            else _WEEKLY_SCHEDULE_JITTER
+                        ),
                         minimum_after=now,
                         reference_includes_jitter=True,
                     )
@@ -701,7 +706,7 @@ class SslLabsService:
     async def _sleep_or_shutdown(self, seconds: int) -> None:
         try:
             await asyncio.wait_for(self._ensure_shutdown_event().wait(), timeout=seconds)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return
         raise asyncio.CancelledError
 
@@ -882,6 +887,8 @@ class SslLabsService:
         """Delete rank-history samples beyond the configured retention window."""
         reference = now or datetime.now(UTC)
         retention_days = await get_ssllabs_history_retention_days(session)
+        if retention_days <= 0:
+            return 0
         cutoff = reference - timedelta(days=retention_days)
         removed = await ssllabs_repository.prune_rank_history_older_than(session, cutoff=cutoff)
         if removed:

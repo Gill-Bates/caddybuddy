@@ -17,7 +17,6 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.database.session import get_db_session
 from app.middleware.csrf import CSRFMiddleware, SecurityHeadersMiddleware
 
-
 type StubRouteMethod = Literal["GET", "POST"]
 type StubRoute = tuple[StubRouteMethod, str, str]
 

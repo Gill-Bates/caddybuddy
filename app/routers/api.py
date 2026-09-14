@@ -7,9 +7,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import suppress
-import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
@@ -43,7 +43,6 @@ from app.services.ssllabs import (
     register_email_with_ssllabs,
 )
 from app.utils.ssllabs import GRADE_RANKS, mask_email
-
 
 router = APIRouter(prefix="/api/v1", tags=["system"])
 _SSE_HEARTBEAT_SECONDS = 25
@@ -195,7 +194,7 @@ async def _event_stream(events: AsyncIterator[ResourceEvent]) -> AsyncIterator[s
                     iterator.__anext__(),
                     timeout=_SSE_HEARTBEAT_SECONDS,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 yield ": keep-alive\n\n"
                 continue
             except StopAsyncIteration:

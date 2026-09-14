@@ -8,16 +8,15 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
-import re
 from urllib.parse import urlsplit, urlunsplit
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.app_settings import DEFAULTS, app_settings_repository
 from app.utils.admin_targets import validate_admin_host
-
 
 _SIMPLE_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _UNSAFE_CADDY_API_URL_PATTERN = re.compile(r"[\x00-\x1f\x7f\\]")
@@ -219,11 +218,6 @@ async def set_caddyfile_path(session: AsyncSession, path: str) -> None:
     await app_settings_repository.set(session, "caddyfile_path", normalize_caddyfile_path(path))
 
 
-async def clear_caddyfile_path(session: AsyncSession) -> None:
-    """Stage clearing the Caddyfile path so persistence falls back to unset."""
-    await app_settings_repository.set(session, "caddyfile_path", "")
-
-
 async def set_caddy_config(session: AsyncSession, *, api_url: str, caddyfile_path: str) -> None:
     """Stage Caddy runtime setting updates in the current transaction."""
     normalized_api_url = normalize_caddy_api_url(api_url)
@@ -270,16 +264,17 @@ async def set_ssllabs_email(session: AsyncSession, email: str) -> None:
 
 
 # Allowed retention windows (days) for the SSL Labs rank-history table, exposed to the
-# Settings slider. Ordered ascending; the largest value is the default.
-SSLLABS_RETENTION_DAY_VALUES: tuple[int, ...] = (30, 90, 180, 365)
+# Settings slider. Ordered ascending; 0 means unlimited (pruning disabled); the largest
+# finite value is the default.
+SSLLABS_RETENTION_DAY_VALUES: tuple[int, ...] = (0, 7, 14, 30, 90, 180, 365)
 SSLLABS_RETENTION_DEFAULT_DAYS = 365
 
 
 async def get_ssllabs_history_retention_days(session: AsyncSession) -> int:
-    """Get the SSL Labs rank-history retention window in days.
+    """Get the SSL Labs rank-history retention window in days (0 = unlimited).
 
     Falls back to the default and snaps to the nearest allowed value so a malformed or
-    out-of-range stored value can never disable or unbound pruning.
+    out-of-range stored value can never land outside the allowed set.
     """
     raw = await app_settings_repository.get(session, "ssllabs_history_retention_days")
     try:

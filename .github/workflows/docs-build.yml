@@ -6,18 +6,25 @@ on:
       - main
     paths:
       - "docs/**"
-      - "README.md"
       - "CHANGELOG.md"
+      - "LICENSE"
       - ".github/workflows/docs-build.yml"
   pull_request:
     branches:
       - main
     paths:
       - "docs/**"
-      - "README.md"
       - "CHANGELOG.md"
+      - "LICENSE"
       - ".github/workflows/docs-build.yml"
   workflow_dispatch:
+  workflow_run:
+    workflows:
+      - "Docker Multi-Arch Build"
+    types:
+      - completed
+  schedule:
+    - cron: "17 4 * * 1"
 
 permissions:
   contents: read
@@ -28,7 +35,11 @@ concurrency:
 
 jobs:
   build:
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
@@ -41,61 +52,24 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-
-      - name: Cache pip dependencies
-        uses: actions/cache@v4
-        if: hashFiles('docs/requirements-docs.txt') != ''
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('docs/requirements-docs.txt') }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
       - name: Install dependencies
         run: |
+          set -euo pipefail
+          python3 tools/pyproject-deps.py docs > requirements-docs.txt
+          cat requirements-docs.txt
           python -m pip install --upgrade pip
-          python -m pip install -r docs/requirements-docs.txt
+          python -m pip install -r requirements-docs.txt
 
       - name: Copy generated documentation sources
-        run: cp CHANGELOG.md docs/changelog.md
-
-      - name: Build documentation
-        run: mkdocs build -f docs/mkdocs.yml --strict
-
-      - name: Upload Pages artifact
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-        uses: actions/upload-pages-artifact@v5
-        with:
-          path: ./site
-
-  link-check:
-    runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
-
-      - name: Cache pip dependencies
-        uses: actions/cache@v4
-        if: hashFiles('docs/requirements-docs.txt') != ''
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('docs/requirements-docs.txt') }}
-
-      - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r docs/requirements-docs.txt
-
-      - name: Copy generated documentation sources
-        run: cp CHANGELOG.md docs/changelog.md
+          cp CHANGELOG.md docs/changelog.md
+          cp LICENSE docs/license.md
 
       - name: Build documentation
-        run: mkdocs build -f docs/mkdocs.yml --strict
+        run: mkdocs build --strict
 
       - name: Check links
         uses: lycheeverse/lychee-action@v1
@@ -105,35 +79,39 @@ jobs:
             --no-progress
             --exclude 'fonts\.gstatic\.com'
             --exclude 'gill-bates\.github\.io/caddybuddy'
-            --exclude 'www\.gnu\.org/licenses/?'
             './site/**/*.html'
           fail: true
 
+      - name: Upload Pages artifact
+        if: |
+          github.ref == 'refs/heads/main' &&
+          (
+            github.event_name == 'push' ||
+            github.event_name == 'workflow_dispatch' ||
+            github.event_name == 'workflow_run'
+          )
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: ./site
+
   security-scan:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Check docs requirements exist
-        id: check_docs
-        run: |
-          if [ -f docs/requirements-docs.txt ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::docs/requirements-docs.txt not found — skipping security scan"
-          fi
+      - name: Materialize docs dependencies for scanning
+        run: python3 tools/pyproject-deps.py docs > requirements-docs.txt
 
       - name: Scan documentation dependencies
-        if: steps.check_docs.outputs.exists == 'true'
         uses: aquasecurity/trivy-action@master
         with:
           cache: "false"
           scan-type: fs
-          scan-ref: docs/requirements-docs.txt
+          scan-ref: requirements-docs.txt
           format: table
           exit-code: "1"
           ignore-unfixed: true
@@ -142,14 +120,14 @@ jobs:
 
   deploy:
     if: |
-      github.ref == 'refs/heads/main' &&
-      (
-        github.event_name == 'push' ||
-        github.event_name == 'workflow_dispatch'
-      )
+        github.ref == 'refs/heads/main' &&
+        (
+          github.event_name == 'push' ||
+          github.event_name == 'workflow_dispatch' ||
+          github.event_name == 'workflow_run'
+        )
     needs:
       - build
-      - link-check
       - security-scan
     runs-on: ubuntu-latest
     permissions:

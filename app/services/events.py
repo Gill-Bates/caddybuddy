@@ -21,7 +21,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Literal, Self
 
-
 logger = logging.getLogger(__name__)
 
 type JsonScalar = str | int | float | bool | None
@@ -60,7 +59,7 @@ def _validate_event_payload_size(payload: str) -> None:
         raise ValueError("event payload exceeds size limit")
 
 
-def _close_queue(queue: asyncio.Queue["ResourceEvent | None"]) -> None:
+def _close_queue(queue: asyncio.Queue[ResourceEvent | None]) -> None:
     while True:
         try:
             queue.get_nowait()
@@ -91,7 +90,7 @@ class ResourceEvent:
         except (TypeError, ValueError) as exc:
             raise ValueError("event details must be JSON-serializable") from exc
         if not isinstance(normalized_details, dict):
-            raise ValueError("event details must be a JSON object")
+            raise ValueError("event details must be a JSON object")  # noqa: TRY004 -- same validation family as above
         payload = json.dumps(
             {
                 "type": self.resource_type,

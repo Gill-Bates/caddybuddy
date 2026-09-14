@@ -13,6 +13,9 @@
 
     const formatLabel = (days) => {
         const value = Number(days);
+        if (value === 0) {
+            return "Unlimited";
+        }
         if (value === 365) {
             return "1 year";
         }
@@ -58,6 +61,7 @@
         const indexToDays = (index) => values[Math.max(0, Math.min(values.length - 1, index))];
 
         const updateBadge = (index) => {
+            slider.dataset.activeIndex = String(index);
             if (badge) {
                 badge.textContent = formatLabel(indexToDays(index));
             }

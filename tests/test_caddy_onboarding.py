@@ -31,12 +31,10 @@ from app.config.settings import get_settings
 from app.models.base import Base
 from app.services.caddy_onboarding import (
     OnboardingWizardState,
-    _caddyfile_atomically_replaceable_sync,
     _enable_admin_in_caddyfile_sync,
     _prepare_default_config_sync,
     _render_default_config,
     _rollback_prepared_default_config_sync,
-    _restore_caddyfile_sync,
     enable_admin_api_and_reprobe,
     execute_onboarding,
     get_onboarding_state,
@@ -1268,6 +1266,13 @@ class CaddyOnboardingServiceTests(unittest.IsolatedAsyncioTestCase):
         template = "email {{ ACME_EMAIL }}\n"
         with self.assertRaises(ValueError):
             _render_default_config(template, acme_email="", admin_api_url="http://localhost:2019")
+
+    def test_bundled_default_caddyfile_uses_central_runtime_log(self) -> None:
+        bundled = (Path(__file__).resolve().parents[1] / "Caddyfile").read_text(encoding="utf-8")
+
+        self.assertIn("output file /var/log/caddy/runtime.json", bundled)
+        self.assertIn("roll_keep_for 168h", bundled)
+        self.assertNotIn("(default_log)", bundled)
 
     async def test_host_preflight_does_not_set_api_only_takeover(self) -> None:
         async with self.session_factory() as session:

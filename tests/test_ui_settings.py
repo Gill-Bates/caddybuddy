@@ -9,12 +9,12 @@ from __future__ import annotations
 import os
 import re
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, patch
 
-from app.config.settings import get_settings
 from app.config.limiter import limiter
-
+from app.config.settings import get_settings
 
 _ENV_OVERRIDES = {
     "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
@@ -30,6 +30,7 @@ for key, value in _ENV_OVERRIDES.items():
 get_settings.cache_clear()
 
 from fastapi.testclient import TestClient
+
 from app.routers.ui.settings import router as settings_router
 from tests.ui_test_app import build_ui_test_app
 
@@ -81,6 +82,15 @@ class UISettingsTests(unittest.TestCase):
             ],
         )
 
+    def test_desktop_settings_stack_starts_its_first_card_at_the_row_top(self) -> None:
+        css = Path("app/static/css/app.css").read_text(encoding="utf-8")
+
+        self.assertIn(
+            '    .settings-stack>[class*="col-"]:first-child {\n        margin-top: 0;\n    }',
+            css,
+            "The first secondary settings card must cancel Bootstrap's vertical gutter and align with the primary card.",
+        )
+
     def test_settings_page_renders_caddy_configuration_values(self) -> None:
         app = self._build_app()
         current_user = SimpleNamespace(username="admin", role="admin")
@@ -102,9 +112,9 @@ class UISettingsTests(unittest.TestCase):
                 "app.routers.ui.settings.check_email_registration_status",
                 new=AsyncMock(return_value=True),
             ),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/settings")
+            response = client.get("/settings")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('value="http://localhost:2019"', response.text)
@@ -138,27 +148,37 @@ class UISettingsTests(unittest.TestCase):
         self.assertIn('minlength="8"', response.text)
         self.assertIn("Password must be at least 8 characters long and contain uppercase, lowercase, digit, and special character.", response.text)
         self.assertIn('class="row app-grid settings-layout"', response.text)
+        self.assertIn('class="col-12 col-xl-6 settings-column settings-column--primary"', response.text)
+        self.assertIn('class="col-12 col-xl-6 settings-column settings-column--secondary"', response.text)
+        self.assertIn('class="col-12 settings-column settings-column--retention"', response.text)
         self.assertIn('class="panel-card settings-panel settings-panel--primary"', response.text)
         self.assertIn('class="row g-4 settings-stack"', response.text)
         self.assertIn('id="ssllabs-retention-settings"', response.text)
         self.assertIn("How long SSL Labs grade history samples are kept for the dashboard chart.", response.text)
         self.assertNotIn("How long daily SSL Labs grade history is kept for the dashboard chart.", response.text)
         self.assertIn('class="ssllabs-retention-scale"', response.text, "Retention slider must have scale wrapper for tick labels")
+        self.assertIn('class="ssllabs-retention-track"', response.text, "Retention slider must have a positioned track wrapper for the tick bubbles")
+        self.assertIn('class="ssllabs-retention-ticks"', response.text, "Retention slider must have a tick bubble overlay container")
+        self.assertIn('class="ssllabs-retention-tick"', response.text, "Retention slider must have individual tick bubbles")
         self.assertIn('class="ssllabs-retention-labels"', response.text, "Retention slider must have tick label container")
         self.assertIn('class="ssllabs-retention-label"', response.text, "Retention slider must have individual tick labels")
-        self.assertIn('value="3"', response.text)
-        self.assertEqual(response.text.count('class="ssllabs-retention-label"'), 4)
+        self.assertIn('value="6"', response.text)
+        self.assertEqual(response.text.count('class="ssllabs-retention-tick"'), 7)
+        self.assertEqual(response.text.count('class="ssllabs-retention-label"'), 7)
         self.assertIn('class="badge cb-pill text-bg-secondary" id="ssllabs-retention-badge"', response.text)
         # Tick labels must use human-readable names matching SSLLABS_RETENTION_DAY_VALUES
+        self.assertIn("&infin;", response.text, "Tick label for 0 days must render as the infinity symbol")
+        self.assertIn("7d", response.text, "Tick label for 7 days must render as '7d'")
+        self.assertIn("14d", response.text, "Tick label for 14 days must render as '14d'")
         self.assertIn("30d", response.text, "Tick label for 30 days must render as '30d'")
         self.assertIn("90d", response.text, "Tick label for 90 days must render as '90d'")
         self.assertIn("180d", response.text, "Tick label for 180 days must render as '180d'")
         self.assertIn("1y", response.text, "Tick label for 365 days must render as '1y'")
         self.assertNotIn("365d", response.text, "365 days must not appear as '365d' — use '1y'")
         # Slider range must span exactly 0 … len(values)-1 to match the label grid
-        self.assertIn('min="0" max="3"', response.text, "Slider range must cover 4 steps (0-3) for the 4 retention values")
+        self.assertIn('min="0" max="6"', response.text, "Slider range must cover 7 steps (0-6) for the 7 retention values")
         # data-retention-values must expose the full allowed set for the JS formatLabel
-        self.assertIn('data-retention-values="[30, 90, 180, 365]"', response.text, "data-retention-values must list all allowed retention day counts")
+        self.assertIn('data-retention-values="[0, 7, 14, 30, 90, 180, 365]"', response.text, "data-retention-values must list all allowed retention day counts")
 
     def test_settings_page_restarts_onboarding_wizard(self) -> None:
         app = self._build_app()
@@ -178,15 +198,15 @@ class UISettingsTests(unittest.TestCase):
             patch("app.routers.ui.settings.get_rate_limit_enabled", new=AsyncMock(return_value=True)),
             patch("app.routers.ui.settings.get_ssllabs_email", new=AsyncMock(return_value=None)),
             patch("app.routers.ui.settings.reset_onboarding_state", new=AsyncMock()) as reset_onboarding_state,
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                page = client.get("/settings")
-                csrf_token = self._extract_csrf_token(page.text)
-                response = client.post(
-                    "/settings/onboarding/restart",
-                    data={"csrf_token": csrf_token},
-                    follow_redirects=False,
-                )
+            page = client.get("/settings")
+            csrf_token = self._extract_csrf_token(page.text)
+            response = client.post(
+                "/settings/onboarding/restart",
+                data={"csrf_token": csrf_token},
+                follow_redirects=False,
+            )
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/onboarding")
@@ -212,20 +232,20 @@ class UISettingsTests(unittest.TestCase):
             patch("app.routers.ui.settings.set_caddy_config", new=AsyncMock()) as set_caddy_config,
             patch("app.routers.ui.settings.set_rate_limit_enabled", new=AsyncMock()) as set_rate_limit,
             patch("app.routers.ui.settings.update_rate_limit_enabled"),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                page = client.get("/settings")
-                csrf_token = self._extract_csrf_token(page.text)
-                response = client.post(
-                    "/settings/caddy",
-                    data={
-                        "csrf_token": csrf_token,
-                        "caddy_api_url": "http://host.docker.internal:2019",
-                        "caddyfile_path": "/etc/caddy/Caddyfile",
-                        "rate_limit_enabled": "on",
-                    },
-                    follow_redirects=False,
-                )
+            page = client.get("/settings")
+            csrf_token = self._extract_csrf_token(page.text)
+            response = client.post(
+                "/settings/caddy",
+                data={
+                    "csrf_token": csrf_token,
+                    "caddy_api_url": "http://host.docker.internal:2019",
+                    "caddyfile_path": "/etc/caddy/Caddyfile",
+                    "rate_limit_enabled": "on",
+                },
+                follow_redirects=False,
+            )
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/settings")
@@ -256,23 +276,23 @@ class UISettingsTests(unittest.TestCase):
             patch("app.routers.ui.settings.set_caddy_config", new=AsyncMock()) as set_caddy_config,
             patch("app.routers.ui.settings.set_rate_limit_enabled", new=AsyncMock()) as set_rate_limit,
             patch("app.routers.ui.settings.update_rate_limit_enabled"),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                page = client.get("/settings")
-                csrf_token = self._extract_csrf_token(page.text)
-                response = client.post(
-                    "/settings/caddy",
-                    headers={
-                        "Accept": "application/json",
-                        "X-Requested-With": "XMLHttpRequest",
-                    },
-                    data={
-                        "csrf_token": csrf_token,
-                        "caddy_api_url": "http://host.docker.internal:2019",
-                        "caddyfile_path": "/etc/caddy/Caddyfile",
-                        "rate_limit_enabled": "on",
-                    },
-                )
+            page = client.get("/settings")
+            csrf_token = self._extract_csrf_token(page.text)
+            response = client.post(
+                "/settings/caddy",
+                headers={
+                    "Accept": "application/json",
+                    "X-Requested-With": "XMLHttpRequest",
+                },
+                data={
+                    "csrf_token": csrf_token,
+                    "caddy_api_url": "http://host.docker.internal:2019",
+                    "caddyfile_path": "/etc/caddy/Caddyfile",
+                    "rate_limit_enabled": "on",
+                },
+            )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"success": True, "message": "Settings updated."})
@@ -353,19 +373,19 @@ class UISettingsTests(unittest.TestCase):
             patch("app.routers.ui.settings.set_caddy_config", new=AsyncMock()) as set_caddy_config,
             patch("app.routers.ui.settings.set_rate_limit_enabled", new=AsyncMock()) as set_rate_limit,
             patch("app.routers.ui.settings.update_rate_limit_enabled") as update_rate_limit,
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                page = client.get("/settings")
-                csrf_token = self._extract_csrf_token(page.text)
-                response = client.post(
-                    "/settings/caddy",
-                    data={
-                        "csrf_token": csrf_token,
-                        "caddy_api_url": "http://host.docker.internal:2019",
-                        "caddyfile_path": "/etc/caddy/Caddyfile",
-                    },
-                    follow_redirects=False,
-                )
+            page = client.get("/settings")
+            csrf_token = self._extract_csrf_token(page.text)
+            response = client.post(
+                "/settings/caddy",
+                data={
+                    "csrf_token": csrf_token,
+                    "caddy_api_url": "http://host.docker.internal:2019",
+                    "caddyfile_path": "/etc/caddy/Caddyfile",
+                },
+                follow_redirects=False,
+            )
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/settings")
@@ -396,18 +416,18 @@ class UISettingsTests(unittest.TestCase):
             patch("app.routers.ui.settings.get_ssllabs_email", new=AsyncMock(return_value=None)) as get_ssllabs_email,
             patch("app.routers.ui.settings.set_ssllabs_email", new=AsyncMock()) as set_ssllabs_email,
             patch("app.routers.ui.settings.clear_registration_status_cache") as clear_cache,
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                page = client.get("/settings")
-                csrf_token = self._extract_csrf_token(page.text)
-                response = client.post(
-                    "/settings/ssllabs",
-                    data={
-                        "csrf_token": csrf_token,
-                        "ssllabs_email": "team@example.com",
-                    },
-                    follow_redirects=False,
-                )
+            page = client.get("/settings")
+            csrf_token = self._extract_csrf_token(page.text)
+            response = client.post(
+                "/settings/ssllabs",
+                data={
+                    "csrf_token": csrf_token,
+                    "ssllabs_email": "team@example.com",
+                },
+                follow_redirects=False,
+            )
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/settings")
@@ -434,21 +454,21 @@ class UISettingsTests(unittest.TestCase):
             patch("app.routers.ui.settings.get_ssllabs_email", new=AsyncMock(return_value=None)),
             patch("app.routers.ui.settings.set_ssllabs_email", new=AsyncMock()) as set_ssllabs_email,
             patch("app.routers.ui.settings.clear_registration_status_cache") as clear_cache,
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                page = client.get("/settings")
-                csrf_token = self._extract_csrf_token(page.text)
-                response = client.post(
-                    "/settings/ssllabs",
-                    headers={
-                        "Accept": "application/json",
-                        "X-Requested-With": "XMLHttpRequest",
-                    },
-                    data={
-                        "csrf_token": csrf_token,
-                        "ssllabs_email": "team@example.com",
-                    },
-                )
+            page = client.get("/settings")
+            csrf_token = self._extract_csrf_token(page.text)
+            response = client.post(
+                "/settings/ssllabs",
+                headers={
+                    "Accept": "application/json",
+                    "X-Requested-With": "XMLHttpRequest",
+                },
+                data={
+                    "csrf_token": csrf_token,
+                    "ssllabs_email": "team@example.com",
+                },
+            )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"success": True, "message": "SSL Labs email updated."})
@@ -475,18 +495,18 @@ class UISettingsTests(unittest.TestCase):
             patch("app.routers.ui.settings.set_ssllabs_email", new=AsyncMock()),
             patch("app.routers.ui.settings.clear_registration_status_cache"),
             patch("app.routers.ui.settings.ssllabs_service.startup", new=AsyncMock()) as startup,
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                page = client.get("/settings")
-                csrf_token = self._extract_csrf_token(page.text)
-                response = client.post(
-                    "/settings/ssllabs",
-                    data={
-                        "csrf_token": csrf_token,
-                        "ssllabs_email": "team@example.com",
-                    },
-                    follow_redirects=False,
-                )
+            page = client.get("/settings")
+            csrf_token = self._extract_csrf_token(page.text)
+            response = client.post(
+                "/settings/ssllabs",
+                data={
+                    "csrf_token": csrf_token,
+                    "ssllabs_email": "team@example.com",
+                },
+                follow_redirects=False,
+            )
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/settings")
@@ -506,15 +526,15 @@ class UISettingsTests(unittest.TestCase):
             patch("app.routers.ui.settings.get_ssllabs_email", new=AsyncMock(return_value=None)),
             patch("app.routers.ui.settings.get_ssllabs_history_retention_days", new=AsyncMock(return_value=365)),
             patch("app.routers.ui.settings.set_ssllabs_history_retention_days", new=AsyncMock()) as set_retention,
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                page = client.get("/settings")
-                csrf_token = self._extract_csrf_token(page.text)
-                response = client.post(
-                    "/settings/ssllabs-retention",
-                    data={"csrf_token": csrf_token, "retention_days": "90"},
-                    follow_redirects=False,
-                )
+            page = client.get("/settings")
+            csrf_token = self._extract_csrf_token(page.text)
+            response = client.post(
+                "/settings/ssllabs-retention",
+                data={"csrf_token": csrf_token, "retention_days": "90"},
+                follow_redirects=False,
+            )
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/settings")
@@ -534,16 +554,16 @@ class UISettingsTests(unittest.TestCase):
             patch("app.routers.ui.settings.get_ssllabs_email", new=AsyncMock(return_value=None)),
             patch("app.routers.ui.settings.get_ssllabs_history_retention_days", new=AsyncMock(return_value=365)),
             patch("app.routers.ui.settings.set_ssllabs_history_retention_days", new=AsyncMock()) as set_retention,
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                page = client.get("/settings")
-                csrf_token = self._extract_csrf_token(page.text)
-                response = client.post(
-                    "/settings/ssllabs-retention",
-                    data={"csrf_token": csrf_token, "retention_days": "abc"},
-                    headers={"Accept": "application/json"},
-                    follow_redirects=False,
-                )
+            page = client.get("/settings")
+            csrf_token = self._extract_csrf_token(page.text)
+            response = client.post(
+                "/settings/ssllabs-retention",
+                data={"csrf_token": csrf_token, "retention_days": "abc"},
+                headers={"Accept": "application/json"},
+                follow_redirects=False,
+            )
 
         self.assertEqual(response.status_code, 400)
         set_retention.assert_not_awaited()
@@ -569,20 +589,20 @@ class UISettingsTests(unittest.TestCase):
             patch("app.routers.ui.settings.auth_service.hash_password", new=AsyncMock(return_value="new-hash")),
             patch("app.routers.ui.settings.user_repository.update_password", new=AsyncMock()) as update_password,
             patch("app.routers.ui.settings.initialize_user_session") as initialize_session,
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                page = client.get("/settings")
-                csrf_token = self._extract_csrf_token(page.text)
-                response = client.post(
-                    "/settings/change-password",
-                    data={
-                        "csrf_token": csrf_token,
-                        "current_password": "OldPassword123!",
-                        "new_password": "NewPassword123!",
-                        "confirm_password": "NewPassword123!",
-                    },
-                    follow_redirects=False,
-                )
+            page = client.get("/settings")
+            csrf_token = self._extract_csrf_token(page.text)
+            response = client.post(
+                "/settings/change-password",
+                data={
+                    "csrf_token": csrf_token,
+                    "current_password": "OldPassword123!",
+                    "new_password": "NewPassword123!",
+                    "confirm_password": "NewPassword123!",
+                },
+                follow_redirects=False,
+            )
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/settings")

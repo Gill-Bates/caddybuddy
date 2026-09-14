@@ -1,3 +1,8 @@
+//
+// app/static/js/onboarding-confetti.js
+// Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
+//
+
 (() => {
     "use strict";
 

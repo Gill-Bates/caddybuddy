@@ -22,7 +22,13 @@ from app.dependencies.web import (
     validate_csrf_token,
 )
 from app.repositories.users import user_repository
-from app.services.auth import PASSWORD_MIN_LENGTH, PASSWORD_POLICY_MESSAGE, WeakPasswordError, auth_service
+from app.services.auth import (
+    PASSWORD_MIN_LENGTH,
+    PASSWORD_POLICY_MESSAGE,
+    WeakPasswordError,
+    auth_service,
+)
+from app.utils.security_logging import log_authentication_failure
 
 from ._common import commit_and_flash, logger, safe_next, validated_form
 
@@ -133,21 +139,30 @@ async def login_action(request: Request, session: AsyncSession = Depends(get_db_
     password = str(form.get("password", ""))
     next_path = str(form.get("next", "/")) or "/"
     if len(username) > _MAX_USERNAME_LENGTH:
-        logger.warning(
-            "Rejected login attempt due to excessive username length (%d chars) status_code=403",
-            len(username),
+        log_authentication_failure(
+            request,
+            username=None,
+            reason="username_too_long",
+            status_code=403,
         )
         return _render_login_failure(request, next_path=next_path)
     if len(password) > _MAX_PASSWORD_LENGTH:
-        logger.warning(
-            "Rejected login attempt due to excessive password length (%d chars) status_code=403",
-            len(password),
+        log_authentication_failure(
+            request,
+            username=username,
+            reason="password_too_long",
+            status_code=403,
         )
         return _render_login_failure(request, next_path=next_path)
     logger.debug("Login attempt for username=%r", username)
     user = await auth_service.authenticate(session, username, password)
     if user is None:
-        logger.warning("Authentication failed for username=%r status_code=403", username)
+        log_authentication_failure(
+            request,
+            username=username,
+            reason="invalid_credentials",
+            status_code=403,
+        )
         return _render_login_failure(request, next_path=next_path)
     initialize_user_session(request, user.id, user.password_hash)
     await commit_and_flash(

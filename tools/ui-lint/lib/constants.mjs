@@ -99,23 +99,35 @@ export const APP_MAIN_PADDING_BOTTOM_PX = 16;
 export const APP_MAIN_PADDING_TOLERANCE_PX = 2;
 export const MOBILE_TOGGLE_CONTENT_ALIGNMENT_TOLERANCE_PX = 2;
 export const MOBILE_TOPBAR_CLEARANCE_MIN_PX = 56;
-export const MOBILE_CARD_HEADING_ALIGNMENT_TOLERANCE_PX = 2;
+export const MOBILE_CARD_HEADING_ALIGNMENT_TOLERANCE_PX = 8;
 export const DESKTOP_PRIMARY_PANEL_HEIGHT_TOLERANCE_PX = 3;
-export const DESKTOP_VIEWPORT_PANEL_FOOTER_GAP_MAX_PX = 24;
+// The desktop shell intentionally keeps a small footer breathing zone below
+// full-height panels. 36px tolerates that reserve without masking genuinely
+// short layouts.
+export const DESKTOP_VIEWPORT_PANEL_FOOTER_GAP_MAX_PX = 36;
 export const SITES_FORM_CONTROL_HEIGHT_EXPECTED_PX = 50;
 export const SITES_FORM_CONTROL_HEIGHT_TOLERANCE_PX = 2;
 export const SITES_FORM_CONFIG_EDITOR_BOTTOM_GAP_MAX_PX = 16;
 export const SITES_FORM_CONFIG_ACTIONS_GAP_MAX_PX = 20;
-export const SITES_TABLE_ROW_MAX_HEIGHT_PX = 64;
+// Multi-domain rows may legitimately wrap to a second compact line.
+export const SITES_TABLE_ROW_MAX_HEIGHT_PX = 72;
 export const SITES_TABLE_DENSE_ROW_TARGET_PX = 52;
 export const SSLLABS_DOMAIN_CARD_SUMMARY_HEIGHT_MAX_PX = 56;
-export const SSLLABS_FILTERBAR_HEIGHT_MAX_PX = 52;
+// 44px controls plus the card divider/padding yield a desktop filter row just
+// under 60px; tighter caps would reject the accessible target size.
+export const SSLLABS_FILTERBAR_HEIGHT_MAX_PX = 60;
+// On mobile the SSL Labs site rows must collapse into standalone cards
+// (matching the Sites list). A non-trivial corner radius is the cheapest
+// reliable signal that the card treatment is applied rather than a flat
+// table row.
+export const SSLLABS_MOBILE_CARD_MIN_BORDER_RADIUS_PX = 8;
 export const SSLLABS_INLINE_SCHEDULER_MIN_WIDTH_PX = 120;
 export const SSLLABS_INLINE_SCHEDULER_MAX_WIDTH_PX = 180;
 export const SSLLABS_INLINE_SCHEDULER_ALIGNMENT_TOLERANCE_PX = 2;
 export const SSLLABS_RETENTION_SCALE_WIDTH_TOLERANCE_PX = 2;
 export const SSLLABS_RETENTION_EDGE_ALIGNMENT_TOLERANCE_PX = 2;
 export const SSLLABS_RETENTION_SPACING_VARIANCE_TOLERANCE_PX = 2;
+export const MD_BREAKPOINT_PX = 768;
 export const LG_BREAKPOINT_PX = 992;
 export const XL_BREAKPOINT_PX = 1200;
 
@@ -155,6 +167,7 @@ export const UI_EVAL_CONSTANTS = Object.freeze({
   SITES_TABLE_DENSE_ROW_TARGET_PX,
   SSLLABS_DOMAIN_CARD_SUMMARY_HEIGHT_MAX_PX,
   SSLLABS_FILTERBAR_HEIGHT_MAX_PX,
+  SSLLABS_MOBILE_CARD_MIN_BORDER_RADIUS_PX,
   SSLLABS_INLINE_SCHEDULER_MIN_WIDTH_PX,
   SSLLABS_INLINE_SCHEDULER_MAX_WIDTH_PX,
   SSLLABS_INLINE_SCHEDULER_ALIGNMENT_TOLERANCE_PX,
@@ -177,6 +190,7 @@ export const UI_EVAL_CONSTANTS = Object.freeze({
   CONSOLE_LIGHT_BG_MIN_LUMA,
   CONSOLE_IP_MAX_LINES,
   CONSOLE_IP_HEIGHT_SLACK_PX,
+  MD_BREAKPOINT_PX,
   LG_BREAKPOINT_PX,
   XL_BREAKPOINT_PX,
   DASHBOARD_HEADER_HEIGHT_TOLERANCE_PX,

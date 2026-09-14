@@ -11,6 +11,24 @@
         .replace(/\s+/g, " ")
         .toLowerCase();
 
+    const AUTO_QUEUED_FLASH_TEXT = "Scan automatically queued.";
+
+    const removeAutoQueuedFlash = () => {
+        const toastBodies = Array.from(document.querySelectorAll(".toast .toast-body"))
+            .filter((node) => node instanceof HTMLElement);
+
+        for (const body of toastBodies) {
+            if (normalize(body.textContent) !== normalize(AUTO_QUEUED_FLASH_TEXT)) {
+                continue;
+            }
+
+            const toast = body.closest(".toast");
+            if (toast instanceof HTMLElement) {
+                toast.remove();
+            }
+        }
+    };
+
     const initializeSslLabsFilter = () => {
         const root = document.querySelector("[data-ssllabs-filter-root]");
         if (!(root instanceof HTMLElement)) {
@@ -47,15 +65,10 @@
         const getRows = () => Array.from(root.querySelectorAll("[data-ssllabs-site-row]"))
             .filter((row) => row instanceof HTMLElement);
 
-        const summaryActions = Array.from(root.querySelectorAll(".ssllabs-domain-card__summary button, .ssllabs-domain-card__summary a, .ssllabs-domain-card__summary select"))
-            .filter((action) => action instanceof HTMLElement);
-        const handleSummaryActionClick = (event) => {
-            event.stopPropagation();
-        };
-
         const autosaveSelects = Array.from(root.querySelectorAll("[data-ssllabs-autosave]"))
             .filter((el) => el instanceof HTMLSelectElement);
         const handleAutosaveChange = (event) => {
+            removeAutoQueuedFlash();
             const form = event.currentTarget.closest("form");
             if (form instanceof HTMLFormElement) {
                 form.requestSubmit();
@@ -116,9 +129,6 @@
 
         searchInput.addEventListener("input", handleSearchInput);
         gradeSelect.addEventListener("change", handleGradeChange);
-        for (const action of summaryActions) {
-            action.addEventListener("click", handleSummaryActionClick);
-        }
         for (const select of autosaveSelects) {
             select.addEventListener("change", handleAutosaveChange);
         }
@@ -132,9 +142,6 @@
         root.ssllabsFilterCleanup = () => {
             searchInput.removeEventListener("input", handleSearchInput);
             gradeSelect.removeEventListener("change", handleGradeChange);
-            for (const action of summaryActions) {
-                action.removeEventListener("click", handleSummaryActionClick);
-            }
             for (const select of autosaveSelects) {
                 select.removeEventListener("change", handleAutosaveChange);
             }

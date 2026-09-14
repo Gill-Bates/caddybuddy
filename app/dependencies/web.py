@@ -4,27 +4,26 @@
 # Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
 #
 
-from base64 import b64encode
-from functools import cache
 import hmac
 import re
 import secrets
 import time
+from base64 import b64encode
 from datetime import UTC, datetime
+from functools import cache
 from hashlib import sha256, sha384
 from urllib.parse import unquote
 
 from fastapi import HTTPException, Request
 from fastapi.responses import RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
-from starlette.routing import NoMatchFound
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.routing import NoMatchFound
 
 from app.config.settings import get_settings
 from app.models.entities import User
 from app.repositories.users import user_repository
 from app.services.build_info import get_build_info
-
 
 _MAX_CSRF_TOKEN_LENGTH = 256
 _MAX_FLASHES = 5
@@ -287,13 +286,12 @@ def safe_redirect_path(path: str | None, *, fallback: str = "/") -> str:
     Rejects absolute URLs, protocol-relative paths, backslash tricks and control
     characters so the helper cannot be turned into an open redirect.
     """
-    if not path or not path.startswith("/") or path.startswith("//") or path.startswith("/\\"):
+    if not path or not path.startswith("/") or path.startswith(("//", "/\\")):
         return fallback
     decoded = unquote(path)
     if (
         not decoded.startswith("/")
-        or decoded.startswith("//")
-        or decoded.startswith("/\\")
+        or decoded.startswith(("//", "/\\"))
         or _UNSAFE_REDIRECT_PATH_RE.search(path)
         or _UNSAFE_REDIRECT_PATH_RE.search(decoded)
     ):

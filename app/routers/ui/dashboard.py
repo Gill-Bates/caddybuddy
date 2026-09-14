@@ -16,6 +16,7 @@ from app.database.session import get_db_session
 from app.dependencies.web import redirect_to, render_template
 from app.services.caddyfile_manager import get_caddy_runtime_status
 from app.services.dashboard import get_dashboard_shell_metrics
+
 from ._common import require_onboarding_completed, require_user
 
 router = APIRouter()

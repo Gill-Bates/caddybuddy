@@ -14,7 +14,6 @@ from unittest.mock import AsyncMock, patch
 
 from app.config.settings import get_settings
 
-
 _ENV_OVERRIDES = {
     "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
     "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
@@ -29,6 +28,7 @@ for key, value in _ENV_OVERRIDES.items():
 get_settings.cache_clear()
 
 from fastapi.testclient import TestClient
+
 from app.routers.ui.onboarding import router as onboarding_router
 from app.services.caddy_onboarding import OnboardingWizardState
 from tests.ui_test_app import build_ui_test_app
@@ -78,9 +78,9 @@ class UIOnboardingTests(unittest.TestCase):
                 "app.routers.ui.onboarding.get_onboarding_state",
                 new=AsyncMock(return_value=SimpleNamespace(status="completed")),
             ),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/onboarding", follow_redirects=False)
+            response = client.get("/onboarding", follow_redirects=False)
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/")
@@ -94,9 +94,9 @@ class UIOnboardingTests(unittest.TestCase):
                 "app.routers.ui.onboarding.get_onboarding_state",
                 new=AsyncMock(return_value=SimpleNamespace(status="completed")),
             ),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/onboarding", follow_redirects=False)
+            response = client.get("/onboarding", follow_redirects=False)
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/")
@@ -115,9 +115,9 @@ class UIOnboardingTests(unittest.TestCase):
                 new=AsyncMock(return_value=SimpleNamespace(admin_url="http://localhost:2019", caddyfile_path_str="/app/Caddyfile")),
             ),
             patch("app.routers.ui.onboarding.get_ssllabs_email", new=AsyncMock(return_value="")),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/onboarding")
+            response = client.get("/onboarding")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("app-shell--public", response.text, "Onboarding must use full-width public shell (no sidebar)")
@@ -138,9 +138,9 @@ class UIOnboardingTests(unittest.TestCase):
                 new=AsyncMock(return_value=SimpleNamespace(admin_url="http://localhost:2019", caddyfile_path_str="/app/Caddyfile")),
             ),
             patch("app.routers.ui.onboarding.get_ssllabs_email", new=AsyncMock(return_value="")),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/onboarding")
+            response = client.get("/onboarding")
 
         html = response.text
         self.assertEqual(response.status_code, 200)
@@ -198,9 +198,9 @@ class UIOnboardingTests(unittest.TestCase):
                 new=AsyncMock(return_value=SimpleNamespace(admin_url="http://localhost:2019", caddyfile_path_str="/app/Caddyfile")),
             ),
             patch("app.routers.ui.onboarding.get_ssllabs_email", new=AsyncMock(return_value="")),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/onboarding")
+            response = client.get("/onboarding")
 
         html = response.text
         self.assertIn('aria-label="Onboarding steps"', html, "Step navigation must have aria-label")
@@ -297,9 +297,9 @@ class UIOnboardingTests(unittest.TestCase):
                 new=AsyncMock(return_value=SimpleNamespace(admin_url="http://localhost:2019", caddyfile_path_str="/app/Caddyfile")),
             ),
             patch("app.routers.ui.onboarding.get_ssllabs_email", new=AsyncMock(return_value="")),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/onboarding")
+            response = client.get("/onboarding")
 
         html = response.text
         self.assertEqual(response.status_code, 200)
@@ -346,9 +346,9 @@ class UIOnboardingTests(unittest.TestCase):
                 new=AsyncMock(return_value=SimpleNamespace(admin_url="http://localhost:2019", caddyfile_path_str="/app/Caddyfile")),
             ),
             patch("app.routers.ui.onboarding.get_ssllabs_email", new=AsyncMock(return_value="")),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/onboarding")
+            response = client.get("/onboarding")
 
         html = response.text
         self.assertEqual(response.status_code, 200)
@@ -372,9 +372,9 @@ class UIOnboardingTests(unittest.TestCase):
                 new=AsyncMock(return_value=SimpleNamespace(admin_url="http://localhost:2019", caddyfile_path_str="/app/Caddyfile")),
             ),
             patch("app.routers.ui.onboarding.get_ssllabs_email", new=AsyncMock(return_value="")),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                return client.get("/onboarding")
+            return client.get("/onboarding")
 
     def test_assist_panel_rendered_when_available(self) -> None:
         state = OnboardingWizardState(
@@ -448,9 +448,9 @@ class UIOnboardingTests(unittest.TestCase):
             patch("app.routers.ui.onboarding.validated_form", new=AsyncMock(return_value={})),
             patch("app.routers.ui.onboarding.enable_admin_api_and_reprobe", new=service),
             patch("app.routers.ui.onboarding.push_flash") as push_flash,
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.post("/onboarding/enable-admin-api", follow_redirects=False)
+            response = client.post("/onboarding/enable-admin-api", follow_redirects=False)
 
         self.assertEqual(response.status_code, 303)
         service.assert_not_awaited()
@@ -468,9 +468,9 @@ class UIOnboardingTests(unittest.TestCase):
             patch("app.routers.ui.onboarding.enable_admin_api_and_reprobe",
                   new=AsyncMock(return_value=result_state)),
             patch("app.routers.ui.onboarding.push_flash") as push_flash,
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.post("/onboarding/enable-admin-api", follow_redirects=False)
+            response = client.post("/onboarding/enable-admin-api", follow_redirects=False)
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/onboarding")
@@ -486,9 +486,9 @@ class UIOnboardingTests(unittest.TestCase):
             patch("app.routers.ui.onboarding.enable_admin_api_and_reprobe",
                   new=AsyncMock(side_effect=ValueError("Caddy restart capability is not configured."))),
             patch("app.routers.ui.onboarding.push_flash") as push_flash,
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.post("/onboarding/enable-admin-api", follow_redirects=False)
+            response = client.post("/onboarding/enable-admin-api", follow_redirects=False)
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(push_flash.call_args.args[1], "danger")
@@ -512,9 +512,9 @@ class UIOnboardingTests(unittest.TestCase):
                 "app.routers.ui.onboarding.get_onboarding_caddyfile_path_candidates",
                 return_value=("/etc/caddy/Caddyfile", "/usr/local/etc/caddy/Caddyfile"),
             ),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/onboarding")
+            response = client.get("/onboarding")
 
         html = response.text
         self.assertEqual(response.status_code, 200)
@@ -536,9 +536,9 @@ class UIOnboardingTests(unittest.TestCase):
                 new=AsyncMock(return_value=SimpleNamespace(admin_url="http://localhost:2019", caddyfile_path_str="/app/Caddyfile")),
             ),
             patch("app.routers.ui.onboarding.get_ssllabs_email", new=AsyncMock(return_value="")),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/onboarding")
+            response = client.get("/onboarding")
 
         html = response.text
         GERMAN_FRAGMENTS = [
@@ -573,9 +573,9 @@ class UIOnboardingTests(unittest.TestCase):
                 new=AsyncMock(return_value=SimpleNamespace(admin_url="http://localhost:2019", caddyfile_path_str="/app/Caddyfile")),
             ),
             patch("app.routers.ui.onboarding.get_ssllabs_email", new=AsyncMock(return_value="admin@example.com")),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/onboarding")
+            response = client.get("/onboarding")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('data-onboarding-wizard', response.text)
@@ -610,9 +610,9 @@ class UIOnboardingTests(unittest.TestCase):
                 new=AsyncMock(return_value=SimpleNamespace(admin_url="http://localhost:2019", caddyfile_path_str="/app/Caddyfile")),
             ),
             patch("app.routers.ui.onboarding.get_ssllabs_email", new=AsyncMock(return_value="admin@example.com")),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/onboarding")
+            response = client.get("/onboarding")
 
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("alert alert-danger", response.text)

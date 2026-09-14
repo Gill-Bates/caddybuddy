@@ -12,10 +12,10 @@ import asyncio
 import logging
 from datetime import datetime
 from pathlib import Path
-from pydantic import ValidationError
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,16 +32,16 @@ from app.services.caddyfile_manager import (
     sync_succeeded,
     validate_and_deploy_full_caddyfile,
 )
-from app.services.runtime_settings import get_caddy_config
 from app.services.certificates import CertificateInfo
 from app.services.dashboard import (
     get_cached_certificate_info_for_domains,
     get_certificate_info_for_domains,
-    invalidate_certificate_cache,
     has_local_certificate_for_domain_checked,
+    invalidate_certificate_cache,
 )
-from app.services.renewal import CertificateRenewalService
 from app.services.events import publish_resource_event
+from app.services.renewal import CertificateRenewalService
+from app.services.runtime_settings import get_caddy_config
 from app.utils.caddyfile import extract_site_handler_from_directives
 from app.utils.domains import split_domain_names
 
@@ -52,7 +52,6 @@ from ._common import (
     require_user,
     validated_form,
 )
-
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -96,16 +95,16 @@ def _serialize_certificate_info(info: CertificateInfo) -> dict[str, object]:
         "issued_at": info.issued_at.isoformat() if info.issued_at else None,
         "expires_at": info.expires_at.isoformat() if info.expires_at else None,
         "days_remaining": info.days_remaining,
-        "error_message": getattr(info, "error_message", None),
-        "status": getattr(info, "status", "missing"),
-        "source": getattr(info, "source", "none"),
-        "match_type": getattr(info, "match_type", None),
-        "is_wildcard": getattr(info, "is_wildcard", False),
-        "covering_name": getattr(info, "covering_name", None),
-        "checked_at": info.checked_at.isoformat() if getattr(info, "checked_at", None) else None,
-        "diagnostics": list(info.diagnostics) if hasattr(info, "diagnostics") else [],
-        "local_artifact_present": getattr(info, "local_artifact_present", False),
-        "local_artifact_complete": getattr(info, "local_artifact_complete", False),
+        "error_message": info.error_message,
+        "status": info.status,
+        "source": info.source,
+        "match_type": info.match_type,
+        "is_wildcard": info.is_wildcard,
+        "covering_name": info.covering_name,
+        "checked_at": info.checked_at.isoformat() if info.checked_at else None,
+        "diagnostics": list(info.diagnostics),
+        "local_artifact_present": info.local_artifact_present,
+        "local_artifact_complete": info.local_artifact_complete,
     }
 
 
@@ -114,10 +113,10 @@ def _certificate_priority(info: CertificateInfo | None) -> int:
         return -1
     if info.valid:
         return _CERTIFICATE_STATUS_PRIORITY["valid"]
-    status = getattr(info, "status", "missing")
+    status = info.status
     if status in _CERTIFICATE_STATUS_PRIORITY:
         return _CERTIFICATE_STATUS_PRIORITY[status]
-    return _CERTIFICATE_STATUS_PRIORITY["error"] if getattr(info, "error_message", None) else _CERTIFICATE_STATUS_PRIORITY["missing"]
+    return _CERTIFICATE_STATUS_PRIORITY["error"] if info.error_message else _CERTIFICATE_STATUS_PRIORITY["missing"]
 
 
 def _pick_worst_certificate_info(infos: list[CertificateInfo | None]) -> CertificateInfo | None:
@@ -196,9 +195,9 @@ async def sites_certificates(
             "mode": plan.mode,
             "reason": plan.reason,
             "requires_confirmation": plan.requires_confirmation,
-            "scope_name": getattr(plan, "scope_name", None),
-            "scope_type": getattr(plan, "scope_type", "domain"),
-            "wait_domains": list(getattr(plan, "wait_domains", ())),
+            "scope_name": plan.scope_name,
+            "scope_type": plan.scope_type,
+            "wait_domains": list(plan.wait_domains),
         }
 
     return JSONResponse(
@@ -533,7 +532,7 @@ async def renew_certificate(
 
     renewal_service = CertificateRenewalService(session)
     plan = await renewal_service.build_plan(site)
-    target_scope = getattr(plan, "scope_name", None) or primary_domain
+    target_scope = plan.scope_name or primary_domain
     plan_payload = {"site_id": site_id, "scope": target_scope, "domain": primary_domain}
 
     if plan.mode == "unavailable":

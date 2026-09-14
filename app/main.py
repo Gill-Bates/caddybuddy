@@ -16,11 +16,11 @@ from urllib.parse import unquote, urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config.limiter import limiter, update_rate_limit_enabled
 from app.config.settings import Settings, get_settings
@@ -28,9 +28,10 @@ from app.database.session import dispose_engine, get_session_factory, init_datab
 from app.dependencies.web import push_flash, render_template
 from app.middleware.csrf import CSRFMiddleware, SecurityHeadersMiddleware
 from app.middleware.session import RequestAwareSessionMiddleware
-from app.routers.caddy_api import router as caddy_api_router
 from app.routers.api import router as api_router
+from app.routers.caddy_api import router as caddy_api_router
 from app.routers.ui import router as ui_router
+from app.services.auth import PASSWORD_MIN_LENGTH, PASSWORD_POLICY_MESSAGE
 from app.services.caddy import caddy_service
 from app.services.caddyfile_manager import (
     get_caddy_runtime_status,
@@ -42,8 +43,7 @@ from app.services.caddyfile_manager import (
 from app.services.events import event_bus
 from app.services.runtime_settings import get_rate_limit_enabled
 from app.services.ssllabs import ssllabs_service
-from app.services.auth import PASSWORD_MIN_LENGTH, PASSWORD_POLICY_MESSAGE
-
+from app.utils.security_logging import log_authentication_failure
 
 logger = logging.getLogger(__name__)
 _UNSAFE_REDIRECT_PATH_RE = re.compile(r"[\x00-\x1f\x7f\\]")
@@ -129,8 +129,7 @@ def _safe_rate_limit_redirect_path(request: Request) -> str:
 
     if (
         not decoded_path.startswith("/")
-        or decoded_path.startswith("//")
-        or decoded_path.startswith("/\\")
+        or decoded_path.startswith(("//", "/\\"))
         or _UNSAFE_REDIRECT_PATH_RE.search(path)
         or _UNSAFE_REDIRECT_PATH_RE.search(decoded_path)
     ):
@@ -140,6 +139,14 @@ def _safe_rate_limit_redirect_path(request: Request) -> str:
 
 async def _handle_rate_limit_exceeded(request: Request, exc: RateLimitExceeded):
     """Return JSON for API routes and flash+redirect for browser UI routes."""
+    if request.url.path == "/login":
+        log_authentication_failure(
+            request,
+            username=None,
+            reason="rate_limited",
+            status_code=429,
+        )
+
     if _request_expects_json(request):
         response = _rate_limit_exceeded_handler(request, exc)
         if isawaitable(response):

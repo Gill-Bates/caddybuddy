@@ -16,7 +16,6 @@ from unittest.mock import AsyncMock, patch
 from app.config.settings import get_settings
 from app.services.auth import PASSWORD_MIN_LENGTH
 
-
 _ENV_OVERRIDES = {
     "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
     "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
@@ -31,6 +30,7 @@ for key, value in _ENV_OVERRIDES.items():
 get_settings.cache_clear()
 
 from fastapi.testclient import TestClient
+
 from app.routers.ui.auth import router as auth_router
 from tests.ui_test_app import build_ui_test_app
 
@@ -86,7 +86,7 @@ class UIAuthTests(unittest.TestCase):
             "Select controls must keep a 44px minimum touch target.",
         )
         self.assertIn(
-            ".cb-footer-link {\n    color: inherit;\n    transition: color 0.15s ease-in-out;\n    display: inline-flex;\n    flex: 0 0 auto;\n    align-items: center;\n    justify-content: center;\n    gap: 0.3rem;\n    min-width: 2.75rem;\n    min-height: 2.75rem;",
+            ".cb-footer-link {\n    color: inherit;\n    transition: color 0.15s ease-in-out;\n    display: inline-flex;\n    flex: 0 0 auto;\n    align-items: center;\n    justify-content: center;\n    gap: 0.2rem;\n    min-width: 0;\n    min-height: 2.75rem;",
             css,
             "Footer links must keep a 44px minimum touch target.",
         )
@@ -96,32 +96,37 @@ class UIAuthTests(unittest.TestCase):
 
         with (
             patch("app.routers.ui.auth.auth_service.authenticate", new=AsyncMock(return_value=None)),
-            patch("app.routers.ui.auth.logger.warning") as warning,
+            patch("app.routers.ui.auth.log_authentication_failure") as log_failure,
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                login_page = client.get("/login")
-                self.assertNotIn('placeholder="Enter username"', login_page.text)
-                csrf_token = self._extract_csrf_token(login_page.text)
-                response = client.post(
-                    "/login",
-                    data={
-                        "username": "admin",
-                        "password": "wrong-password",
-                        "next": "/",
-                        "csrf_token": csrf_token,
-                    },
-                )
+            login_page = client.get("/login")
+            self.assertNotIn('placeholder="Enter username"', login_page.text)
+            csrf_token = self._extract_csrf_token(login_page.text)
+            response = client.post(
+                "/login",
+                data={
+                    "username": "admin",
+                    "password": "wrong-password",
+                    "next": "/",
+                    "csrf_token": csrf_token,
+                },
+            )
 
         self.assertEqual(response.status_code, 403)
         self.assertIn("Invalid credentials.", response.text)
         self.assertIn('class="toast-container app-toast-stack position-fixed top-0 end-0 p-3"', response.text)
-        self.assertIn('class="toast align-items-center text-bg-danger border-0 shadow-sm"', response.text)
+        self.assertIn('class="toast toast-slide align-items-center text-bg-danger border-0"', response.text)
         self.assertIn('role="alert"', response.text)
         self.assertIn('aria-live="assertive"', response.text)
         self.assertIn('data-auto-dismiss-delay="12000"', response.text)
         self.assertIn('class="toast-body">Invalid credentials.</div>', response.text)
         self.assertIn('<div class="alert alert-danger login-error" role="alert" data-testid="login-error">Invalid credentials.</div>', response.text)
-        warning.assert_called_once_with("Authentication failed for username=%r status_code=403", "admin")
+        log_failure.assert_called_once_with(
+            unittest.mock.ANY,
+            username="admin",
+            reason="invalid_credentials",
+            status_code=403,
+        )
 
     def test_successful_login_keeps_redirect_flow(self) -> None:
         app = self._build_app()
@@ -131,20 +136,20 @@ class UIAuthTests(unittest.TestCase):
             patch("app.routers.ui.auth.auth_service.authenticate", new=AsyncMock(return_value=user)),
             patch("app.routers.ui.auth.commit_and_flash", new=AsyncMock()) as commit_and_flash,
             patch("app.routers.ui.auth.initialize_user_session") as initialize_user_session,
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                login_page = client.get("/login")
-                csrf_token = self._extract_csrf_token(login_page.text)
-                response = client.post(
-                    "/login",
-                    data={
-                        "username": "admin",
-                        "password": "Password123!",
-                        "next": "/sites",
-                        "csrf_token": csrf_token,
-                    },
-                    follow_redirects=False,
-                )
+            login_page = client.get("/login")
+            csrf_token = self._extract_csrf_token(login_page.text)
+            response = client.post(
+                "/login",
+                data={
+                    "username": "admin",
+                    "password": "Password123!",
+                    "next": "/sites",
+                    "csrf_token": csrf_token,
+                },
+                follow_redirects=False,
+            )
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/sites")
@@ -176,9 +181,11 @@ class UIAuthTests(unittest.TestCase):
     def test_login_page_shows_setup_form_when_no_users_exist(self) -> None:
         app = self._build_app()
 
-        with patch("app.routers.ui.auth.user_repository.exists_any", new=AsyncMock(return_value=False)):
-            with TestClient(app) as client:
-                response = client.get("/login")
+        with (
+            patch("app.routers.ui.auth.user_repository.exists_any", new=AsyncMock(return_value=False)),
+            TestClient(app) as client,
+        ):
+            response = client.get("/login")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("Create your admin account to get started", response.text)
@@ -199,19 +206,19 @@ class UIAuthTests(unittest.TestCase):
             patch("app.routers.ui.auth.user_repository.exists_any", new=AsyncMock(return_value=False)),
             patch("app.routers.ui.auth.auth_service.ensure_default_admin", new=AsyncMock(return_value=created_user)),
             patch("app.routers.ui.auth.initialize_user_session") as init_session,
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                login_page = client.get("/login")
-                csrf_token = self._extract_csrf_token(login_page.text)
-                response = client.post(
-                    "/setup",
-                    data={
-                        "password": "StrongAdmin1!",
-                        "confirm_password": "StrongAdmin1!",
-                        "csrf_token": csrf_token,
-                    },
-                    follow_redirects=False,
-                )
+            login_page = client.get("/login")
+            csrf_token = self._extract_csrf_token(login_page.text)
+            response = client.post(
+                "/setup",
+                data={
+                    "password": "StrongAdmin1!",
+                    "confirm_password": "StrongAdmin1!",
+                    "csrf_token": csrf_token,
+                },
+                follow_redirects=False,
+            )
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/onboarding")
@@ -223,19 +230,19 @@ class UIAuthTests(unittest.TestCase):
         with (
             patch("app.routers.ui.auth.user_repository.exists_any", new=AsyncMock(return_value=False)),
             patch("app.routers.ui.auth.auth_service.ensure_default_admin", new=AsyncMock(return_value=None)),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                login_page = client.get("/login")
-                csrf_token = self._extract_csrf_token(login_page.text)
-                response = client.post(
-                    "/setup",
-                    data={
-                        "password": "StrongAdmin1!",
-                        "confirm_password": "StrongAdmin1!",
-                        "csrf_token": csrf_token,
-                    },
-                    follow_redirects=False,
-                )
+            login_page = client.get("/login")
+            csrf_token = self._extract_csrf_token(login_page.text)
+            response = client.post(
+                "/setup",
+                data={
+                    "password": "StrongAdmin1!",
+                    "confirm_password": "StrongAdmin1!",
+                    "csrf_token": csrf_token,
+                },
+                follow_redirects=False,
+            )
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/login")
@@ -243,19 +250,21 @@ class UIAuthTests(unittest.TestCase):
     def test_setup_redirects_to_login_when_users_already_exist(self) -> None:
         app = self._build_app()
 
-        with patch("app.routers.ui.auth.user_repository.exists_any", new=AsyncMock(side_effect=[True, True])):
-            with TestClient(app) as client:
-                login_page = client.get("/login")
-                csrf_token = self._extract_csrf_token(login_page.text)
-                response = client.post(
-                    "/setup",
-                    data={
-                        "password": "StrongAdmin1!",
-                        "confirm_password": "StrongAdmin1!",
-                        "csrf_token": csrf_token,
-                    },
-                    follow_redirects=False,
-                )
+        with (
+            patch("app.routers.ui.auth.user_repository.exists_any", new=AsyncMock(side_effect=[True, True])),
+            TestClient(app) as client,
+        ):
+            login_page = client.get("/login")
+            csrf_token = self._extract_csrf_token(login_page.text)
+            response = client.post(
+                "/setup",
+                data={
+                    "password": "StrongAdmin1!",
+                    "confirm_password": "StrongAdmin1!",
+                    "csrf_token": csrf_token,
+                },
+                follow_redirects=False,
+            )
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/login")
@@ -263,18 +272,20 @@ class UIAuthTests(unittest.TestCase):
     def test_setup_returns_422_for_password_mismatch(self) -> None:
         app = self._build_app()
 
-        with patch("app.routers.ui.auth.user_repository.exists_any", new=AsyncMock(return_value=False)):
-            with TestClient(app) as client:
-                login_page = client.get("/login")
-                csrf_token = self._extract_csrf_token(login_page.text)
-                response = client.post(
-                    "/setup",
-                    data={
-                        "password": "StrongAdmin1!",
-                        "confirm_password": "DifferentPw2@",
-                        "csrf_token": csrf_token,
-                    },
-                )
+        with (
+            patch("app.routers.ui.auth.user_repository.exists_any", new=AsyncMock(return_value=False)),
+            TestClient(app) as client,
+        ):
+            login_page = client.get("/login")
+            csrf_token = self._extract_csrf_token(login_page.text)
+            response = client.post(
+                "/setup",
+                data={
+                    "password": "StrongAdmin1!",
+                    "confirm_password": "DifferentPw2@",
+                    "csrf_token": csrf_token,
+                },
+            )
 
         self.assertEqual(response.status_code, 422)
         self.assertIn("Passwords do not match", response.text)
@@ -283,18 +294,20 @@ class UIAuthTests(unittest.TestCase):
     def test_setup_returns_422_for_weak_password(self) -> None:
         app = self._build_app()
 
-        with patch("app.routers.ui.auth.user_repository.exists_any", new=AsyncMock(return_value=False)):
-            with TestClient(app) as client:
-                login_page = client.get("/login")
-                csrf_token = self._extract_csrf_token(login_page.text)
-                response = client.post(
-                    "/setup",
-                    data={
-                        "password": "weakpassword",
-                        "confirm_password": "weakpassword",
-                        "csrf_token": csrf_token,
-                    },
-                )
+        with (
+            patch("app.routers.ui.auth.user_repository.exists_any", new=AsyncMock(return_value=False)),
+            TestClient(app) as client,
+        ):
+            login_page = client.get("/login")
+            csrf_token = self._extract_csrf_token(login_page.text)
+            response = client.post(
+                "/setup",
+                data={
+                    "password": "weakpassword",
+                    "confirm_password": "weakpassword",
+                    "csrf_token": csrf_token,
+                },
+            )
 
         self.assertEqual(response.status_code, 422)
         self.assertIn("data-setup-form", response.text)

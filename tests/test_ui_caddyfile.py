@@ -15,7 +15,6 @@ from unittest.mock import AsyncMock, patch
 
 from app.config.settings import get_settings
 
-
 _ENV_OVERRIDES = {
     "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
     "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
@@ -30,6 +29,7 @@ for key, value in _ENV_OVERRIDES.items():
 get_settings.cache_clear()
 
 from fastapi.testclient import TestClient
+
 from app.routers.ui.caddyfile import router as caddyfile_router
 from tests.ui_test_app import build_ui_test_app
 
@@ -154,9 +154,9 @@ class UICaddyfileTests(unittest.TestCase):
             patch("app.routers.ui.caddyfile.require_user", new=AsyncMock(return_value=current_user)),
             patch("app.routers.ui.caddyfile.get_baseline_caddyfile", new=AsyncMock(return_value="")),
             patch("app.routers.ui.caddyfile.get_caddy_runtime_status", new=AsyncMock(return_value=runtime_status)),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/caddyfile")
+            response = client.get("/caddyfile")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('class="app-page app-page--caddyfile"', response.text)
@@ -191,9 +191,9 @@ class UICaddyfileTests(unittest.TestCase):
                 new=AsyncMock(return_value="{")
             ),
             patch("app.routers.ui.caddyfile.get_caddy_runtime_status", new=AsyncMock(return_value=runtime_status)),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/caddyfile")
+            response = client.get("/caddyfile")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('class="app-page app-page--caddyfile"', response.text)
@@ -225,9 +225,9 @@ class UICaddyfileTests(unittest.TestCase):
             patch("app.routers.ui.caddyfile.require_user", new=AsyncMock(return_value=current_user)),
             patch("app.routers.ui.caddyfile.get_baseline_caddyfile", new=AsyncMock(return_value="")),
             patch("app.routers.ui.caddyfile.get_caddy_runtime_status", new=AsyncMock(return_value=runtime_status)),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/caddyfile")
+            response = client.get("/caddyfile")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("Mounted Caddyfile Path", response.text)
@@ -251,9 +251,9 @@ class UICaddyfileTests(unittest.TestCase):
                 "app.routers.ui.caddyfile.get_settings",
                 return_value=SimpleNamespace(caddy_baseline_caddyfile=configured_default),
             ),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/caddyfile")
+            response = client.get("/caddyfile")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("email ops@example.com", response.text)
@@ -262,9 +262,11 @@ class UICaddyfileTests(unittest.TestCase):
         app = self._build_app()
         current_user = SimpleNamespace(username="operator", role="user")
 
-        with patch("app.routers.ui.caddyfile.require_user", new=AsyncMock(return_value=current_user)):
-            with TestClient(app) as client:
-                response = client.get("/caddyfile", follow_redirects=False)
+        with (
+            patch("app.routers.ui.caddyfile.require_user", new=AsyncMock(return_value=current_user)),
+            TestClient(app) as client,
+        ):
+            response = client.get("/caddyfile", follow_redirects=False)
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/")
@@ -277,9 +279,9 @@ class UICaddyfileTests(unittest.TestCase):
             patch("app.routers.ui.caddyfile.require_user", new=AsyncMock(return_value=current_user)),
             patch("app.routers.ui.caddyfile.validated_form", new=AsyncMock(return_value={"caddyfile": "example.com { respond \"ok\" }"})),
             patch("app.middleware.csrf.validate_csrf_token"),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.post("/caddyfile/validate")
+            response = client.post("/caddyfile/validate")
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.json(), {"valid": False, "message": "Administrator access is required."})
@@ -302,15 +304,15 @@ class UICaddyfileTests(unittest.TestCase):
             patch("app.routers.ui.caddyfile.get_caddy_runtime_status", new=AsyncMock(return_value=runtime_status)),
             patch("app.routers.ui.caddyfile.onboard_caddy", new=AsyncMock(return_value=result)),
             patch("app.routers.ui.caddyfile.publish_resource_event", new=AsyncMock()) as publish_event,
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                page = client.get("/caddyfile")
-                csrf_token = self._extract_csrf_token(page.text)
-                response = client.post(
-                    "/caddyfile/onboard",
-                    data={"csrf_token": csrf_token},
-                    follow_redirects=False,
-                )
+            page = client.get("/caddyfile")
+            csrf_token = self._extract_csrf_token(page.text)
+            response = client.post(
+                "/caddyfile/onboard",
+                data={"csrf_token": csrf_token},
+                follow_redirects=False,
+            )
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/caddyfile")
@@ -336,15 +338,15 @@ class UICaddyfileTests(unittest.TestCase):
             patch("app.routers.ui.caddyfile.get_caddy_runtime_status", new=AsyncMock(return_value=runtime_status)),
             patch("app.routers.ui.caddyfile.onboard_caddy", new=AsyncMock(return_value=result)),
             patch("app.routers.ui.caddyfile.publish_resource_event", new=AsyncMock()) as publish_event,
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                page = client.get("/caddyfile")
-                csrf_token = self._extract_csrf_token(page.text)
-                response = client.post(
-                    "/caddyfile/onboard",
-                    data={"csrf_token": csrf_token},
-                    follow_redirects=False,
-                )
+            page = client.get("/caddyfile")
+            csrf_token = self._extract_csrf_token(page.text)
+            response = client.post(
+                "/caddyfile/onboard",
+                data={"csrf_token": csrf_token},
+                follow_redirects=False,
+            )
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/caddyfile")
@@ -370,15 +372,15 @@ class UICaddyfileTests(unittest.TestCase):
             patch("app.routers.ui.caddyfile.get_caddy_runtime_status", new=AsyncMock(return_value=runtime_status)),
             patch("app.routers.ui.caddyfile.onboard_caddy", new=AsyncMock(return_value=result)),
             patch("app.routers.ui.caddyfile.publish_resource_event", new=AsyncMock()) as publish_event,
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                page = client.get("/caddyfile")
-                csrf_token = self._extract_csrf_token(page.text)
-                response = client.post(
-                    "/caddyfile/onboard",
-                    data={"csrf_token": csrf_token},
-                    follow_redirects=False,
-                )
+            page = client.get("/caddyfile")
+            csrf_token = self._extract_csrf_token(page.text)
+            response = client.post(
+                "/caddyfile/onboard",
+                data={"csrf_token": csrf_token},
+                follow_redirects=False,
+            )
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/caddyfile")

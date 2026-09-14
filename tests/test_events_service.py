@@ -7,8 +7,8 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
 import unittest
+from contextlib import suppress
 
 from app.services.events import EventBus, ResourceEvent, try_publish_resource_event
 

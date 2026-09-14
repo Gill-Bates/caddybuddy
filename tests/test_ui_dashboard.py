@@ -7,13 +7,12 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app.config.settings import get_settings
-
 
 _ENV_OVERRIDES = {
     "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
@@ -29,6 +28,7 @@ for key, value in _ENV_OVERRIDES.items():
 get_settings.cache_clear()
 
 from fastapi.testclient import TestClient
+
 from app.routers.ui.auth import router as auth_router
 from app.routers.ui.dashboard import router as dashboard_router
 from tests.ui_test_app import build_ui_test_app
@@ -96,9 +96,9 @@ class UIDashboardTests(unittest.TestCase):
                 "app.routers.ui._common.get_onboarding_state",
                 new=AsyncMock(return_value=SimpleNamespace(status="completed")),
             ),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/")
+            response = client.get("/")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("Dashboard", response.text)
@@ -167,9 +167,9 @@ class UIDashboardTests(unittest.TestCase):
                 "app.routers.ui._common.get_onboarding_state",
                 new=AsyncMock(return_value=SimpleNamespace(status="completed")),
             ),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/")
+            response = client.get("/")
 
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("Create your first managed site", response.text)
@@ -194,9 +194,9 @@ class UIDashboardTests(unittest.TestCase):
                 "app.routers.ui._common.get_onboarding_state",
                 new=AsyncMock(return_value=SimpleNamespace(status="not_started")),
             ),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/")
+            response = client.get("/")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.url.path, "/onboarding")
@@ -205,9 +205,11 @@ class UIDashboardTests(unittest.TestCase):
     def test_home_page_redirects_anonymous_user_to_login(self) -> None:
         app = self._build_app()
 
-        with patch("app.routers.ui.dashboard.require_user", new=AsyncMock(return_value=None)):
-            with TestClient(app) as client:
-                response = client.get("/", follow_redirects=False)
+        with (
+            patch("app.routers.ui.dashboard.require_user", new=AsyncMock(return_value=None)),
+            TestClient(app) as client,
+        ):
+            response = client.get("/", follow_redirects=False)
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/login")
@@ -219,9 +221,9 @@ class UIDashboardTests(unittest.TestCase):
         with (
             patch("app.routers.ui.dashboard.require_user", new=AsyncMock(return_value=None)),
             patch("app.routers.ui.auth.user_repository.exists_any", new=AsyncMock(return_value=True)),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/", follow_redirects=True)
+            response = client.get("/", follow_redirects=True)
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("Please sign in to continue", response.text)

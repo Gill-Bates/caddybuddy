@@ -10,8 +10,7 @@ from __future__ import annotations
 
 import posixpath
 from functools import cache
-from urllib.parse import parse_qs
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from fastapi import HTTPException, Request, Response
 from fastapi.responses import JSONResponse
@@ -19,7 +18,11 @@ from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.config.settings import get_settings
-from app.dependencies.web import ensure_csp_nonce, ensure_csrf_token, validate_csrf_token
+from app.dependencies.web import (
+    ensure_csp_nonce,
+    ensure_csrf_token,
+    validate_csrf_token,
+)
 from app.middleware.session import request_is_https
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
@@ -82,10 +85,6 @@ def _is_bearer_request(request: Request) -> bool:
     return scheme.lower() == "bearer"
 
 
-def _is_https_request(scope: Scope) -> bool:
-    return request_is_https(scope)
-
-
 def _request_origin_tuple(request: Request) -> tuple[str, str, int] | None:
     scheme = (request.url.scheme or "").lower()
     host = request.url.hostname
@@ -143,7 +142,7 @@ class SecurityHeadersMiddleware:
                     (b"content-security-policy", content_security_policy),
                     *_SECURITY_HEADERS,
                 ]
-                if _is_https_request(scope):
+                if request_is_https(scope):
                     headers_to_apply.append(_HSTS_HEADER)
 
                 for key, value in headers_to_apply:

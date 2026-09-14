@@ -10,7 +10,6 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-
 _MAX_JSON_BYTES = 256 * 1024
 _MAX_JSON_DEPTH = 32
 _DEFAULT_MAX_EXPIRY_DAYS = 365
@@ -53,7 +52,7 @@ def parse_json_object(raw_value: str, field_name: str) -> dict[str, Any]:
     except json.JSONDecodeError as exc:
         raise ValueError(f"{field_name} must be valid JSON.") from exc
     if not isinstance(parsed, dict):
-        raise ValueError(f"{field_name} must be a JSON object.")
+        raise ValueError(f"{field_name} must be a JSON object.")  # noqa: TRY004 -- content validation, tests assert ValueError
     _validate_json_depth(parsed, max_depth=_MAX_JSON_DEPTH)
     return parsed
 

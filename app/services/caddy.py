@@ -9,12 +9,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import socket
 import shutil
+import socket
 from collections.abc import Iterable
 from ipaddress import ip_address
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Self
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -63,7 +63,7 @@ async def _resolve_target_ips(host: str, port: int | None) -> list[ResolvedIPAdd
                 ),
                 timeout=_DNS_RESOLUTION_TIMEOUT,
             )
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             raise ValueError(f"DNS resolution timed out for Caddy admin host: {host!r}") from exc
         except OSError as exc:
             raise ValueError(f"Failed to resolve Caddy admin host: {host!r}") from exc
@@ -103,7 +103,7 @@ def _summarize_http_error_response(response: httpx.Response) -> str | None:
     else:
         try:
             body = " ".join(response.text.split())
-        except Exception:  # pragma: no cover - defensive fallback for broken encodings
+        except Exception:  # noqa: BLE001 -- defensive fallback for broken encodings, pragma: no cover
             return None
 
     if not body:
@@ -172,7 +172,7 @@ class CaddyAdminClient:
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
-            self._client = httpx.AsyncClient(timeout=self._timeout, limits=self._LIMITS)
+            self._client = httpx.AsyncClient(timeout=self._timeout, limits=self._LIMITS, trust_env=False)
         return self._client
 
     async def _bounded_request(
@@ -226,7 +226,7 @@ class CaddyAdminClient:
         await self._client.aclose()
         self._client = None
 
-    async def __aenter__(self) -> CaddyAdminClient:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -380,6 +380,11 @@ class CaddyService:
         return normalized.removeprefix("*.")
 
     @staticmethod
+    def _is_caddy_issuer_name(value: str) -> bool:
+        normalized = value.strip().lower()
+        return normalized == "acme" or normalized.endswith("-directory")
+
+    @staticmethod
     def _path_matches_scope(
         path: Path,
         scope_type: Literal["domain", "wildcard"],
@@ -408,13 +413,23 @@ class CaddyService:
         root_name = root.name.lower()
         if root == cert_root:
             # certificates/<issuer>/<scope>/
-            return path.is_dir() and len(rel_parts) == 2 and rel_parts[1] == expected_scope
+            return (
+                path.is_dir()
+                and len(rel_parts) == 2
+                and CaddyService._is_caddy_issuer_name(rel_parts[0])
+                and rel_parts[1] == expected_scope
+            )
         if root_name == "ocsp":
             # ocsp/<scope>.ocsp
             return path.is_file() and len(rel_parts) == 1 and rel_parts[0] == f"{expected_scope}.ocsp"
         if root_name == "acme":
             # acme account/order storage: only delete scope directories.
-            return path.is_dir() and expected_scope in rel_parts
+            return (
+                path.is_dir()
+                and len(rel_parts) == 2
+                and CaddyService._is_caddy_issuer_name(rel_parts[0])
+                and rel_parts[1] == expected_scope
+            )
         return False
 
     @staticmethod
@@ -455,12 +470,24 @@ class CaddyService:
         for path in path_list:
             if not path.exists() and not path.is_symlink():
                 continue
-            if path.is_symlink():
-                path.unlink()
-            elif path.is_dir():
-                shutil.rmtree(path, ignore_errors=False)
-            else:
-                path.unlink(missing_ok=True)
+            try:
+                if path.is_symlink():
+                    path.unlink()
+                elif path.is_dir():
+                    shutil.rmtree(path, ignore_errors=False)
+                else:
+                    path.unlink(missing_ok=True)
+            except PermissionError as exc:
+                logger.error("Permission denied deleting certificate artifact %s: %s", path, exc)
+                raise CaddyServiceError(
+                    "Cannot delete certificate artifacts: CaddyBuddy has read-only access to "
+                    "Caddy's certificate storage. Grant the CaddyBuddy user write access to the "
+                    "mounted storage (or run Caddy and CaddyBuddy under a shared UID/group) so "
+                    "forced renewal can purge and re-request certificates."
+                ) from exc
+            except OSError as exc:
+                logger.error("Failed deleting certificate artifact %s: %s", path, exc)
+                raise CaddyServiceError(f"Failed to delete certificate artifact: {path}") from exc
             removed += 1
         return removed
 

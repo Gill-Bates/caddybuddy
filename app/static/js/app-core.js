@@ -549,7 +549,7 @@
                 continue;
             }
             toastElement.dataset.autoDismissInitialized = "true";
-            toastElement.classList.add("fade");
+            toastElement.classList.add("toast-slide");
 
             const delayValue = Number.parseInt(toastElement.dataset.autoDismissDelay || "5000", 10);
             const delay = Number.isFinite(delayValue) && delayValue > 0
@@ -602,7 +602,7 @@
         const isAlertFlash = safeCategory === "danger" || safeCategory === "warning";
 
         const toastElement = document.createElement("div");
-        toastElement.className = `toast align-items-center text-bg-${safeCategory} border-0 shadow-sm`;
+        toastElement.className = `toast toast-slide align-items-center text-bg-${safeCategory} border-0`;
         toastElement.setAttribute("role", isAlertFlash ? "alert" : "status");
         toastElement.setAttribute("aria-live", isAlertFlash ? "assertive" : "polite");
         toastElement.setAttribute("aria-atomic", "true");

@@ -6,13 +6,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 import re
-from io import StringIO
+from collections.abc import Iterator
 from dataclasses import dataclass
+from io import StringIO
 
 from app.utils.domains import split_domain_names
-
 
 _CADDY_DIRECTIVE_KEYWORDS = frozenset(
     {
@@ -167,7 +166,7 @@ def _normalize_caddy_token(value: str | None, label: str) -> str:
     if value is None:
         return ""
     if not isinstance(value, str):
-        raise ValueError(f"{label} must be a string")
+        raise ValueError(f"{label} must be a string")  # noqa: TRY004 -- callers catch ValueError to collect validation errors
 
     normalized = value.strip()
     if not normalized:
@@ -776,7 +775,7 @@ def _is_site_label(header: str) -> bool:
     if not cleaned:
         return False
     # Remove any matcher patterns like @name or /path
-    if cleaned.startswith("@") or cleaned.startswith("/"):
+    if cleaned.startswith(("@", "/")):
         return False
     # Check if it's a Caddy directive keyword
     first_token = cleaned.split()[0].lower().rstrip(",")
@@ -822,59 +821,47 @@ def parse_caddyfile(content: str) -> ParsedCaddyfile:
         line = lines[i]
         stripped = line.strip()
 
-        # Skip empty lines and comments at top level
         if not stripped or stripped.startswith("#"):
             global_parts.append(line)
             i += 1
             continue
 
-        # Check for block start
         if "{" in stripped:
-            # Find the header (everything before the opening brace)
             header_end = stripped.find("{")
             header = stripped[:header_end].strip()
             inline_remainder = stripped[header_end + 1:].strip()
 
-            # Collect the full block
             block_lines = [line]
             depth = stripped.count("{") - stripped.count("}")
 
-            # If the block is on a single line (inline)
             if depth == 0 and "}" in stripped:
                 body = inline_remainder.rstrip("}").strip()
             else:
-                # Multi-line block
                 i += 1
                 while i < len(lines) and depth > 0:
                     block_line = lines[i]
                     block_lines.append(block_line)
                     depth += block_line.count("{") - block_line.count("}")
                     i += 1
-                i -= 1  # We'll increment at the end of the loop
+                i -= 1  # Compensate for the loop's unconditional increment below.
 
-                # Extract body (lines between opening and closing braces)
                 body_lines = block_lines[1:-1] if len(block_lines) > 2 else []
                 body = "\n".join(body_lines).strip()
 
-            # Categorize the block
             if _is_global_block_header(header):
-                # Global block - keep in global_parts
                 global_parts.append("\n".join(block_lines))
             elif _is_snippet_header(header):
-                # Named snippet - keep in global_parts (part of baseline)
+                # Snippets are part of the baseline, so they also go into global_parts.
                 global_parts.append("\n".join(block_lines))
                 snippets.append("\n".join(block_lines))
             elif _is_site_label(header):
-                # Site block - extract as a site
                 domain = _extract_domain_from_label(header)
                 sites.append((domain, body))
             else:
-                # Unknown block type - keep in global_parts
                 global_parts.append("\n".join(block_lines))
 
             i += 1
         else:
-            # Single-line directive at top level (rare but possible)
             global_parts.append(line)
             i += 1
 
@@ -920,8 +907,7 @@ def inject_global_options(baseline: str, *, admin: str | None, email: str | None
             open_idx = idx
             break
         depth += line.count("{") - line.count("}")
-        if depth < 0:
-            depth = 0
+        depth = max(depth, 0)
 
     if open_idx is None:
         block = "\n".join(["{", *managed, "}"])

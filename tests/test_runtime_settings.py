@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, patch
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.models.base import Base
-import app.services.runtime_settings as runtime_settings
+from app.services import runtime_settings
 from app.services.runtime_settings import (
     SSLLABS_RETENTION_DEFAULT_DAYS,
     discover_caddyfile_candidates,
@@ -25,13 +25,13 @@ from app.services.runtime_settings import (
     normalize_caddy_api_url,
     normalize_caddyfile_path,
     normalize_ssllabs_email,
-    suggest_caddyfile_path,
     set_caddy_api_url,
     set_caddy_config,
     set_caddyfile_path,
     set_rate_limit_enabled,
     set_ssllabs_email,
     set_ssllabs_history_retention_days,
+    suggest_caddyfile_path,
 )
 
 
@@ -244,6 +244,15 @@ class RuntimeSettingsTests(unittest.IsolatedAsyncioTestCase):
         async with self.session_factory() as session:
             days = await get_ssllabs_history_retention_days(session)
         self.assertEqual(days, 90)
+
+    async def test_set_ssllabs_retention_persists_unlimited(self) -> None:
+        async with self.session_factory() as session:
+            await set_ssllabs_history_retention_days(session, 0)
+            await session.commit()
+
+        async with self.session_factory() as session:
+            days = await get_ssllabs_history_retention_days(session)
+        self.assertEqual(days, 0)
 
     async def test_set_ssllabs_retention_rejects_disallowed_value(self) -> None:
         async with self.session_factory() as session:

@@ -29,21 +29,18 @@ from app.config.settings import get_settings
 from app.models.entities import CaddyBuddyState
 from app.services.caddy import CaddyAdminClient, CaddyServiceError
 from app.services.caddyfile_manager import onboard_caddy, onboarding_succeeded
-from app.services.supervisor import DisabledSupervisor, get_caddy_supervisor
-from app.utils.caddyfile import inject_global_options, parse_caddyfile
 from app.services.runtime_settings import (
-    get_caddy_config,
-    get_ssllabs_email,
     discover_caddyfile_candidates,
     normalize_caddy_api_url,
     normalize_caddyfile_path,
     normalize_ssllabs_email,
-    suggest_caddyfile_path,
     set_caddy_api_url,
     set_caddyfile_path,
     set_ssllabs_email,
+    suggest_caddyfile_path,
 )
-
+from app.services.supervisor import DisabledSupervisor, get_caddy_supervisor
+from app.utils.caddyfile import inject_global_options, parse_caddyfile
 
 logger = logging.getLogger(__name__)
 _DEFAULT_CADDYFILE_PATH = Path("/opt/caddybuddy/Caddyfile")
@@ -188,13 +185,6 @@ class OnboardingWizardState:
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False, separators=(",", ":"))
-
-
-def onboarding_modes() -> list[dict[str, str]]:
-    return [
-        {"value": value, "label": label}
-        for value, label in _MODE_LABELS.items()
-    ]
 
 
 def onboarding_caddy_locations() -> list[dict[str, str]]:
@@ -959,7 +949,9 @@ async def enable_admin_api_and_reprobe(session: AsyncSession) -> OnboardingWizar
     except ValueError as exc:
         raise ValueError(f"Caddy restart capability is misconfigured: {exc}") from exc
     if isinstance(supervisor, DisabledSupervisor):
-        raise ValueError("Caddy restart capability is not configured, so the Admin API cannot be enabled automatically.")
+        raise ValueError(  # noqa: TRY004 -- domain validation, not a type error
+            "Caddy restart capability is not configured, so the Admin API cannot be enabled automatically."
+        )
 
     try:
         normalized_url = normalize_caddy_api_url(state.admin_api_url)
@@ -1020,7 +1012,7 @@ async def enable_admin_api_and_reprobe(session: AsyncSession) -> OnboardingWizar
             acme_email=state.acme_email,
             caddyfile_path=state.caddyfile_path,
         )
-    except Exception as exc:  # noqa: BLE001 - convert any post-modification failure into a rollback
+    except Exception as exc:
         if not isinstance(exc, _AssistError):
             logger.exception("Unexpected failure while enabling the Caddy Admin API.")
         base_message = str(exc) if isinstance(exc, _AssistError) else "Failed to enable the Caddy Admin API."

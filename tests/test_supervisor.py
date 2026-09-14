@@ -7,10 +7,12 @@
 import asyncio
 import os
 import stat
-import pytest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
-from pathlib import Path
+
+import pytest
+
 from app.services.supervisor import (
     DisabledSupervisor,
     DockerSupervisor,
@@ -19,6 +21,7 @@ from app.services.supervisor import (
     _communicate_with_timeout,
     get_caddy_supervisor,
 )
+
 
 class MockProcess:
     def __init__(self, returncode=0, stdout=b"", stderr=b""):
@@ -190,9 +193,9 @@ async def test_script_supervisor_rejects_writable_parent_directory(tmp_path):
     with (
         patch("app.services.supervisor._ALLOWED_SCRIPT_ROOTS", (tmp_path.resolve(),)),
         patch.object(Path, "stat", mocked_stat),
+        pytest.raises(ValueError, match="Script parent directory is writable by group or others"),
     ):
-        with pytest.raises(ValueError, match="Script parent directory is writable by group or others"):
-            ScriptSupervisor(str(secure_file), 5.0)
+        ScriptSupervisor(str(secure_file), 5.0)
 
 @pytest.mark.anyio
 async def test_script_supervisor_rejects_non_root_owner(tmp_path):
@@ -204,9 +207,9 @@ async def test_script_supervisor_rejects_non_root_owner(tmp_path):
     with (
         patch("app.services.supervisor._ALLOWED_SCRIPT_ROOTS", (tmp_path.resolve(),)),
         patch.object(Path, "stat", return_value=SimpleNamespace(st_uid=1000, st_mode=0o100700)),
+        pytest.raises(ValueError, match="must be owned by root"),
     ):
-        with pytest.raises(ValueError, match="must be owned by root"):
-            ScriptSupervisor(str(secure_file), 5.0)
+        ScriptSupervisor(str(secure_file), 5.0)
 
 @pytest.mark.anyio
 async def test_script_supervisor_execution(tmp_path):
@@ -269,9 +272,11 @@ async def test_script_supervisor_rejects_paths_outside_allowed_roots(tmp_path):
     secure_file.write_text("#!/bin/sh\necho ok")
     os.chmod(secure_file, stat.S_IRWXU)
 
-    with patch("app.services.supervisor._ALLOWED_SCRIPT_ROOTS", (Path("/etc/caddybuddy"),)):
-        with pytest.raises(ValueError, match="outside allowed control directories"):
-            ScriptSupervisor(str(secure_file), 5.0)
+    with (
+        patch("app.services.supervisor._ALLOWED_SCRIPT_ROOTS", (Path("/etc/caddybuddy"),)),
+        pytest.raises(ValueError, match="outside allowed control directories"),
+    ):
+        ScriptSupervisor(str(secure_file), 5.0)
 
 @pytest.mark.anyio
 async def test_script_supervisor_stops_parent_validation_at_allowed_root(tmp_path):

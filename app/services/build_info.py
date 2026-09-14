@@ -10,6 +10,7 @@ from functools import cache
 from pathlib import Path
 
 from app.config.settings import get_settings
+from app.utils.version import get_version
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +21,10 @@ def get_build_info() -> dict[str, str]:
     settings = get_settings()
     base_dir = settings.base_dir
     file_metadata = _read_build_info_file(base_dir / "BUILD_INFO")
-    version = os.getenv("APP_VERSION") or _read_text(base_dir / "VERSION") or file_metadata.get("APP_VERSION") or "dev"
     commit = os.getenv("GIT_SHA") or file_metadata.get("GIT_SHA") or "working-tree"
     build_date = os.getenv("BUILD_DATE") or file_metadata.get("BUILD_DATE") or "unknown"
     return {
-        "version": version.splitlines()[0],
+        "version": get_version(),
         "commit": commit.splitlines()[0],
         "build_date": build_date.splitlines()[0],
     }

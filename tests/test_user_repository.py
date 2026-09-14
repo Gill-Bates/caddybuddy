@@ -13,13 +13,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-import app.services.auth as auth_module
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+import app.services.auth as auth_module
 from app.models.base import Base
 from app.repositories.users import DuplicateUserError, UserRepository
-
 
 VALID_BCRYPT_HASH = "$2b$12$" + "a" * 53
 SECOND_BCRYPT_HASH = "$2b$12$" + "b" * 53
@@ -62,7 +60,7 @@ class UserRepositoryTests(unittest.IsolatedAsyncioTestCase):
         user = SimpleNamespace(last_login=None)
 
         with self.assertRaisesRegex(ValueError, "last_login must be timezone-aware"):
-            await repository.update_last_login(session, user, datetime.now())
+            await repository.update_last_login(session, user, datetime.now(UTC).replace(tzinfo=None))
 
         session.flush.assert_not_awaited()
 

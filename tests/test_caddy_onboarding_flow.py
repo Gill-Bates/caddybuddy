@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import errno
 import os
+
 _ENV_OVERRIDES = {
     "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
     "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
@@ -20,6 +21,7 @@ for key, value in _ENV_OVERRIDES.items():
     os.environ[key] = value
 
 from app.config.settings import get_settings
+
 get_settings.cache_clear()
 
 import asyncio
@@ -27,14 +29,15 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Self
 from unittest.mock import AsyncMock, patch
 
 import pytest
-
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-import app.services.caddyfile_manager as caddyfile_manager
+from app.services import caddyfile_manager
+
 
 def tearDownModule() -> None:
     for key, original_value in _ORIGINAL_ENV.items():
@@ -226,6 +229,48 @@ example.com {
         self.assertIn("admin 127.0.0.1:2019", baseline)
         self.assertIn("(security_headers)", baseline)
 
+    async def test_build_site_validation_caddyfile_does_not_add_default_log_snippet(self) -> None:
+        caddyfile_path = self.temp_path / "Caddyfile"
+        self.current_caddyfile_path = caddyfile_path
+        caddyfile_path.write_text("", encoding="utf-8")
+
+        async with self.session_factory() as session:
+            rendered = await caddyfile_manager.build_site_validation_caddyfile(
+                session,
+                domain="example.com",
+                caddy_directives="reverse_proxy backend:8080",
+            )
+
+        self.assertIn("(security_headers)", rendered)
+        self.assertIn("import security_headers", rendered)
+        self.assertNotIn("(default_log)", rendered)
+        self.assertNotIn("import default_log", rendered)
+
+    async def test_build_full_caddyfile_uses_global_logging_only(self) -> None:
+        caddyfile_path = self.temp_path / "Caddyfile"
+        self.current_caddyfile_path = caddyfile_path
+        caddyfile_path.write_text("", encoding="utf-8")
+
+        async with self.session_factory() as session:
+            session.add(
+                Site(
+                    site_name="App",
+                    domain="app.example.com",
+                    upstream_url="http://backend:8080",
+                    caddy_directives="reverse_proxy backend:8080",
+                    enabled=True,
+                )
+            )
+            await session.commit()
+
+            rendered = await caddyfile_manager.build_full_caddyfile(session)
+
+        self.assertIn("(security_headers)", rendered)
+        self.assertIn("import security_headers", rendered)
+        self.assertNotIn("(default_log)", rendered)
+        self.assertNotIn("import default_log", rendered)
+        self.assertIn("app.example.com {", rendered)
+
     async def test_onboard_imports_snapshot_replaces_marker_and_syncs(self) -> None:
         caddyfile_path = self.temp_path / "Caddyfile"
         self.current_caddyfile_path = caddyfile_path
@@ -378,9 +423,9 @@ example.com {
         with (
             patch.object(caddyfile_manager.Path, "replace", side_effect=OSError(errno.EBUSY, "simulated bind mount")),
             patch.object(caddyfile_manager.os, "fsync", side_effect=fake_fsync),
+            self.assertRaises(OSError),
         ):
-            with self.assertRaises(OSError):
-                caddyfile_manager._write_caddyfile_sync(caddyfile_path, "managed\ncontent\n")
+            caddyfile_manager._write_caddyfile_sync(caddyfile_path, "managed\ncontent\n")
 
         self.assertEqual(caddyfile_path.read_text(encoding="utf-8"), original)
 
@@ -392,10 +437,10 @@ example.com {
             patch.object(caddyfile_manager, "fcntl", SimpleNamespace(LOCK_EX=1, LOCK_NB=2, LOCK_UN=8, flock=lambda *args: None)),
             patch.object(caddyfile_manager, "_LOCK_TIMEOUT_SECONDS", 0.0),
             patch.object(caddyfile_manager, "_try_acquire_file_lock", return_value=False),
+            self.assertRaisesRegex(TimeoutError, "Timed out waiting for Caddy operation lock"),
         ):
-            with self.assertRaisesRegex(TimeoutError, "Timed out waiting for Caddy operation lock"):
-                async with caddyfile_manager._acquire_operation_guard():
-                    self.fail("lock acquisition should have timed out")
+            async with caddyfile_manager._acquire_operation_guard():
+                self.fail("lock acquisition should have timed out")
 
         self.assertTrue(lock_path.parent.exists())
 
@@ -801,7 +846,7 @@ async def test_sync_restores_previous_caddyfile_when_admin_load_fails() -> None:
             def __init__(self, *_args, **_kwargs) -> None:
                 pass
 
-            async def __aenter__(self) -> "FakeClient":
+            async def __aenter__(self) -> Self:
                 return self
 
             async def __aexit__(self, exc_type, exc, tb) -> None:

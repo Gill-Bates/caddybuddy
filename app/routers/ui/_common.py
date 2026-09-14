@@ -17,7 +17,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import FormData
 
-from app.dependencies.web import get_session_user, push_flash, redirect_to, validate_csrf_token
+from app.dependencies.web import (
+    get_session_user,
+    push_flash,
+    redirect_to,
+    validate_csrf_token,
+)
 from app.models.entities import User
 from app.services.caddy_onboarding import get_onboarding_state
 
@@ -78,12 +83,10 @@ def safe_next(next_path: str | None) -> str:
     if (
         not next_path
         or not next_path.startswith("/")
-        or next_path.startswith("//")
-        or next_path.startswith("/\\")
+        or next_path.startswith(("//", "/\\"))
         or decoded_path is None
         or not decoded_path.startswith("/")
-        or decoded_path.startswith("//")
-        or decoded_path.startswith("/\\")
+        or decoded_path.startswith(("//", "/\\"))
         or _UNSAFE_NEXT_PATH_RE.search(next_path) is not None
         or _UNSAFE_NEXT_PATH_RE.search(decoded_path) is not None
     ):

@@ -42,10 +42,14 @@
 
         const controller = new AbortController();
         const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+        const signals = [controller.signal];
+        if (options.signal instanceof AbortSignal) {
+            signals.push(options.signal);
+        }
         try {
             return await fetch(rawUrl, {
                 ...options,
-                signal: controller.signal,
+                signal: AbortSignal.any(signals),
             });
         } finally {
             window.clearTimeout(timeoutId);
@@ -265,7 +269,7 @@
         };
 
         const setSslLabsControlsBusy = (busy) => {
-            if (registerBtn instanceof HTMLButtonElement && !registerBtn.classList.contains("d-none")) {
+            if (registerBtn instanceof HTMLButtonElement) {
                 registerBtn.disabled = busy;
             }
             if (refreshBtn instanceof HTMLButtonElement) {
@@ -476,12 +480,20 @@
     };
 
     const prepareRenewalConfirmation = (form) => {
+        if (!(form instanceof HTMLFormElement)) {
+            return;
+        }
+        if (form.dataset.renewalConfirmationInitialized === "true") {
+            return;
+        }
+
         const button = form.querySelector("[data-renew-certificate-button]");
         const confirmedInput = form.querySelector("[data-renewal-confirmed-input]");
         if (!(button instanceof HTMLButtonElement) || !(confirmedInput instanceof HTMLInputElement)) {
             return;
         }
 
+        form.dataset.renewalConfirmationInitialized = "true";
         confirmedInput.value = "false";
 
         form.addEventListener("submit", (event) => {
@@ -511,9 +523,17 @@
             return;
         }
 
+        const renewalFormsBySiteId = new Map();
+
         const forms = page.querySelectorAll('form[action*="/renew-certificate"]');
         for (const form of forms) {
             prepareRenewalConfirmation(form);
+
+            const action = form.getAttribute("action") || "";
+            const match = /\/sites\/([^/]+)\/renew-certificate$/.exec(action);
+            if (match) {
+                renewalFormsBySiteId.set(decodeURIComponent(match[1]), form);
+            }
         }
 
         const certificatesUrl = page.dataset.sitesCertificatesUrl;
@@ -623,7 +643,7 @@
             return match ? `${match[1]}-${match[2]}-${match[3]}` : "";
         };
 
-        const renderCertificate = (cell, domain, cert) => {
+        const renderCertificate = (cell, cert) => {
             const status = typeof cert?.status === "string" ? cert.status : "missing";
             const errorMessage = typeof cert?.error_message === "string" ? cert.error_message.trim() : "";
             const coveringName = typeof cert?.covering_name === "string" ? cert.covering_name.trim() : "";
@@ -648,10 +668,11 @@
             }
 
             if (status === "remote_check_unavailable") {
+                const remoteCheckMessage = errorMessage || "Certificate checks are unavailable for this hostname.";
                 cell.innerHTML = `
                     <div class="site-cert__error site-cert__error--muted">
                         <div class="site-cert__error-title">Remote check unavailable</div>
-                        <div class="site-cert__error-message">Certificate checks are unavailable for this hostname.</div>
+                        <div class="site-cert__error-message">${escapeHtml(remoteCheckMessage)}</div>
                     </div>
                 `;
                 return;
@@ -766,17 +787,20 @@
                         continue;
                     }
                     const certificate = pickWorstCertificate(domains, certificates);
-                    renderCertificate(cell, domains[0], certificate);
+                    renderCertificate(cell, certificate);
                 }
                 
                 if (renewals && typeof renewals === "object") {
                     for (const [siteId, renewal] of Object.entries(renewals)) {
-                        const form = document.querySelector(`form[action$="/sites/${siteId}/renew-certificate"]`);
+                        if (!renewal || typeof renewal !== "object" || Array.isArray(renewal)) {
+                            continue;
+                        }
+                        const form = renewalFormsBySiteId.get(String(siteId));
                         if (form) {
                             const btn = form.querySelector('button[type="submit"]');
                             const confirmedInput = form.querySelector('input[data-renewal-confirmed-input]');
                             if (btn && confirmedInput) {
-                                btn.dataset.renewalMode = renewal.mode;
+                                btn.dataset.renewalMode = typeof renewal.mode === "string" ? renewal.mode : "";
                                 btn.dataset.renewalReason = typeof renewal.reason === "string" ? renewal.reason : "";
                                 btn.dataset.renewalScope = typeof renewal.scope_name === "string" ? renewal.scope_name : "";
                                 btn.dataset.renewalScopeType = typeof renewal.scope_type === "string" ? renewal.scope_type : "domain";
@@ -806,7 +830,6 @@
             }
         };
 
-        // Handle certificate SSE events for real-time updates
         const handleCertificateEvent = (event) => {
             try {
                 const payload = JSON.parse(event.data);
@@ -844,7 +867,6 @@
             }
         };
 
-        // Set up SSE listener for certificate events
         if (typeof App.addSseEventListener === "function") {
             const cleanupSitesCertificates = () => {
                 if (refreshTimeoutId !== null) {

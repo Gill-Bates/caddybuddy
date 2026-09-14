@@ -6,17 +6,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import unittest
-import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch, ANY
+from unittest.mock import ANY, AsyncMock, patch
 
 from app.config.settings import get_settings
-
 
 _ENV_OVERRIDES = {
     "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
@@ -32,8 +31,11 @@ for key, value in _ENV_OVERRIDES.items():
 get_settings.cache_clear()
 
 from fastapi.testclient import TestClient
-from app.routers.ui.sites import _site_update_requires_deploy
-from app.routers.ui.sites import _auto_request_certificate_if_missing
+
+from app.routers.ui.sites import (
+    _auto_request_certificate_if_missing,
+    _site_update_requires_deploy,
+)
 from app.routers.ui.sites import router as sites_router
 from app.services.certificates import CertificateInfo
 from tests.ui_test_app import build_ui_test_app
@@ -89,6 +91,16 @@ class UISitesTests(unittest.TestCase):
         nonce = match.group(1)
         self.assertIn(f'<meta name="csp-nonce" content="{nonce}">', response.text)
 
+    def test_sites_desktop_css_expands_form_column_when_editing(self) -> None:
+        css_path = Path(__file__).resolve().parents[1] / "app/static/css/app.css"
+        css = css_path.read_text(encoding="utf-8")
+
+        self.assertIn(
+            ".app-page--sites[data-site-form-open]>.app-grid>.sites-form-column {\n        flex: 0 0 auto;\n        width: 58.33333333%;\n    }\n\n    .app-page--sites[data-site-form-open]>.app-grid>.sites-list-column {\n        flex: 0 0 auto;\n        width: 41.66666667%;\n    }",
+            css,
+            "Desktop Sites page must widen the form column and narrow the table when a site is being edited.",
+        )
+
     def test_sites_page_renders_config_textarea_and_status_toggle(self) -> None:
         app = self._build_app()
         current_user = SimpleNamespace(username="admin", role="admin")
@@ -106,9 +118,9 @@ class UISitesTests(unittest.TestCase):
             patch("app.routers.ui.sites.site_repository.list_all", new=AsyncMock(return_value=[site])),
             patch("app.routers.ui.sites.site_repository.get_by_id", new=AsyncMock(return_value=site)),
             patch("app.routers.ui.sites.get_cached_certificate_info_for_domains", new=AsyncMock(return_value={})),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/sites/1")
+            response = client.get("/sites/1")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('name="site_name"', response.text)
@@ -177,9 +189,9 @@ class UISitesTests(unittest.TestCase):
             patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)),
             patch("app.routers.ui.sites.site_repository.list_all", new=AsyncMock(return_value=[site])),
             patch("app.routers.ui.sites.get_cached_certificate_info_for_domains", new=AsyncMock(return_value={})),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/sites")
+            response = client.get("/sites")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('class="badge site-domain-badge">mail.steiner.rs</span>', response.text)
@@ -221,9 +233,9 @@ class UISitesTests(unittest.TestCase):
             patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)),
             patch("app.routers.ui.sites.site_repository.list_all", new=AsyncMock(return_value=[site])),
             patch("app.routers.ui.sites.get_cached_certificate_info_for_domains", new=AsyncMock(return_value=certificate_info)),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/sites")
+            response = client.get("/sites")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('class="site-cert__summary site-cert__summary--expired"', response.text)
@@ -237,9 +249,9 @@ class UISitesTests(unittest.TestCase):
             patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)),
             patch("app.routers.ui.sites.site_repository.list_all", new=AsyncMock(return_value=[])),
             patch("app.routers.ui.sites.get_cached_certificate_info_for_domains", new=AsyncMock(return_value={})),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/sites")
+            response = client.get("/sites")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('data-loading-label-safe="Creating..."', response.text)
@@ -271,9 +283,9 @@ class UISitesTests(unittest.TestCase):
             patch("app.routers.ui.sites.site_repository.list_all", new=AsyncMock(return_value=[site])),
             patch("app.routers.ui.sites.get_cached_certificate_info_for_domains", new=AsyncMock(return_value={})),
             patch("app.routers.ui.sites.CertificateRenewalService.build_plan", new=AsyncMock(return_value=plan)),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/sites")
+            response = client.get("/sites")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('data-renewal-mode="wildcard_scope_required"', response.text)
@@ -292,9 +304,9 @@ class UISitesTests(unittest.TestCase):
             patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)),
             patch("app.routers.ui.sites.site_repository.list_all", new=AsyncMock(return_value=[])),
             patch("app.routers.ui.sites.get_cached_certificate_info_for_domains", new=AsyncMock(return_value={})),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/sites")
+            response = client.get("/sites")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('name="site_name"', response.text)
@@ -339,11 +351,10 @@ class UISitesTests(unittest.TestCase):
             patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)),
             patch("app.routers.ui.sites.site_repository.list_all", new=AsyncMock(return_value=[site])),
             patch("app.routers.ui.sites.get_certificate_info_for_domains", new=AsyncMock(return_value=certificate_info)),
-            # A control mode must be configured for forced renewal to stay available.
             patch.object(get_settings(), "caddy_control_mode", "docker"),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/sites/certificates")
+            response = client.get("/sites/certificates")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
@@ -375,7 +386,7 @@ class UISitesTests(unittest.TestCase):
                         "requires_confirmation": False,
                         "scope_name": "example.com",
                         "scope_type": "domain",
-                        "wait_domains": ["example.com"],
+                        "wait_domains": ["example.com", "www.example.com"],
                     }
                 }
             },
@@ -391,9 +402,9 @@ class UISitesTests(unittest.TestCase):
                 "app.routers.ui._common.get_onboarding_state",
                 new=AsyncMock(return_value=SimpleNamespace(status="not_started")),
             ),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/sites", follow_redirects=False)
+            response = client.get("/sites", follow_redirects=False)
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/onboarding")
@@ -402,9 +413,11 @@ class UISitesTests(unittest.TestCase):
         app = self._build_app()
         current_user = SimpleNamespace(username="user", role="user")
 
-        with patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)):
-            with TestClient(app) as client:
-                response = client.get("/sites", follow_redirects=False)
+        with (
+            patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)),
+            TestClient(app) as client,
+        ):
+            response = client.get("/sites", follow_redirects=False)
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/")
@@ -413,9 +426,11 @@ class UISitesTests(unittest.TestCase):
         app = self._build_app()
         current_user = SimpleNamespace(username="user", role="user")
 
-        with patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)):
-            with TestClient(app) as client:
-                response = client.get("/sites/certificates")
+        with (
+            patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)),
+            TestClient(app) as client,
+        ):
+            response = client.get("/sites/certificates")
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.json(), {"detail": "Administrator access is required."})
@@ -446,9 +461,9 @@ class UISitesTests(unittest.TestCase):
             patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)),
             patch("app.routers.ui.sites.site_repository.list_all", new=AsyncMock(return_value=[site])),
             patch("app.routers.ui.sites.get_cached_certificate_info_for_domains", new=AsyncMock(return_value=certificate_info)),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/sites")
+            response = client.get("/sites")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('class="site-cert__summary site-cert__summary--valid"', response.text)
@@ -481,9 +496,9 @@ class UISitesTests(unittest.TestCase):
             patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)),
             patch("app.routers.ui.sites.site_repository.list_all", new=AsyncMock(return_value=[site])),
             patch("app.routers.ui.sites.get_cached_certificate_info_for_domains", new=AsyncMock(return_value=certificate_info)),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/sites")
+            response = client.get("/sites")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('class="site-cert__issued">Issued 2026-05-11</div>', response.text)
@@ -514,9 +529,9 @@ class UISitesTests(unittest.TestCase):
             patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)),
             patch("app.routers.ui.sites.site_repository.list_all", new=AsyncMock(return_value=[site])),
             patch("app.routers.ui.sites.get_cached_certificate_info_for_domains", new=AsyncMock(return_value=certificate_info)),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.get("/sites")
+            response = client.get("/sites")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('class="site-cert__error"', response.text)
@@ -529,15 +544,14 @@ class UISitesTests(unittest.TestCase):
         form_data = {
             "site_name": "App",
             "domain": "example.com",
-            "caddy_directives": "import security_headers\nimport default_log\n\nreverse_proxy 10.30.0.10:8000",
+            "caddy_directives": "import security_headers\n\nreverse_proxy 10.30.0.10:8000",
             "enabled": "true",
         }
-        baseline = "(security_headers) {\n\theader X-Frame-Options DENY\n}\n\n(default_log) {\n\tlog\n}"
+        baseline = "(security_headers) {\n\theader X-Frame-Options DENY\n}"
         rendered_caddyfile = (
             f"{baseline}\n\n"
             "example.com {\n"
             "    import security_headers\n"
-            "    import default_log\n"
             "    reverse_proxy 10.30.0.10:8000\n"
             "}"
         )
@@ -550,32 +564,31 @@ class UISitesTests(unittest.TestCase):
                 new=AsyncMock(return_value=rendered_caddyfile),
             ) as build_mock,
             patch("app.routers.ui.sites.caddy_service.validate_caddyfile", new=AsyncMock(return_value=(True, "Configuration is valid"))) as validate_mock,
-            patch("app.routers.ui.sites.caddy_service.format_site_directives", new=AsyncMock(return_value="import security_headers\nimport default_log\n\nreverse_proxy 10.30.0.10:8000")),
+            patch("app.routers.ui.sites.caddy_service.format_site_directives", new=AsyncMock(return_value="import security_headers\n\nreverse_proxy 10.30.0.10:8000")),
             patch("app.routers.ui.sites.get_caddy_config", new=AsyncMock(return_value=SimpleNamespace(admin_url="http://localhost:2019"))),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.post("/sites/validate")
+            response = client.post("/sites/validate")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["valid"], True)
         self.assertEqual(response.json()["message"], "Site configuration for 'App' is valid.")
         self.assertEqual(
             response.json()["formatted_caddy_directives"],
-            "import security_headers\nimport default_log\n\nreverse_proxy 10.30.0.10:8000",
+            "import security_headers\n\nreverse_proxy 10.30.0.10:8000",
         )
 
         build_mock.assert_awaited_once()
         self.assertEqual(build_mock.await_args.kwargs["domain"], "example.com")
         self.assertEqual(
             build_mock.await_args.kwargs["caddy_directives"],
-            "import security_headers\nimport default_log\n\nreverse_proxy 10.30.0.10:8000",
+            "import security_headers\n\nreverse_proxy 10.30.0.10:8000",
         )
         validate_mock.assert_awaited_once()
         validated_caddyfile = validate_mock.await_args.args[0]
         self.assertIn("(security_headers)", validated_caddyfile)
-        self.assertIn("(default_log)", validated_caddyfile)
         self.assertIn("import security_headers", validated_caddyfile)
-        self.assertIn("import default_log", validated_caddyfile)
+        self.assertNotIn("import default_log", validated_caddyfile)
         self.assertIn("example.com {", validated_caddyfile)
 
     def test_validate_site_rejects_non_admin_user(self) -> None:
@@ -585,9 +598,9 @@ class UISitesTests(unittest.TestCase):
         with (
             patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)),
             patch("app.routers.ui.sites.validated_form", new=AsyncMock(return_value={})),
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.post("/sites/validate")
+            response = client.post("/sites/validate")
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.json(), {"detail": "Administrator access is required."})
@@ -661,9 +674,9 @@ class UISitesTests(unittest.TestCase):
             patch("app.routers.ui.sites.CertificateRenewalService.execute", new=AsyncMock(return_value=(True, "No certificate artifacts were found on disk"))) as execute_mock,
             patch("app.routers.ui.sites.push_flash") as push_flash_mock,
             patch("app.routers.ui.sites.publish_resource_event", new=AsyncMock()) as event_mock,
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.post("/sites/3/renew-certificate", follow_redirects=False)
+            response = client.post("/sites/3/renew-certificate", follow_redirects=False)
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/sites")
@@ -699,9 +712,9 @@ class UISitesTests(unittest.TestCase):
             patch("app.routers.ui.sites.CertificateRenewalService.build_plan", new=AsyncMock(return_value=plan)) as build_mock,
             patch("app.routers.ui.sites.push_flash") as push_flash_mock,
             patch("app.routers.ui.sites.publish_resource_event", new=AsyncMock()) as event_mock,
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.post("/sites/3/renew-certificate", follow_redirects=False)
+            response = client.post("/sites/3/renew-certificate", follow_redirects=False)
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/sites")
@@ -740,9 +753,9 @@ class UISitesTests(unittest.TestCase):
             patch("app.routers.ui.sites.sync_caddy_configuration", new=AsyncMock()) as sync_mock,
             patch("app.routers.ui.sites.push_flash") as push_flash_mock,
             patch("app.routers.ui.sites.publish_resource_event", new=AsyncMock()) as event_mock,
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.post("/sites/3/renew-certificate", follow_redirects=False)
+            response = client.post("/sites/3/renew-certificate", follow_redirects=False)
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/sites")
@@ -777,9 +790,9 @@ class UISitesTests(unittest.TestCase):
             patch("app.routers.ui.sites._auto_request_certificate_if_missing", new=AsyncMock(return_value=(True, None))) as auto_request_mock,
             patch("app.routers.ui.sites.push_flash") as push_flash_mock,
             patch("app.routers.ui.sites.publish_resource_event", new=AsyncMock()) as event_mock,
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.post("/sites", follow_redirects=False)
+            response = client.post("/sites", follow_redirects=False)
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/sites")
@@ -817,9 +830,9 @@ class UISitesTests(unittest.TestCase):
             patch("app.routers.ui.sites.CertificateRenewalService.execute", new=AsyncMock(return_value=(True, "removed 2 artifact(s)"))) as execute_mock,
             patch("app.routers.ui.sites.push_flash") as push_flash_mock,
             patch("app.routers.ui.sites.publish_resource_event", new=AsyncMock()) as event_mock,
+            TestClient(app) as client,
         ):
-            with TestClient(app) as client:
-                response = client.post("/sites/3/renew-certificate", follow_redirects=False)
+            response = client.post("/sites/3/renew-certificate", follow_redirects=False)
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/sites")

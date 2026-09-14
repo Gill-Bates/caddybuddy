@@ -6,15 +6,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 import re
+from datetime import datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.entities import User
-
 
 _BCRYPT_HASH_RE = re.compile(r"^\$2[aby]\$(?P<cost>\d{2})\$[./A-Za-z0-9]{53}$")
 _MIN_BCRYPT_COST = 12

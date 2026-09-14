@@ -10,7 +10,11 @@ import os
 import unittest
 from unittest.mock import patch
 
-from app.config.settings import DEFAULT_CADDY_ADMIN_URL, DEFAULT_CADDYFILE_PATH, Settings
+from app.config.settings import (
+    DEFAULT_CADDY_ADMIN_URL,
+    DEFAULT_CADDYFILE_PATH,
+    Settings,
+)
 
 
 def _settings_kwargs(**overrides: object) -> dict[str, object]:
@@ -68,11 +72,10 @@ class SettingsValidationTests(unittest.TestCase):
                 "SECRET_KEY": "",
             },
             clear=True,
-        ):
-            with self.assertRaisesRegex(ValueError, "Set a strong secret key"):
-                Settings(
-                    caddybuddy_SECRET_KEY="StrongSecretKey-1234567890abcdef",
-                )
+        ), self.assertRaisesRegex(ValueError, "Set a strong secret key"):
+            Settings(
+                caddybuddy_SECRET_KEY="StrongSecretKey-1234567890abcdef",
+            )
 
     def test_caddy_api_url_uses_cb_env_only(self) -> None:
         with patch.dict(
@@ -112,6 +115,13 @@ class SettingsValidationTests(unittest.TestCase):
                     mounted_caddyfile_path="/etc/caddy/custom.conf",
                 )
             )
+
+    def test_default_caddy_baseline_uses_central_runtime_log(self) -> None:
+        settings = Settings(**_settings_kwargs())
+
+        self.assertIn("output file /var/log/caddy/runtime.json", settings.caddy_baseline_caddyfile)
+        self.assertIn("roll_size 10MiB", settings.caddy_baseline_caddyfile)
+        self.assertNotIn("(default_log)", settings.caddy_baseline_caddyfile)
 
     def test_ssllabs_url_is_normalized_and_email_env_is_ignored(self) -> None:
         settings = Settings(

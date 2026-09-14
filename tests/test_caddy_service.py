@@ -6,19 +6,112 @@
 
 from __future__ import annotations
 
+import io
+import tempfile
+import unittest
+from datetime import UTC, datetime, timedelta
 from ipaddress import ip_address
 from pathlib import Path
 from types import SimpleNamespace
-import tempfile
-import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 
-from app.services.caddy import CaddyAdminClient, CaddyService, CaddyServiceError, _resolve_target_ips
+from app.services.caddy import (
+    CaddyAdminClient,
+    CaddyService,
+    CaddyServiceError,
+    _resolve_target_ips,
+)
+from app.services.certificates import (
+    certificate_info_from_dates,
+    load_x509_certificate_from_path,
+)
 
 
 class CaddyServiceTests(unittest.IsolatedAsyncioTestCase):
+    def test_admin_client_disables_environment_proxy_inheritance(self) -> None:
+        client = CaddyAdminClient("http://localhost:2019", 1.0)
+
+        with patch("app.services.caddy.httpx.AsyncClient", return_value=MagicMock()) as client_cls:
+            created_client = client._get_client()
+
+        self.assertIsNotNone(created_client)
+        client_cls.assert_called_once()
+        self.assertFalse(client_cls.call_args.kwargs["trust_env"])
+
+    def test_path_matches_scope_requires_trusted_issuer_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            cert_root = base / "certificates"
+            trusted_scope = cert_root / "acme-v02.api.letsencrypt.org-directory" / "example.com"
+            trusted_scope.mkdir(parents=True)
+            untrusted_scope = cert_root / "backup" / "example.com"
+            untrusted_scope.mkdir(parents=True)
+
+            self.assertTrue(
+                CaddyService._path_matches_scope(
+                    trusted_scope,
+                    "domain",
+                    "example.com",
+                    root=cert_root,
+                    cert_root=cert_root,
+                )
+            )
+            self.assertFalse(
+                CaddyService._path_matches_scope(
+                    untrusted_scope,
+                    "domain",
+                    "example.com",
+                    root=cert_root,
+                    cert_root=cert_root,
+                )
+            )
+
+            acme_root = base / "acme"
+            trusted_acme_scope = acme_root / "acme-v02.api.letsencrypt.org-directory" / "example.com"
+            trusted_acme_scope.mkdir(parents=True)
+            untrusted_acme_scope = acme_root / "backup" / "example.com"
+            untrusted_acme_scope.mkdir(parents=True)
+
+            self.assertTrue(
+                CaddyService._path_matches_scope(
+                    trusted_acme_scope,
+                    "domain",
+                    "example.com",
+                    root=acme_root,
+                    cert_root=cert_root,
+                )
+            )
+            self.assertFalse(
+                CaddyService._path_matches_scope(
+                    untrusted_acme_scope,
+                    "domain",
+                    "example.com",
+                    root=acme_root,
+                    cert_root=cert_root,
+                )
+            )
+
+    def test_certificate_info_from_dates_marks_not_yet_valid_certificates_pending(self) -> None:
+        now = datetime.now(UTC)
+        info = certificate_info_from_dates(now + timedelta(days=1), now + timedelta(days=31), now)
+
+        self.assertIsNotNone(info)
+        self.assertEqual(info.status, "pending")
+        self.assertFalse(info.valid)
+
+    def test_load_x509_certificate_from_path_avoids_stat_based_size_check(self) -> None:
+        certificate_path = Path("/tmp/example.crt")
+
+        with (
+            patch.object(Path, "open", return_value=io.BytesIO(b"not a certificate")) as open_mock,
+            patch.object(Path, "stat", side_effect=AssertionError("stat() should not be used")),
+        ):
+            self.assertIsNone(load_x509_certificate_from_path(certificate_path))
+
+        open_mock.assert_called_once()
+
     async def test_validate_caddyfile_returns_api_unavailable_on_non_caddy_error(self) -> None:
         service = CaddyService()
 
@@ -70,9 +163,9 @@ class CaddyServiceTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch("app.services.caddy._resolve_target_ips", new=AsyncMock(return_value=[ip_address("127.0.0.1")])),
             patch.object(client, "_get_client", return_value=http_client),
+            self.assertRaisesRegex(CaddyServiceError, "status 400") as ctx,
         ):
-            with self.assertRaisesRegex(CaddyServiceError, "status 400") as ctx:
-                await client.load_config_force({"apps": {}}, force_reload=True)
+            await client.load_config_force({"apps": {}}, force_reload=True)
 
         self.assertIn("invalid config", str(ctx.exception))
 
@@ -186,9 +279,11 @@ class CaddyServiceTests(unittest.IsolatedAsyncioTestCase):
             request=httpx.Request("POST", "http://127.0.0.1:2019/adapt"),
         )
 
-        with patch.object(client, "_request", new=AsyncMock(return_value=response)):
-            with self.assertRaisesRegex(CaddyServiceError, "JSON object"):
-                await client.adapt_caddyfile('example.com { respond "ok" }')
+        with (
+            patch.object(client, "_request", new=AsyncMock(return_value=response)),
+            self.assertRaisesRegex(CaddyServiceError, "JSON object"),
+        ):
+            await client.adapt_caddyfile('example.com { respond "ok" }')
 
     async def test_admin_client_adapt_caddyfile_reports_invalid_json(self) -> None:
         client = CaddyAdminClient("http://localhost:2019", 1.0)
@@ -198,9 +293,11 @@ class CaddyServiceTests(unittest.IsolatedAsyncioTestCase):
             request=httpx.Request("POST", "http://127.0.0.1:2019/adapt"),
         )
 
-        with patch.object(client, "_request", new=AsyncMock(return_value=response)):
-            with self.assertRaisesRegex(CaddyServiceError, "parse"):
-                await client.adapt_caddyfile('example.com { respond "ok" }')
+        with (
+            patch.object(client, "_request", new=AsyncMock(return_value=response)),
+            self.assertRaisesRegex(CaddyServiceError, "parse"),
+        ):
+            await client.adapt_caddyfile('example.com { respond "ok" }')
 
     async def test_admin_client_rejects_oversized_adapt_response_before_json_parsing(self) -> None:
         client = CaddyAdminClient("http://localhost:2019", 1.0)
@@ -210,9 +307,11 @@ class CaddyServiceTests(unittest.IsolatedAsyncioTestCase):
             request=httpx.Request("POST", "http://127.0.0.1:2019/adapt"),
         )
 
-        with patch.object(client, "_request", new=AsyncMock(return_value=response)):
-            with self.assertRaisesRegex(CaddyServiceError, "too large"):
-                await client.adapt_caddyfile('example.com { respond "ok" }')
+        with (
+            patch.object(client, "_request", new=AsyncMock(return_value=response)),
+            self.assertRaisesRegex(CaddyServiceError, "too large"),
+        ):
+            await client.adapt_caddyfile('example.com { respond "ok" }')
 
     async def test_admin_client_rejects_oversized_config_response_before_json_parsing(self) -> None:
         client = CaddyAdminClient("http://localhost:2019", 1.0)
@@ -222,9 +321,11 @@ class CaddyServiceTests(unittest.IsolatedAsyncioTestCase):
             request=httpx.Request("GET", "http://127.0.0.1:2019/config/"),
         )
 
-        with patch.object(client, "_request", new=AsyncMock(return_value=response)):
-            with self.assertRaisesRegex(CaddyServiceError, "too large"):
-                await client.get_config()
+        with (
+            patch.object(client, "_request", new=AsyncMock(return_value=response)),
+            self.assertRaisesRegex(CaddyServiceError, "too large"),
+        ):
+            await client.get_config()
 
     async def test_admin_client_summarizes_oversized_http_error_response(self) -> None:
         client = CaddyAdminClient("http://localhost:2019", 1.0)
@@ -248,9 +349,9 @@ class CaddyServiceTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch("app.services.caddy._resolve_target_ips", new=AsyncMock(return_value=[ip_address("127.0.0.1")])),
             patch.object(client, "_get_client", return_value=http_client),
+            self.assertRaisesRegex(CaddyServiceError, "response body too large") as ctx,
         ):
-            with self.assertRaisesRegex(CaddyServiceError, "response body too large") as ctx:
-                await client.load_config_force({"apps": {}}, force_reload=True)
+            await client.load_config_force({"apps": {}}, force_reload=True)
 
         self.assertIn("status 502", str(ctx.exception))
 
@@ -323,9 +424,11 @@ class CaddyServiceTests(unittest.IsolatedAsyncioTestCase):
             unsafe_root = Path(temp_dir) / "not-certificates"
             unsafe_root.mkdir()
 
-            with patch("app.services.caddy.logger") as logger_mock:
-                with self.assertRaisesRegex(CaddyServiceError, "Unsafe Caddy certificate storage root"):
-                    await service.purge_certificate_artifacts("example.com", unsafe_root)
+            with (
+                patch("app.services.caddy.logger") as logger_mock,
+                self.assertRaisesRegex(CaddyServiceError, "Unsafe Caddy certificate storage root"),
+            ):
+                await service.purge_certificate_artifacts("example.com", unsafe_root)
 
         logger_mock.warning.assert_called_once_with(
             "Refusing certificate purge: unsafe configured root %s",
@@ -380,9 +483,11 @@ class CaddyServiceTests(unittest.IsolatedAsyncioTestCase):
             root = Path(temp_dir) / "certificates"
             root.mkdir(parents=True)
 
-            with patch("app.services.caddy.Path.rglob", side_effect=OSError("simulated traversal failure")):
-                with self.assertRaisesRegex(CaddyServiceError, "Could not scan certificate storage root"):
-                    await service.purge_certificate_artifacts("example.com", root)
+            with (
+                patch("app.services.caddy.Path.rglob", side_effect=OSError("simulated traversal failure")),
+                self.assertRaisesRegex(CaddyServiceError, "Could not scan certificate storage root"),
+            ):
+                await service.purge_certificate_artifacts("example.com", root)
 
     async def test_purge_certificate_artifacts_aborts_when_scan_limit_is_exceeded(self) -> None:
         service = CaddyService()
@@ -392,9 +497,11 @@ class CaddyServiceTests(unittest.IsolatedAsyncioTestCase):
             for index in range(4):
                 (root / f"file-{index}.txt").write_text("x", encoding="utf-8")
 
-            with patch("app.services.caddy._MAX_CERT_PURGE_SCAN_PATHS", 2):
-                with self.assertRaisesRegex(CaddyServiceError, "scan limit exceeded"):
-                    await service.purge_certificate_artifacts("example.com", root)
+            with (
+                patch("app.services.caddy._MAX_CERT_PURGE_SCAN_PATHS", 2),
+                self.assertRaisesRegex(CaddyServiceError, "scan limit exceeded"),
+            ):
+                await service.purge_certificate_artifacts("example.com", root)
 
 
 if __name__ == "__main__":

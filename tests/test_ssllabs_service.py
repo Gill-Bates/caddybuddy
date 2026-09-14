@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-import tempfile
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -20,7 +20,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.models.base import Base
 from app.models.entities import Site, SslLabsRankHistory, SslLabsScan, SslLabsTarget
-from app.repositories.ssllabs import ACTIVE_SCAN_STALE_AFTER, site_uses_https, ssllabs_repository
+from app.repositories.ssllabs import (
+    ACTIVE_SCAN_STALE_AFTER,
+    site_uses_https,
+    ssllabs_repository,
+)
 from app.services.ssllabs import (
     SslLabsClient,
     SslLabsClientError,
@@ -148,9 +152,11 @@ class SslLabsClientTests(unittest.IsolatedAsyncioTestCase):
         )
 
         try:
-            with patch("app.services.ssllabs.logger.warning") as warning:
-                with self.assertRaises(SslLabsClientError):
-                    await client.analyze(host="example.com")
+            with (
+                patch("app.services.ssllabs.logger.warning") as warning,
+                self.assertRaises(SslLabsClientError),
+            ):
+                await client.analyze(host="example.com")
         finally:
             await client.aclose()
 
@@ -262,18 +268,23 @@ class SslLabsHostValidationTests(unittest.TestCase):
             "bad..example.com",
             "example.com/path",
         ):
-            with self.subTest(raw_value=raw_value):
-                with self.assertRaisesRegex(ValueError, "hostname|public hostname"):
-                    validate_ssllabs_host(raw_value)
+            with (
+                self.subTest(raw_value=raw_value),
+                self.assertRaisesRegex(ValueError, "hostname|public hostname"),
+            ):
+                validate_ssllabs_host(raw_value)
 
     def test_validate_ssllabs_host_rejects_wildcards_and_ip_addresses(self) -> None:
         for raw_value in ("*.example.com", "127.0.0.1"):
-            with self.subTest(raw_value=raw_value):
-                with self.assertRaisesRegex(ValueError, "public hostname"):
-                    validate_ssllabs_host(raw_value)
+            with (
+                self.subTest(raw_value=raw_value),
+                self.assertRaisesRegex(ValueError, "public hostname"),
+            ):
+                validate_ssllabs_host(raw_value)
 
     def test_next_schedule_time_normalizes_naive_reference_to_utc(self) -> None:
-        scheduled = next_schedule_time("weekly", datetime(2026, 5, 27, 12, 0, 0))
+        naive_reference = datetime(2026, 5, 27, 12, 0, 0, tzinfo=UTC).replace(tzinfo=None)
+        scheduled = next_schedule_time("weekly", naive_reference)
 
         self.assertEqual(scheduled.tzinfo, UTC)
         self.assertEqual(scheduled, datetime(2026, 6, 3, 12, 0, 0, tzinfo=UTC))
@@ -299,9 +310,15 @@ class SslLabsHostValidationTests(unittest.TestCase):
         self.assertGreaterEqual(scheduled_one, base)
         self.assertLessEqual(scheduled_one, base + timedelta(minutes=15))
 
-    def test_next_schedule_time_rejects_monthly(self) -> None:
-        with self.assertRaisesRegex(ValueError, "Unsupported SSL Labs schedule frequency"):
-            next_schedule_time("monthly", datetime(2026, 1, 31, 12, 0, 0, tzinfo=UTC))  # type: ignore[arg-type]
+    def test_next_schedule_time_advances_monthly_by_calendar_month(self) -> None:
+        scheduled = next_schedule_time("monthly", datetime(2026, 1, 31, 12, 0, 0, tzinfo=UTC))
+
+        self.assertEqual(scheduled, datetime(2026, 2, 28, 12, 0, 0, tzinfo=UTC))
+
+    def test_next_schedule_time_keeps_leap_day_behavior_monthly(self) -> None:
+        scheduled = next_schedule_time("monthly", datetime(2028, 1, 31, 12, 0, 0, tzinfo=UTC))
+
+        self.assertEqual(scheduled, datetime(2028, 2, 29, 12, 0, 0, tzinfo=UTC))
 
     def test_schedule_interval_rejects_unsupported_frequency(self) -> None:
         with self.assertRaisesRegex(ValueError, "Unsupported SSL Labs schedule frequency"):
@@ -310,9 +327,8 @@ class SslLabsHostValidationTests(unittest.TestCase):
     def test_status_badge_class_prefers_failure_status_over_stale_grade(self) -> None:
         self.assertEqual(status_badge_class("failed", "A+"), "status-pill--offline")
 
-    def test_schedule_control_rejects_monthly(self) -> None:
-        with self.assertRaises(ValueError):
-            parse_ssllabs_schedule_control("monthly")
+    def test_schedule_control_accepts_monthly(self) -> None:
+        self.assertEqual(parse_ssllabs_schedule_control("monthly"), "monthly")
 
 
 class SslLabsRepositoryTests(unittest.IsolatedAsyncioTestCase):
@@ -365,7 +381,8 @@ class SslLabsRepositoryTests(unittest.IsolatedAsyncioTestCase):
     async def test_list_rank_history_since_requires_aware_datetime(self) -> None:
         async with self.session_factory() as session:
             with self.assertRaisesRegex(ValueError, "timezone-aware"):
-                await ssllabs_repository.list_rank_history_since(session, since=datetime(2026, 6, 1))
+                naive_since = datetime(2026, 6, 1, tzinfo=UTC).replace(tzinfo=None)
+                await ssllabs_repository.list_rank_history_since(session, since=naive_since)
 
     async def test_get_active_scan_for_target_ignores_stale_active_rows(self) -> None:
         now = datetime(2026, 5, 27, 12, 0, tzinfo=UTC)
@@ -711,6 +728,28 @@ class SslLabsServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(remaining), 1)
         self.assertEqual(remaining[0].grade, "A")
 
+    async def test_prune_rank_history_skips_when_retention_unlimited(self) -> None:
+        async with self.session_factory() as session:
+            session.add_all([
+                SslLabsRankHistory(host="a.example.com", grade="A+", rank=7,
+                                   recorded_at=datetime(2026, 1, 1, tzinfo=UTC)),
+                SslLabsRankHistory(host="a.example.com", grade="A", rank=6,
+                                   recorded_at=datetime(2026, 6, 1, tzinfo=UTC)),
+            ])
+            await session.commit()
+
+        now = datetime(2026, 6, 14, tzinfo=UTC)
+        with (
+            patch("app.services.ssllabs.get_session_factory", return_value=self.session_factory),
+            patch("app.services.ssllabs.get_ssllabs_history_retention_days", new=AsyncMock(return_value=0)),
+        ):
+            async with self.session_factory() as session:
+                removed = await self.service.prune_rank_history(session, now=now)
+                await session.commit()
+
+        self.assertEqual(removed, 0)
+        self.assertEqual(len(await self._all_rank_history()), 2)
+
     async def test_run_scan_does_not_auto_register_email(self) -> None:
         target_id, scan_id = await self._create_scan_state()
 
@@ -838,9 +877,9 @@ class SslLabsServiceTests(unittest.IsolatedAsyncioTestCase):
             ),
             patch("app.services.ssllabs.get_ssllabs_email", new=AsyncMock(return_value="team@example.com")),
             patch("app.services.ssllabs.asyncio.create_task", side_effect=create_task_side_effect),
+            self.assertRaisesRegex(RuntimeError, "callback registration failed"),
         ):
-            with self.assertRaisesRegex(RuntimeError, "callback registration failed"):
-                await self.service.request_scan(target_id=target_id, force_new=True)
+            await self.service.request_scan(target_id=target_id, force_new=True)
 
         self.assertTrue(fake_task.cancelled)
         self.assertNotIn(target_id, self.service._active_tasks)

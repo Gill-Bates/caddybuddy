@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, patch
 
 from app.config.settings import get_settings
 
-
 _ENV_OVERRIDES = {
     "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
     "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
@@ -118,11 +117,20 @@ class MainModuleTests(unittest.IsolatedAsyncioTestCase):
     async def test_handle_rate_limit_exceeded_degrades_gracefully_without_session(self) -> None:
         request = _request("/login")
 
-        with patch.object(main_module, "push_flash", side_effect=AssertionError("no session")):
+        with (
+            patch.object(main_module, "push_flash", side_effect=AssertionError("no session")),
+            patch.object(main_module, "log_authentication_failure") as log_failure,
+        ):
             response = await main_module._handle_rate_limit_exceeded(request, SimpleNamespace())
 
         self.assertEqual(response.status_code, 429)
         self.assertIn("Too many attempts", response.body.decode("utf-8"))
+        log_failure.assert_called_once_with(
+            request,
+            username=None,
+            reason="rate_limited",
+            status_code=429,
+        )
 
     async def test_handle_rate_limit_exceeded_renders_login_page_with_429_when_session_exists(self) -> None:
         request = _request("/login")

@@ -22,9 +22,7 @@ class BuildInfoServiceTests(unittest.TestCase):
     def test_get_build_info_parses_build_info_key_value_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             base_dir = Path(temp_dir)
-            (base_dir / "VERSION").write_text("1.0.0\n", encoding="utf-8")
             (base_dir / "BUILD_INFO").write_text(
-                "APP_VERSION=1.0.0\n"
                 "GIT_SHA=4ed7d8dd0304b320206248a3da0d5aa04f2367ea\n"
                 "BUILD_DATE=2026-05-27T12:42:20Z\n",
                 encoding="utf-8",
@@ -32,6 +30,7 @@ class BuildInfoServiceTests(unittest.TestCase):
 
             with (
                 patch.object(build_info_module, "get_settings", return_value=SimpleNamespace(base_dir=base_dir)),
+                patch.object(build_info_module, "get_version", return_value="1.0.0"),
                 patch.dict(build_info_module.os.environ, {}, clear=True),
             ):
                 build_info = build_info_module.get_build_info()

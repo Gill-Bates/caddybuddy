@@ -6,8 +6,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
 import re
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
@@ -21,7 +21,6 @@ from app.schemas.ssllabs import (
     SslLabsScanStatus,
 )
 from app.utils.domains import split_domain_names
-
 
 ACTIVE_SCAN_STATUSES = frozenset(SSLLABS_ACTIVE_SCAN_STATUSES)
 TERMINAL_SCAN_STATUSES = frozenset(SSLLABS_TERMINAL_SCAN_STATUSES)

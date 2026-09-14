@@ -10,8 +10,8 @@ import unittest
 
 from app.models.entities import (
     CaddyConfigVersion,
-    CaddySyncEvent,
     CaddyfileSnapshot,
+    CaddySyncEvent,
     Site,
     SslLabsScan,
     SslLabsTarget,
@@ -88,12 +88,11 @@ class EntityHardeningTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "hostname|public hostname"):
             SslLabsTarget(site_id=1, host="https://example.com")
 
-    def test_ssllabs_target_rejects_monthly_schedule_frequency(self) -> None:
+    def test_ssllabs_target_accepts_monthly_schedule_frequency(self) -> None:
         target = SslLabsTarget(site_id=1, host="example.com", schedule_frequency="weekly")
         self.assertEqual(target.schedule_frequency, "weekly")
-
-        with self.assertRaisesRegex(ValueError, "invalid ssllabs schedule frequency"):
-            SslLabsTarget(site_id=1, host="example.com", schedule_frequency="monthly")
+        target = SslLabsTarget(site_id=1, host="example.com", schedule_frequency="monthly")
+        self.assertEqual(target.schedule_frequency, "monthly")
 
     def test_ssllabs_scan_rejects_negative_endpoint_count(self) -> None:
         with self.assertRaisesRegex(ValueError, "endpoint_count must be non-negative"):

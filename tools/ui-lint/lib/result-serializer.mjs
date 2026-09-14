@@ -87,6 +87,16 @@ export function serializeResultForOutput(result, { summaryPath, visualRegression
         sitesTableMedianRowHeight: metrics.sitesTableDensity?.medianRowHeightPx ?? null,
         sitesTableMaxRowHeight: metrics.sitesTableDensity?.maxRowHeightPx ?? null,
         sitesTableRowsTooTall: countItems(metrics.sitesTableDensity?.oversizedRows),
+        ssllabsMobileCardLayout: metrics.ssllabsMobileCardLayout?.present ? 1 : 0,
+        ssllabsMobileCardRowCount: metrics.ssllabsMobileCardLayout?.rowCount ?? null,
+        ssllabsMobileCardTheadHidden: metrics.ssllabsMobileCardLayout?.present
+            ? (metrics.ssllabsMobileCardLayout.theadHidden ? 1 : 0)
+            : null,
+        ssllabsMobileCardIssues: countItems(metrics.ssllabsMobileCardLayout?.issues),
+        ssllabsFilterbarHeightPx: metrics.ssllabsFilterbarHeightIssue?.height ?? null,
+        ssllabsFilterbarHeightPass: metrics.ssllabsFilterbarHeightIssue?.present
+            ? (metrics.ssllabsFilterbarHeightIssue.passesMaximum ? 1 : 0)
+            : null,
         ssllabsInlineSchedulerTooNarrow: countItems(metrics.ssllabsInlineSchedulerLayout?.tooNarrow),
         ssllabsInlineSchedulerTooWide: countItems(metrics.ssllabsInlineSchedulerLayout?.tooWide),
         ssllabsInlineSchedulerAlignmentVariance: metrics.ssllabsInlineSchedulerLayout?.alignmentVariance ?? null,
@@ -136,6 +146,10 @@ export function serializeResultForOutput(result, { summaryPath, visualRegression
         mobileTopbarClearancePx: metrics.mobileTopbarClearance?.clearancePx ?? null,
         mobileTopbarClearancePass: metrics.mobileTopbarClearance?.present
             ? (metrics.mobileTopbarClearance.passesClearance ? 1 : 0)
+            : null,
+        desktopPrimaryPanelHeightAlignmentDelta: metrics.desktopPrimaryPanelHeightAlignment?.delta ?? null,
+        desktopPrimaryPanelHeightAlignmentPass: metrics.desktopPrimaryPanelHeightAlignment?.present
+            ? (metrics.desktopPrimaryPanelHeightAlignment.passesTolerance ? 1 : 0)
             : null,
         duplicateRequests: countItems(network.duplicateRequests),
         badResponseDetails: sanitizeDetails(network.badResponses),

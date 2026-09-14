@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import os
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app.config.settings import get_settings
-
 
 _ENV_OVERRIDES = {
     "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
@@ -73,6 +73,13 @@ class UICommonTests(unittest.IsolatedAsyncioTestCase):
             response = await require_onboarding_completed(AsyncMock())
 
         self.assertIsNone(response)
+
+    async def test_sidebar_brand_places_the_kicker_below_the_logo(self) -> None:
+        template = Path("app/templates/base.html").read_text(encoding="utf-8")
+
+        logo_index = template.index('class="brand-mark__logo-wrap"')
+        kicker_index = template.index('class="brand-mark__kicker"')
+        self.assertLess(logo_index, kicker_index)
 
 
 if __name__ == "__main__":

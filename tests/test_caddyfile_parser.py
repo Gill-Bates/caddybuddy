@@ -6,7 +6,6 @@
 
 """Tests for Caddyfile parsing utilities."""
 
-import pytest
 
 from app.utils.caddyfile import ParsedCaddyfile, parse_caddyfile
 

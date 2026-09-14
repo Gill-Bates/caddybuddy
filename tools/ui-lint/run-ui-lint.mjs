@@ -1296,75 +1296,85 @@ function buildLoginRateLimitResult({ attempts, response, reached429, reachedLock
     return result;
 }
 
+function updateCookieJarFromHeaders(cookieJar, response) {
+    const setCookies = typeof response?.headers?.getSetCookie === 'function'
+        ? response.headers.getSetCookie()
+        : [];
+    for (const value of setCookies) {
+        const match = /^\s*([^=;]+)=([^;]*)/.exec(String(value || ''));
+        if (match) {
+            cookieJar.set(match[1], match[2]);
+        }
+    }
+}
+
+function cookieHeaderValue(cookieJar) {
+    return [...cookieJar.entries()].map(([name, value]) => `${name}=${value}`).join('; ');
+}
+
+function buildFetchResponseShim(response, url) {
+    return {
+        status: () => response.status,
+        url: () => url,
+        headers: () => Object.fromEntries(response.headers.entries()),
+    };
+}
+
 async function auditLoginRateLimit(browser) {
-    const context = await browser.newContext(buildContextOptions(DEVICE_CONTEXT_OPTIONS.get('desktop')));
     try {
-        const page = await context.newPage();
         let attempts = 0;
         let lastResponse = null;
         let lastSecurityResponse = null;
+        const cookieJar = new Map();
+        const loginUrl = `${BASE_URL}/login`;
 
         for (; attempts < UI_LINT_RATE_LIMIT_ATTEMPTS; attempts += 1) {
-            await page.goto(`${BASE_URL}/login`, { waitUntil: 'domcontentloaded', timeout: 10000 });
-            await page.fill('#username', RATE_LIMIT_USERNAME);
-            await page.fill('#password', randomBytes(24).toString('hex'));
+            const loginPageResponse = await fetch(loginUrl, {
+                headers: {
+                    Accept: 'text/html,application/xhtml+xml',
+                    ...(cookieJar.size ? { Cookie: cookieHeaderValue(cookieJar) } : {}),
+                },
+                redirect: 'manual',
+            });
+            updateCookieJarFromHeaders(cookieJar, loginPageResponse);
+            const loginPageHtml = await loginPageResponse.text();
+            const csrfMatch = /name="csrf_token" value="([^"]+)"/.exec(loginPageHtml);
+            if (!csrfMatch) {
+                throw new Error('Rate-limit audit could not extract a CSRF token from the login page.');
+            }
 
-            const [response, redirectResponse] = await Promise.all([
-                page.waitForResponse((candidate) => {
-                    try {
-                        return new URL(candidate.url()).pathname === '/login' && candidate.request().method() === 'POST';
-                    } catch {
-                        return false;
-                    }
-                }, { timeout: 30000 }),
-                page.waitForResponse((candidate) => {
-                    try {
-                        const url = new URL(candidate.url());
-                        return url.pathname === '/login'
-                            && candidate.request().method() === 'GET'
-                            && candidate.request().resourceType() === 'document';
-                    } catch {
-                        return false;
-                    }
-                }, { timeout: 30000 }).catch(() => null),
-                page.locator('form[action="/login"] button[type="submit"]').first().click(),
-            ]);
+            const formData = new URLSearchParams({
+                username: RATE_LIMIT_USERNAME,
+                password: randomBytes(24).toString('hex'),
+                next: '/',
+                csrf_token: csrfMatch[1],
+            });
+            const postResponse = await fetch(loginUrl, {
+                method: 'POST',
+                headers: {
+                    Accept: 'text/html,application/xhtml+xml',
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    ...(cookieJar.size ? { Cookie: cookieHeaderValue(cookieJar) } : {}),
+                },
+                body: formData.toString(),
+                redirect: 'manual',
+            });
+            updateCookieJarFromHeaders(cookieJar, postResponse);
+            const postHtml = await postResponse.text();
+            const response = buildFetchResponseShim(postResponse, loginUrl);
 
             lastResponse = response;
-            lastSecurityResponse = redirectResponse || response;
-            if (response.status() === 429) {
+            lastSecurityResponse = response;
+            if (postResponse.status === 429) {
                 return buildLoginRateLimitResult({
                     attempts: attempts + 1,
                     response,
                     reached429: true,
-                    securityResponse: redirectResponse || response,
+                    securityResponse: response,
                 });
             }
 
-            await page.waitForURL((url) => {
-                try {
-                    return url.pathname === '/login';
-                } catch {
-                    return false;
-                }
-            }, { timeout: 30000 }).catch(() => { });
-
-            const reachedLockoutUi = await page.evaluate(() => {
-                const alert = Array.from(document.querySelectorAll('.alert[role="alert"], .toast[role="alert"]')).find((element) => {
-                    if (!(element instanceof HTMLElement)) {
-                        return false;
-                    }
-                    const style = window.getComputedStyle(element);
-                    const rect = element.getBoundingClientRect();
-                    return style.display !== 'none'
-                        && style.visibility !== 'hidden'
-                        && rect.width > 0
-                        && rect.height > 0;
-                });
-
-                const message = alert?.textContent?.trim() || '';
-                return /too many|rate limit|locked/i.test(message);
-            });
+            const reachedLockoutUi = /too many|rate limit|locked/i.test(postHtml);
 
             if (reachedLockoutUi) {
                 return buildLoginRateLimitResult({
@@ -1372,7 +1382,7 @@ async function auditLoginRateLimit(browser) {
                     response,
                     reached429: false,
                     reachedLockoutUi: true,
-                    securityResponse: redirectResponse || response,
+                    securityResponse: response,
                 });
             }
         }
@@ -1385,7 +1395,7 @@ async function auditLoginRateLimit(browser) {
             securityResponse: lastSecurityResponse || lastResponse,
         });
     } finally {
-        await context.close();
+        void browser;
     }
 }
 

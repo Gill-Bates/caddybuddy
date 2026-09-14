@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import calendar
 import hashlib
 import re
 from datetime import UTC, datetime, timedelta
@@ -19,7 +20,6 @@ from app.schemas.ssllabs import (
     SslLabsScanStatus,
     SslLabsScheduleFrequency,
 )
-
 
 _HOST_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", re.ASCII)
 _BLOCKED_SUFFIXES = (
@@ -74,8 +74,8 @@ def mask_email(email: str | None) -> str | None:
 def normalize_ssllabs_schedule_frequency(raw_value: str | None) -> SslLabsScheduleFrequency | None:
     """Normalize the persisted SSL Labs scheduler value.
 
-    Scheduling is intentionally On/Off: when enabled, scans run weekly. No other
-    frequency is valid application state.
+    Supported frequencies are kept explicit so persisted state and UI controls
+    stay aligned.
     """
     if raw_value is None:
         return None
@@ -88,18 +88,22 @@ def normalize_ssllabs_schedule_frequency(raw_value: str | None) -> SslLabsSchedu
 
 
 def parse_ssllabs_schedule_control(raw_value: str) -> SslLabsScheduleFrequency | None:
-    """Map the UI/API On/Off scheduler control to the persisted frequency."""
+    """Map the UI/API scheduler control to the persisted frequency."""
     normalized = raw_value.strip().lower()
     if not normalized or normalized in {"off", "false", "0", "no"}:
         return None
     if normalized in {"on", "weekly", "true", "1", "yes"}:
         return "weekly"
+    if normalized == "monthly":
+        return "monthly"
     raise ValueError("Invalid SSL Labs schedule value.")
 
 
 def schedule_interval(frequency: SslLabsScheduleFrequency) -> timedelta:
     if frequency == "weekly":
         return timedelta(days=7)
+    if frequency == "monthly":
+        return timedelta(days=28)
     raise ValueError(f"Unsupported SSL Labs schedule frequency: {frequency!r}")
 
 
@@ -119,6 +123,15 @@ def _deterministic_jitter_seconds(key: str, max_jitter_seconds: int) -> int:
 def _advance_schedule_base(frequency: SslLabsScheduleFrequency, reference: datetime) -> datetime:
     if frequency == "weekly":
         return reference + schedule_interval(frequency)
+    if frequency == "monthly":
+        year = reference.year
+        month = reference.month + 1
+        if month == 13:
+            year += 1
+            month = 1
+        last_day = calendar.monthrange(year, month)[1]
+        day = min(reference.day, last_day)
+        return reference.replace(year=year, month=month, day=day)
     raise ValueError(f"Unsupported SSL Labs schedule frequency: {frequency!r}")
 
 

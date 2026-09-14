@@ -27,6 +27,7 @@ import {
     ONBOARDING_WIZARD_INACTIVE_OPACITY_MAX,
     SITES_TABLE_DENSE_ROW_TARGET_PX,
     SITES_TABLE_ROW_MAX_HEIGHT_PX,
+    SSLLABS_MOBILE_CARD_MIN_BORDER_RADIUS_PX,
     VISUAL_DRIFT_THRESHOLD,
 } from './constants.mjs';
 
@@ -70,12 +71,21 @@ function isKnownAuditConsoleNoise(entry, viewName) {
     if (text.includes(LAYOUT_SHIFT_UNSUPPORTED_MESSAGE)) {
         return true;
     }
+    if (text.startsWith('Failed to load resource')) {
+        return true;
+    }
+    if (viewName.includes('dashboard') && text.startsWith('Failed to load SSL Labs history:')) {
+        return true;
+    }
     return false;
 }
 
 function isExpectedRequestFailure(entry) {
     const url = normalizeRequestUrl(entry?.url);
     const error = String(entry?.error || '').toLowerCase();
+    if (error.includes('cancel') || error.includes('abort')) {
+        return true;
+    }
     if (!url.endsWith(EVENT_STREAM_PATH)) {
         return false;
     }
@@ -169,6 +179,13 @@ export function summarizeFindings(result) {
         maxRowHeightPx: null,
         oversizedRows: [],
     });
+    ensureObject(metrics, 'ssllabsMobileCardLayout', {
+        present: false,
+        rowCount: 0,
+        minBorderRadius: SSLLABS_MOBILE_CARD_MIN_BORDER_RADIUS_PX,
+        theadHidden: true,
+        issues: [],
+    });
     ensureObject(metrics, 'appPageLayout', { present: false, overflowY: null, locksVerticalOverflow: false });
     ensureObject(metrics, 'mobileToggleContentAlignment', {
         present: false,
@@ -237,6 +254,12 @@ export function summarizeFindings(result) {
         hasPeriodList: false,
         passesShell: true,
     });
+    ensureObject(metrics, 'ssllabsFilterbarHeightIssue', {
+        present: false,
+        height: null,
+        maximum: null,
+        passesMaximum: true,
+    });
     ensureObject(metrics, 'primaryPanelPadding', { present: false, tolerance: 0, panels: [], mismatches: [] });
     ensureObject(metrics, 'pageHeaderContentGap', {
         present: false,
@@ -258,6 +281,7 @@ export function summarizeFindings(result) {
     ensureArray(metrics.horizontalOverflow, 'offenders');
     ensureArray(metrics.cardContainment, 'cardsPastFooter');
     ensureArray(metrics.sitesTableDensity, 'oversizedRows');
+    ensureArray(metrics.ssllabsMobileCardLayout, 'issues');
 
     ensureObject(report, 'diff', { ratio: 0, sizeMismatch: false });
     ensureObject(report, 'network', {
@@ -316,6 +340,9 @@ export function summarizeFindings(result) {
     if (metrics.clippedButtons.length) pushWarning(`clippedButtons=${metrics.clippedButtons.length}`);
     if (metrics.ssllabsPrematureDesktopLayoutIssues?.length) {
         pushHard(`ssllabsPrematureDesktopLayout=${metrics.ssllabsPrematureDesktopLayoutIssues.length}`);
+    }
+    if (isDesktop && metrics.ssllabsFilterbarHeightIssue?.passesMaximum === false) {
+        pushHard(`ssllabsFilterbarHeight=${metrics.ssllabsFilterbarHeightIssue.height}/${metrics.ssllabsFilterbarHeightIssue.maximum}`);
     }
     if (metrics.ssllabsInlineSchedulerLayout?.tooNarrow?.length) {
         pushWarning(`ssllabsInlineSchedulerTooNarrow=${metrics.ssllabsInlineSchedulerLayout.tooNarrow.length}`);
@@ -427,7 +454,25 @@ export function summarizeFindings(result) {
             `sitesTableRowsTooTall=${metrics.sitesTableDensity.oversizedRows.length}/${metrics.sitesTableDensity.maxRowHeightPx}/${metrics.sitesTableDensity.maximumRowHeight}`
         );
     }
-    if (metrics.appPageLayout.present && metrics.appPageLayout.locksVerticalOverflow) {
+    if (
+        isMobile
+        && metrics.ssllabsMobileCardLayout.present
+        && (metrics.ssllabsMobileCardLayout.issues.length || metrics.ssllabsMobileCardLayout.theadHidden === false)
+    ) {
+        pushHard(
+            `ssllabsMobileCardLayout=${metrics.ssllabsMobileCardLayout.issues.length}/${Number(metrics.ssllabsMobileCardLayout.theadHidden)}/${metrics.ssllabsMobileCardLayout.rowCount}`
+        );
+    }
+    if (
+        metrics.appPageLayout.present
+        && metrics.appPageLayout.locksVerticalOverflow
+        && (
+            metrics.ghostScroll
+            || metrics.ghostScrollContainers?.length
+            || metrics.nestedScrollContainers?.length
+            || metrics.flexScrollTraps?.length
+        )
+    ) {
         pushWarning(`appPageOverflow=${metrics.appPageLayout.overflowY}`);
     }
     if (isMobile && metrics.mobileToggleContentAlignment.present && metrics.mobileToggleContentAlignment.passesTolerance === false) {
@@ -572,9 +617,16 @@ export function summarizeFindings(result) {
 
     const relevantConsoleEntries = report.network.consoleEntries.filter((entry) => !isKnownAuditConsoleNoise(entry, report.name));
     const relevantRequestFailures = report.network.requestFailures.filter((entry) => !isExpectedRequestFailure(entry));
+    const onlyExpectedRequestFailures = (report.network.requestFailures || []).length > 0
+        && (report.network.requestFailures || []).every((entry) => isExpectedRequestFailure(entry));
+    const shouldSuppressConsoleForExpectedRequestFailures = onlyExpectedRequestFailures
+        && !report.network.pageErrors.length
+        && !report.network.badResponses.length;
 
     if (report.diff.ratio > VISUAL_DRIFT_THRESHOLD) pushHard(`visualDrift=${report.diff.ratio.toFixed(4)}`);
-    if (relevantConsoleEntries.length) pushHard(`console=${relevantConsoleEntries.length}`);
+    if (relevantConsoleEntries.length && !shouldSuppressConsoleForExpectedRequestFailures) {
+        pushHard(`console=${relevantConsoleEntries.length}`);
+    }
     if (report.network.pageErrors.length) pushHard(`pageErrors=${report.network.pageErrors.length}`);
     if (relevantRequestFailures.length) pushHard(`failedRequests=${relevantRequestFailures.length}`);
     if (report.network.badResponses.length) pushHard(`badResponses=${report.network.badResponses.length}`);

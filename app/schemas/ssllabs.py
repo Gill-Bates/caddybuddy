@@ -8,8 +8,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-
-SSLLABS_SCHEDULE_FREQUENCIES = ("weekly",)
+SSLLABS_SCHEDULE_FREQUENCIES = ("weekly", "monthly")
 
 SSLLABS_SCAN_STATUSES = (
     "queued",

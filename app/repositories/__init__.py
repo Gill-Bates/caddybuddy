@@ -12,9 +12,9 @@ from app.repositories.ssllabs import ssllabs_repository
 from app.repositories.users import DuplicateUserError, user_repository
 
 __all__ = [
-    "app_settings_repository",
     "DuplicateSiteError",
     "DuplicateUserError",
+    "app_settings_repository",
     "site_repository",
     "ssllabs_repository",
     "user_repository",

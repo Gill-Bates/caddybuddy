@@ -56,7 +56,7 @@ class SiteRepositoryTests(unittest.IsolatedAsyncioTestCase):
         repository = SiteRepository()
         session = SimpleNamespace(
             get_bind=lambda: SimpleNamespace(dialect=SimpleNamespace(name="sqlite")),
-            execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None, all=lambda: [])),
+            execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None, all=list)),
             add=lambda site: None,
             flush=AsyncMock(
                 side_effect=IntegrityError(
@@ -79,7 +79,7 @@ class SiteRepositoryTests(unittest.IsolatedAsyncioTestCase):
         repository = SiteRepository()
         session = SimpleNamespace(
             get_bind=lambda: SimpleNamespace(dialect=SimpleNamespace(name="sqlite")),
-            execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None, all=lambda: [])),
+            execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None, all=list)),
             add=lambda site: None,
             flush=AsyncMock(),
         )
@@ -99,7 +99,7 @@ class SiteRepositoryTests(unittest.IsolatedAsyncioTestCase):
         repository = SiteRepository()
         session = SimpleNamespace(
             get_bind=lambda: SimpleNamespace(dialect=SimpleNamespace(name="sqlite")),
-            execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None, all=lambda: [])),
+            execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None, all=list)),
             add=lambda site: None,
             flush=AsyncMock(),
         )
@@ -120,7 +120,7 @@ class SiteRepositoryTests(unittest.IsolatedAsyncioTestCase):
         repository = SiteRepository()
         session = SimpleNamespace(
             get_bind=lambda: SimpleNamespace(dialect=SimpleNamespace(name="sqlite")),
-            execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None, all=lambda: [])),
+            execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None, all=list)),
             flush=AsyncMock(),
         )
         site = SimpleNamespace(

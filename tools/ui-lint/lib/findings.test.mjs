@@ -96,6 +96,26 @@ test('summarizeFindings warns when the retention scale and tick labels drift apa
     assert.ok(result.warnings.includes('ssllabsRetentionLayout=4/2/3/3/2/2/2'));
 });
 
+test('summarizeFindings treats misaligned desktop settings columns as a hard finding', () => {
+    const result = summarizeFindings({
+        name: 'desktop-settings',
+        metrics: {
+            desktopPrimaryPanelHeightAlignment: {
+                present: true,
+                heights: [612, 564],
+                delta: 48,
+                tolerance: 3,
+                passesTolerance: false,
+            },
+        },
+        diff: { ratio: 0, sizeMismatch: false },
+        network: {},
+    });
+
+    assert.ok(result.hardFindings.includes('desktopPrimaryPanelHeightAlignment=48/3'));
+    assert.ok(result.findings.includes('desktopPrimaryPanelHeightAlignment=48/3'));
+});
+
 test('summarizeFindings warns when the SSL Labs history loading shell contract is missing', () => {
     const result = summarizeFindings({
         name: 'desktop-dashboard',
@@ -116,6 +136,102 @@ test('summarizeFindings warns when the SSL Labs history loading shell contract i
     });
 
     assert.ok(result.warnings.includes('ssllabsHistoryLoadingShell=0/1/1/0/1/0'));
+});
+
+test('summarizeFindings treats an oversized SSL Labs desktop filterbar as a hard finding', () => {
+    const result = summarizeFindings({
+        name: 'desktop-ssllabs-light',
+        metrics: {
+            ssllabsFilterbarHeightIssue: {
+                present: true,
+                height: 58,
+                maximum: 52,
+                passesMaximum: false,
+            },
+        },
+        diff: { ratio: 0, sizeMismatch: false },
+        network: {},
+    });
+
+    assert.ok(result.hardFindings.includes('ssllabsFilterbarHeight=58/52'));
+});
+
+test('summarizeFindings ignores the SSL Labs filterbar height metric on mobile', () => {
+    const result = summarizeFindings({
+        name: 'mobile-ssllabs-light',
+        metrics: {
+            ssllabsFilterbarHeightIssue: {
+                present: true,
+                height: 142,
+                maximum: 52,
+                passesMaximum: false,
+            },
+        },
+        diff: { ratio: 0, sizeMismatch: false },
+        network: {},
+    });
+
+    assert.ok(!result.findings.some((entry) => entry.startsWith('ssllabsFilterbarHeight=')));
+});
+
+test('summarizeFindings flags SSL Labs mobile site rows that fail the card contract', () => {
+    const result = summarizeFindings({
+        name: 'mobile-ssllabs-light',
+        metrics: {
+            ssllabsMobileCardLayout: {
+                present: true,
+                rowCount: 3,
+                minBorderRadius: 8,
+                theadHidden: true,
+                issues: [
+                    { index: 0, host: 'example.com', reasons: ['noCardRadius', 'noCardBorder'] },
+                ],
+            },
+        },
+        diff: { ratio: 0, sizeMismatch: false },
+        network: {},
+    });
+
+    assert.ok(result.hardFindings.includes('ssllabsMobileCardLayout=1/1/3'));
+    assert.ok(result.findings.includes('ssllabsMobileCardLayout=1/1/3'));
+});
+
+test('summarizeFindings flags SSL Labs mobile layout when the table head stays visible', () => {
+    const result = summarizeFindings({
+        name: 'mobile-ssllabs-light',
+        metrics: {
+            ssllabsMobileCardLayout: {
+                present: true,
+                rowCount: 2,
+                minBorderRadius: 8,
+                theadHidden: false,
+                issues: [],
+            },
+        },
+        diff: { ratio: 0, sizeMismatch: false },
+        network: {},
+    });
+
+    assert.ok(result.hardFindings.includes('ssllabsMobileCardLayout=0/0/2'));
+});
+
+test('summarizeFindings stays silent when SSL Labs mobile cards satisfy the contract', () => {
+    const result = summarizeFindings({
+        name: 'mobile-ssllabs-light',
+        metrics: {
+            ssllabsMobileCardLayout: {
+                present: true,
+                rowCount: 4,
+                minBorderRadius: 8,
+                theadHidden: true,
+                issues: [],
+            },
+        },
+        diff: { ratio: 0, sizeMismatch: false },
+        network: {},
+    });
+
+    assert.ok(!result.findings.some((entry) => entry.startsWith('ssllabsMobileCardLayout=')));
 });
 
 test('summarizeFindings treats broken desktop sites form fill as a hard finding', () => {
@@ -411,6 +527,11 @@ test('serializeResultForOutput exposes scheduler and hero metric summary fields'
                 tooWide: [{ width: 212 }],
                 alignmentVariance: 6,
             },
+            ssllabsFilterbarHeightIssue: {
+                present: true,
+                height: 48,
+                passesMaximum: true,
+            },
             ssllabsRetentionLayout: {
                 present: true,
                 widthDelta: 1,
@@ -430,6 +551,8 @@ test('serializeResultForOutput exposes scheduler and hero metric summary fields'
 
     assert.equal(output.ssllabsInlineSchedulerTooWide, 1);
     assert.equal(output.ssllabsInlineSchedulerAlignmentVariance, 6);
+    assert.equal(output.ssllabsFilterbarHeightPx, 48);
+    assert.equal(output.ssllabsFilterbarHeightPass, 1);
     assert.equal(output.ssllabsRetentionLayoutWidthDelta, 1);
     assert.equal(output.ssllabsRetentionLayoutEdgeDelta, 2);
     assert.equal(output.ssllabsRetentionLayoutSpacingVariance, 1);
@@ -476,6 +599,36 @@ test('serializeResultForOutput exposes onboarding wizard dimming summary fields'
     assert.equal(output.onboardingWizardStepInactiveOpacityMax, 0.68);
     assert.equal(output.onboardingWizardStepDimmingPass, 1);
     assert.equal(output.onboardingWizardStepAccentPass, 1);
+});
+
+test('serializeResultForOutput exposes desktop settings column alignment summary fields', () => {
+    const output = serializeResultForOutput({
+        name: 'desktop-settings',
+        url: '/settings',
+        findings: [],
+        hardFindings: [],
+        warnings: [],
+        diff: { ratio: 0, sizeMismatch: false },
+        metrics: {
+            horizontalOverflow: { offenders: [] },
+            spacing: {},
+            layoutShift: { value: 0 },
+            desktopPrimaryPanelHeightAlignment: {
+                present: true,
+                heights: [612, 564],
+                delta: 48,
+                tolerance: 3,
+                passesTolerance: false,
+            },
+        },
+        network: {},
+    }, {
+        summaryPath: '/tmp/ui-lint-summary.json',
+        visualRegressionEnabled: false,
+    });
+
+    assert.equal(output.desktopPrimaryPanelHeightAlignmentDelta, 48);
+    assert.equal(output.desktopPrimaryPanelHeightAlignmentPass, 0);
 });
 
 test('serializeResultForOutput tolerates missing network payloads', () => {

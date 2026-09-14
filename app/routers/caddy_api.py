@@ -37,7 +37,6 @@ from app.services.caddyfile_manager import (
 )
 from app.services.events import try_publish_resource_event
 
-
 router = APIRouter(prefix="/api", tags=["caddy"])
 logger = logging.getLogger(__name__)
 

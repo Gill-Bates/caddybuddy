@@ -6,9 +6,9 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import os
 import unittest
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -60,7 +60,7 @@ class CaddyApiSiteMutationTests(unittest.IsolatedAsyncioTestCase):
             )
 
     def test_site_response_rejects_naive_timestamps(self) -> None:
-        naive_now = datetime.now()
+        naive_now = datetime.now(UTC).replace(tzinfo=None)
 
         with self.assertRaisesRegex(ValueError, "timezone-aware"):
             SiteResponse.model_validate(
@@ -92,15 +92,15 @@ class CaddyApiSiteMutationTests(unittest.IsolatedAsyncioTestCase):
                 "app.routers.caddy_api.site_repository.create",
                 new=AsyncMock(side_effect=DuplicateSiteError("Site domain already exists.")),
             ),
+            self.assertRaises(HTTPException) as context,
         ):
-            with self.assertRaises(HTTPException) as context:
-                await create_site_fn(
-                    payload,
-                    request=SimpleNamespace(),
-                    response=Response(),
-                    session=session,
-                    _current_user=SimpleNamespace(is_admin=True),
-                )
+            await create_site_fn(
+                payload,
+                request=SimpleNamespace(),
+                response=Response(),
+                session=session,
+                _current_user=SimpleNamespace(is_admin=True),
+            )
 
         self.assertEqual(context.exception.status_code, 409)
         self.assertEqual(context.exception.detail, "Domain 'example.com' already exists.")
@@ -140,15 +140,15 @@ class CaddyApiSiteMutationTests(unittest.IsolatedAsyncioTestCase):
             patch("app.routers.caddy_api.site_repository.create", new=AsyncMock(return_value=site)),
             patch("app.routers.caddy_api.sync_caddy_configuration", new=AsyncMock(return_value=sync_result)),
             patch("app.routers.caddy_api.try_publish_resource_event", new=AsyncMock()) as publish_event,
+            self.assertRaises(HTTPException) as context,
         ):
-            with self.assertRaises(HTTPException) as context:
-                await create_site_fn(
-                    payload,
-                    request=SimpleNamespace(),
-                    response=response,
-                    session=session,
-                    _current_user=SimpleNamespace(is_admin=True),
-                )
+            await create_site_fn(
+                payload,
+                request=SimpleNamespace(),
+                response=response,
+                session=session,
+                _current_user=SimpleNamespace(is_admin=True),
+            )
 
         self.assertEqual(context.exception.status_code, 503)
         self.assertEqual(context.exception.detail, "Caddy Admin API unavailable.")
@@ -224,16 +224,16 @@ class CaddyApiSiteMutationTests(unittest.IsolatedAsyncioTestCase):
                 "app.routers.caddy_api.site_repository.update",
                 new=AsyncMock(side_effect=DuplicateSiteError("Site domain already exists.")),
             ),
+            self.assertRaises(HTTPException) as context,
         ):
-            with self.assertRaises(HTTPException) as context:
-                await update_site_fn(
-                    1,
-                    payload,
-                    request=SimpleNamespace(),
-                    response=Response(),
-                    session=session,
-                    _current_user=SimpleNamespace(is_admin=True),
-                )
+            await update_site_fn(
+                1,
+                payload,
+                request=SimpleNamespace(),
+                response=Response(),
+                session=session,
+                _current_user=SimpleNamespace(is_admin=True),
+            )
 
         self.assertEqual(context.exception.status_code, 409)
         self.assertEqual(context.exception.detail, "Site domain already exists.")
@@ -275,16 +275,16 @@ class CaddyApiSiteMutationTests(unittest.IsolatedAsyncioTestCase):
             patch("app.routers.caddy_api.site_repository.update", new=AsyncMock(return_value=updated_site)),
             patch("app.routers.caddy_api.sync_caddy_configuration", new=AsyncMock(return_value=sync_result)),
             patch("app.routers.caddy_api.try_publish_resource_event", new=AsyncMock()) as publish_event,
+            self.assertRaises(HTTPException) as context,
         ):
-            with self.assertRaises(HTTPException) as context:
-                await update_site_fn(
-                    1,
-                    payload,
-                    request=SimpleNamespace(),
-                    response=response,
-                    session=session,
-                    _current_user=SimpleNamespace(is_admin=True),
-                )
+            await update_site_fn(
+                1,
+                payload,
+                request=SimpleNamespace(),
+                response=response,
+                session=session,
+                _current_user=SimpleNamespace(is_admin=True),
+            )
 
         self.assertEqual(context.exception.status_code, 503)
         self.assertEqual(context.exception.detail, "Caddy Admin API unavailable.")

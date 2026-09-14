@@ -6,10 +6,15 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import unittest
+from datetime import UTC, datetime
 
-from app.utils.parsing import parse_expires_days, parse_json_object, pretty_json, split_csv
+from app.utils.parsing import (
+    parse_expires_days,
+    parse_json_object,
+    pretty_json,
+    split_csv,
+)
 
 
 class ParsingUtilsTests(unittest.TestCase):

@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.settings import DEFAULT_CADDY_ADMIN_URL, DEFAULT_CADDYFILE_PATH
 from app.models.entities import AppSetting
 
-
 # Defaults used when no database entry exists
 DEFAULTS: dict[str, str] = {
     "caddy_api_url": DEFAULT_CADDY_ADMIN_URL,

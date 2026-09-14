@@ -1,0 +1,60 @@
+# Single source of truth for the project version and its dependencies.
+# Replaces the former VERSION and requirements.txt files.
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "caddybuddy"
+version = "1.5.0"
+description = "Focused web control plane for one Caddy installation"
+readme = "README.md"
+requires-python = ">=3.13"
+license = "MIT"
+authors = [{ name = "Gill-Bates", email = "tn.steiner@gmail.com" }]
+
+# Nothing here carries a version pin. A release installs the newest resolvable
+# set; the release workflow resolves that set once for linux/amd64 and
+# linux/arm64 and hands the result to both architecture builds, so the images
+# still carry identical versions. See the 'Resolve runtime dependency
+# versions' step in .github/workflows/docker-build.yml.
+dependencies = [
+    "aiosqlite",
+    "bcrypt",
+    "cryptography",
+    "fastapi",
+    "httpx",
+    "itsdangerous",
+    "jinja2",
+    "markdown",
+    "nh3",
+    "pydantic",
+    "pydantic-settings",
+    "python-multipart",
+    "slowapi",
+    "sqlalchemy",
+    "uvicorn[standard]",
+]
+
+[project.optional-dependencies]
+docs = [
+    "markdown==3.10.3",
+    "mkdocs==1.6.1",
+    "mkdocs-git-revision-date-localized-plugin==1.6.0",
+    "mkdocs-material==9.7.7",
+    "mkdocs-minify-plugin==0.8.0",
+    "mkdocs-redirects==1.2.3",
+    "pymdown-extensions==11.0.2",
+]
+
+# The repository root holds several other top-level directories (docker,
+# docs, tests, tools, ...), so setuptools' automatic layout discovery cannot
+# guess which one is the distribution - only "app" and its subpackages ship.
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+# FastAPI's `Depends(...)` as a default argument is the idiomatic dependency
+# injection pattern, not the mutable-default-argument bug B008 looks for.
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path"]

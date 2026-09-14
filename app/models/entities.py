@@ -6,11 +6,22 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 import re
+from datetime import datetime
 from urllib.parse import urlsplit
 
-from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    CheckConstraint,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, validates
 
 from app.models.base import Base, TimestampMixin, UTCDateTime, utc_now
@@ -21,8 +32,10 @@ from app.schemas.ssllabs import (
 )
 from app.utils.caddyfile import normalize_caddy_directives
 from app.utils.domains import normalize_domain_list
-from app.utils.ssllabs import normalize_ssllabs_schedule_frequency, validate_ssllabs_host
-
+from app.utils.ssllabs import (
+    normalize_ssllabs_schedule_frequency,
+    validate_ssllabs_host,
+)
 
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$", re.ASCII)
 _SIMPLE_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", re.ASCII)

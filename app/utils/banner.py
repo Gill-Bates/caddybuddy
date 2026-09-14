@@ -13,9 +13,9 @@ import tempfile
 import time
 from pathlib import Path
 
+from app.utils.version import get_version
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_VERSION_FILE = _PROJECT_ROOT / "VERSION"
 _BUILD_INFO_FILE = _PROJECT_ROOT / "BUILD_INFO"
 _BANNER_DEDUP_WINDOW_SECONDS = 30.0
 _LOCK_FLAGS = os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW
@@ -43,7 +43,7 @@ def _read_text(path: Path, default: str) -> str:
 
 def _load_version_info() -> tuple[str, str]:
     """Return version and git commit short hash for the startup banner."""
-    version = _read_text(_VERSION_FILE, "dev")
+    version = get_version()
     build_info_raw = _read_text(_BUILD_INFO_FILE, "")
     
     # Parse BUILD_INFO key=value format to extract GIT_SHA
@@ -133,7 +133,7 @@ def print_banner_once() -> None:
 
         os.lseek(fd, 0, os.SEEK_SET)
         os.ftruncate(fd, 0)
-        os.write(fd, f"{process_tree_id}:{now}".encode("utf-8"))
+        os.write(fd, f"{process_tree_id}:{now}".encode())
     finally:
         fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)

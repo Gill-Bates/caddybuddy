@@ -4,17 +4,16 @@
 # Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
 #
 
-from functools import cache
 import logging
-from pathlib import Path
 import re
+from functools import cache
+from pathlib import Path
 from typing import Literal, Self
 from urllib.parse import urlsplit, urlunsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
 
 LogLevelName = Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"]
 
@@ -244,7 +243,11 @@ class Settings(BaseSettings):
     log {
         level info
         format json
-        output stdout
+        output file /var/log/caddy/runtime.json {
+            roll_size 10MiB
+            roll_keep 5
+            roll_keep_for 168h
+        }
     }
 
     # Only enable when Caddy runs behind a trusted proxy/CDN.
@@ -276,13 +279,6 @@ class Settings(BaseSettings):
 
         -Server
         -X-Powered-By
-    }
-}
-
-(default_log) {
-    log {
-        output stdout
-        format json
     }
 }""",
         validation_alias=AliasChoices(

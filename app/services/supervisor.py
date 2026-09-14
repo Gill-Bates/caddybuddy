@@ -15,7 +15,6 @@ from typing import Protocol
 from app.config.settings import get_settings
 from app.services.runtime_settings import get_caddy_config
 
-
 logger = logging.getLogger(__name__)
 _ALLOWED_SCRIPT_ROOTS = (
     Path("/app").resolve(strict=False),
@@ -31,7 +30,7 @@ _SYSTEMD_STOPPED_OUTPUTS = {"inactive", "failed", "unknown", "deactivating", "ac
 async def _communicate_with_timeout(process: asyncio.subprocess.Process, timeout: float) -> tuple[bytes, bytes]:
     try:
         return await asyncio.wait_for(process.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         process.kill()
         with suppress(Exception):
             await process.wait()
@@ -93,7 +92,7 @@ class SystemdSupervisor:
             
             try:
                 stdout, stderr = await _communicate_with_timeout(process, self.timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return RestartResult(success=False, output="", error=f"Timeout executing systemctl {action}")
 
             success = process.returncode == 0
@@ -127,7 +126,7 @@ class SystemdSupervisor:
             )
             try:
                 stdout, stderr = await _communicate_with_timeout(process, self.timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return StatusResult(success=False, status="unknown", error="Timeout checking systemctl is-active")
 
             output = stdout.decode().strip().lower()
@@ -170,7 +169,7 @@ class DockerSupervisor:
             )
             try:
                 stdout, stderr = await _communicate_with_timeout(process, self.timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return RestartResult(success=False, output="", error=f"Timeout executing docker {action}")
 
             success = process.returncode == 0
@@ -201,7 +200,7 @@ class DockerSupervisor:
             )
             try:
                 stdout, stderr = await _communicate_with_timeout(process, self.timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return RestartResult(success=False, output="", error="Timeout executing caddy reload inside docker")
 
             success = process.returncode == 0
@@ -228,7 +227,7 @@ class DockerSupervisor:
             )
             try:
                 stdout, stderr = await _communicate_with_timeout(process, self.timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return StatusResult(success=False, status="unknown", error="Timeout executing docker inspect")
 
             success = process.returncode == 0
@@ -271,7 +270,7 @@ class ScriptSupervisor:
             )
             try:
                 stdout, stderr = await _communicate_with_timeout(process, self.timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return RestartResult(success=False, output="", error=f"Timeout executing script {action}")
 
             success = process.returncode == 0
@@ -304,7 +303,7 @@ class ScriptSupervisor:
             )
             try:
                 stdout, stderr = await _communicate_with_timeout(process, self.timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return StatusResult(success=False, status="unknown", error="Timeout executing script status")
 
             success = process.returncode == 0

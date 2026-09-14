@@ -14,26 +14,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
-from app.config.settings import get_settings
 from app.config.limiter import limiter
+from app.config.settings import get_settings
 from app.database.session import get_db_session
 from app.dependencies.web import push_flash, redirect_to, render_template
 from app.services.caddy import caddy_service
-from app.services.runtime_settings import get_caddy_config
 from app.services.caddyfile_manager import (
     get_baseline_caddyfile,
     get_caddy_runtime_status,
     onboard_caddy,
-    onboarding_succeeded,
     onboarding_result_should_commit,
+    onboarding_succeeded,
     set_baseline_caddyfile,
     sync_succeeded,
     validate_and_deploy_full_caddyfile,
 )
 from app.services.events import publish_resource_event
+from app.services.runtime_settings import get_caddy_config
 
-from ._common import require_admin, require_onboarding_completed, require_user, validated_form
-
+from ._common import (
+    require_admin,
+    require_onboarding_completed,
+    require_user,
+    validated_form,
+)
 
 router = APIRouter()
 
@@ -98,6 +102,7 @@ async def save_caddyfile(
     try:
         success, deploy_message = await validate_and_deploy_full_caddyfile(session)
     except Exception:
+        logger.exception("Caddyfile deployment failed unexpectedly.")
         await session.rollback()
         push_flash(request, "danger", "Caddyfile was not saved: deployment failed unexpectedly.")
         return redirect_to("/caddyfile")

@@ -120,6 +120,13 @@
         return response.json();
     };
 
+    const isAbortLikeError = (error) => {
+        const message = String(error?.message || "").toLowerCase();
+        return (error instanceof DOMException && error.name === "AbortError")
+            || message.includes("abort")
+            || message.includes("cancel");
+    };
+
     const isMobile = () => window.matchMedia("(max-width: 767px)").matches;
 
     const themeColors = () => {
@@ -707,7 +714,9 @@
             try {
                 payload = await fetchJson(`${baseUrl}?range_key=${encodeURIComponent(range)}`);
             } catch (error) {
-                console.error("Failed to load SSL Labs history:", error);
+                if (!isAbortLikeError(error)) {
+                    console.error("Failed to load SSL Labs history:", error);
+                }
                 setHistoryUiVisible(false);
                 showEmpty(true);
                 setLoading(false);

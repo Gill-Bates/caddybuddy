@@ -6,12 +6,12 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta, timezone
 import unittest
+from datetime import UTC, datetime, timedelta, timezone
 
 from sqlalchemy import create_engine, select
-from sqlalchemy.orm import Mapped, Session, mapped_column
 from sqlalchemy.exc import StatementError
+from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.models.base import Base, UTCDateTime
 
@@ -45,7 +45,8 @@ class UTCDateTimeTests(unittest.TestCase):
         self.assertEqual(loaded.happened_at, source.astimezone(UTC))
 
     def test_sqlite_roundtrip_rejects_naive_datetime(self) -> None:
-        naive = datetime(2026, 5, 27, 12, 34, 56)
+        # The naive value is the whole point of this test, so build it explicitly.
+        naive = datetime(2026, 5, 27, 12, 34, 56, tzinfo=UTC).replace(tzinfo=None)
 
         with Session(self.engine) as session:
             session.add(_TimestampRecord(happened_at=naive))

@@ -19,7 +19,6 @@ from pydantic import SecretStr
 
 from app.config.settings import get_settings
 
-
 _ENV_OVERRIDES = {
     "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
     "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",

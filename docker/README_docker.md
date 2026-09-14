@@ -7,13 +7,13 @@
 	<a href="https://hub.docker.com/r/giiibates/caddybuddy"><img src="https://img.shields.io/docker/pulls/giiibates/caddybuddy?logo=docker&logoColor=white" alt="Docker Pulls"></a>
 	<a href="https://hub.docker.com/r/giiibates/caddybuddy"><img src="https://img.shields.io/docker/image-size/giiibates/caddybuddy?logo=docker&logoColor=white" alt="Docker Image Size"></a>
 	<br>
-	<a href="https://github.com/Gill-Bates/caddybuddy/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg" alt="License"></a>
+	<a href="https://github.com/Gill-Bates/caddybuddy/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License"></a>
 	<img src="https://img.shields.io/badge/Platform-linux%2Famd64%20%7C%20linux%2Farm64-lightgrey?logo=linux&logoColor=white" alt="Platform">
 </p>
 
 CaddyBuddy is a lightweight web UI for managing a single Caddy installation.
 
-It provides a dashboard, site management, a Caddyfile editor, SSL monitoring, onboarding, and secure defaults in one compact container image.
+It provides a dashboard, site management, a Caddyfile editor, certificate monitoring and renewal, SSL Labs assessments with weekly or monthly scheduling, onboarding, and secure defaults in one compact container image.
 
 ## Image
 
@@ -37,15 +37,17 @@ export CB_SECRET_KEY="$(head -c 32 /dev/urandom | base64)"
 Then start CaddyBuddy with the example Compose file from the repository:
 
 ```bash
-docker compose -f docker/docker-compose.yml.example up -d
+CADDYBUDDY_VERSION=latest docker compose -f docker/docker-compose.yml.example up -d
 ```
 
 The container expects access to your Caddy Admin API, a persistent data directory,
 and Caddy's certificate storage mounted at `/var/lib/caddy/.local/share/caddy`
-when you want the UI to trigger certificate renewals.
+for certificate inspection and renewal. Without a configured Caddy control mode,
+CaddyBuddy can request a reload through the Admin API; a full forced renewal or
+repair may still require runtime control.
 
 ## Documentation
 
+- Documentation: https://gill-bates.github.io/caddybuddy/
 - GitHub: https://github.com/Gill-Bates/caddybuddy
-- README: https://github.com/Gill-Bates/caddybuddy/blob/main/README.md
 - Releases: https://github.com/Gill-Bates/caddybuddy/releases

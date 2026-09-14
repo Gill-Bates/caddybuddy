@@ -13,6 +13,7 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.limiter import limiter
+from app.config.settings import get_settings
 from app.database.session import get_db_session
 from app.dependencies.web import push_flash, redirect_to, render_template
 from app.services.caddy_onboarding import (
@@ -20,8 +21,8 @@ from app.services.caddy_onboarding import (
     detect_runtime_location,
     enable_admin_api_and_reprobe,
     execute_onboarding,
-    get_onboarding_state,
     get_onboarding_caddyfile_path_candidates,
+    get_onboarding_state,
     mode_to_choice,
     onboarding_caddy_locations,
     onboarding_caddy_sources,
@@ -35,10 +36,8 @@ from app.services.runtime_settings import (
     get_ssllabs_email,
     suggest_caddyfile_path,
 )
-from app.config.settings import get_settings
 
 from ._common import require_admin, validated_form
-
 
 router = APIRouter()
 

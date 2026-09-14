@@ -16,7 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.limiter import limiter, update_rate_limit_enabled
 from app.config.settings import get_settings
 from app.database.session import get_db_session
-from app.dependencies.web import initialize_user_session, push_flash, redirect_to, render_template
+from app.dependencies.web import (
+    initialize_user_session,
+    push_flash,
+    redirect_to,
+    render_template,
+)
 from app.repositories.users import user_repository
 from app.services.auth import (
     PASSWORD_MAX_LENGTH,
@@ -25,6 +30,7 @@ from app.services.auth import (
     WeakPasswordError,
     auth_service,
 )
+from app.services.caddy_onboarding import reset_onboarding_state
 from app.services.runtime_settings import (
     SSLLABS_RETENTION_DAY_VALUES,
     get_caddy_config,
@@ -36,7 +42,6 @@ from app.services.runtime_settings import (
     set_ssllabs_email,
     set_ssllabs_history_retention_days,
 )
-from app.services.caddy_onboarding import reset_onboarding_state
 from app.services.ssllabs import (
     check_email_registration_status,
     clear_registration_status_cache,
@@ -46,7 +51,6 @@ from app.services.ssllabs import (
 from app.utils.ssllabs import mask_email
 
 from ._common import require_admin, require_onboarding_completed, validated_csrf_form
-
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -253,7 +257,8 @@ async def update_ssllabs_retention(
         return _settings_response(request, success=False, message=str(exc), status_code=400)
 
     await session.commit()
-    return _settings_response(request, success=True, message=f"SSL Labs history retention set to {retention_days} days.")
+    retention_label = "Unlimited" if retention_days == 0 else f"{retention_days} days"
+    return _settings_response(request, success=True, message=f"SSL Labs history retention set to {retention_label}.")
 
 
 @router.post("/settings/change-password", response_class=HTMLResponse)
