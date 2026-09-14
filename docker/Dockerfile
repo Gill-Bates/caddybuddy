@@ -15,6 +15,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN rm -f /etc/apt/apt.conf.d/docker-clean \
     && echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache
 
+# The base image lags behind the Debian security archive between its own
+# rebuilds, so packages it ships (perl-base, libsqlite3-0, gzip, libpcre2-8-0
+# at the time of writing) can carry already-fixed CVEs. Upgrading in the
+# shared base rather than per stage also keeps builder and runtime on one
+# package set - the builder compiles the venv the runtime only copies, so a
+# glibc that differs between the two stages is exactly the drift this file's
+# single-base rule exists to prevent.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends
+
 FROM base AS builder
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -78,6 +90,16 @@ WORKDIR /app
 
 # Copy pre-compiled virtual environment from builder
 COPY --from=builder /opt/venv /opt/venv
+
+# Nothing installs packages at runtime, and pip ships its dependencies
+# vendored under pip/_vendor with a CycloneDX manifest (bom.cdx.json) that
+# scanners read as an installed-package inventory - reporting the vendored
+# versions (setuptools, msgpack) as if the application depended on them.
+# Dropping pip removes that phantom inventory and leaves an image that
+# cannot install code into itself. Both interpreters are covered: the venv's
+# and the base image's own /usr/local one.
+RUN /opt/venv/bin/python -m pip uninstall -y --root-user-action=ignore pip \
+    && /usr/local/bin/python3 -m pip uninstall -y --root-user-action=ignore pip
 
 # Application code stays root-owned and world-readable, never writable by
 # the app user it runs as - only /app/data (below) needs to be. A process

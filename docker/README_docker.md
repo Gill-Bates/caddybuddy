@@ -63,3 +63,10 @@ repair may still require runtime control.
 - Documentation: https://gill-bates.github.io/caddybuddy/
 - GitHub: https://github.com/Gill-Bates/caddybuddy
 - Releases: https://github.com/Gill-Bates/caddybuddy/releases
+
+<br>
+<p align="center">
+  <a href="https://www.buymeacoffee.com/tnsteinerx">
+    <img src="https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20beer&emoji=%F0%9F%8D%BA&slug=tnsteinerx&button_colour=FFDD00&font_colour=000000&font_family=Cookie&outline_colour=000000&coffee_colour=ffffff" alt="Buy Me A Coffee">
+  </a>
+</p>
