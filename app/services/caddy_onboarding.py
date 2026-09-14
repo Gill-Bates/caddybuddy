@@ -524,8 +524,16 @@ def _atomic_write_text(
             os.chmod(temp_path, mode)
 
         if owner is not None:
-            with suppress(PermissionError, OSError):
+            try:
                 os.chown(temp_path, owner[0], owner[1])
+            except (PermissionError, OSError):
+                logger.warning(
+                    "Could not set ownership of %s to uid=%s gid=%s; "
+                    "file ownership may drift from the expected owner.",
+                    temp_path,
+                    owner[0],
+                    owner[1],
+                )
 
         temp_path.replace(target_path)
     except Exception:

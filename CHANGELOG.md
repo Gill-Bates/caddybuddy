@@ -1,3 +1,12 @@
+## [1.5.1] - 2026-09-14
+
+- `New` Added CSRF protection to the onboarding wizard's form submissions.
+- `Fix` Fixed Docker startup failing with "could not resolve CB_CADDY_CERTIFICATES_PATH" when no Caddy certificate storage was mounted.
+- `Security` Added rate limiting to the Caddy status and settings endpoints.
+- `Security` Login attempts with a malformed username no longer skip the dummy password check, keeping response timing consistent with normal failed logins.
+- `Security` Restricted the internal systemd control helper to an explicit action allowlist.
+- `Security` File ownership failures during atomic config writes are now logged instead of being silently suppressed.
+
 ## [1.5.0] - 2026-09-14
 
 - `New` Added an About page with version information, release notes, and GitHub update checks.

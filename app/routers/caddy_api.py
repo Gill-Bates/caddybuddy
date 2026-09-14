@@ -230,10 +230,9 @@ async def update_site(
     if site is None:
         raise HTTPException(status_code=404, detail="Site not found.")
 
-    new_domain = payload.domain if payload.domain is not None else site.domain
-    if await site_repository.domain_exists(session, new_domain, exclude_id=site_id):
-        raise HTTPException(status_code=409, detail=f"Domain '{new_domain}' already exists.")
-
+    # Domain uniqueness is enforced by SiteRepository.update() itself (locked
+    # check + IntegrityError fallback). A separate pre-check here would only
+    # add an extra full-table scan without closing the race window.
     try:
         site = await site_repository.update(
             session,

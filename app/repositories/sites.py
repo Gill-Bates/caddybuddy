@@ -42,12 +42,6 @@ class SiteRepository:
     def _domain_names(value: str) -> set[str]:
         return set(split_domain_names(_normalize_domain_name(value)))
 
-    @classmethod
-    def _domains_overlap(cls, left: str, right: str) -> bool:
-        left_domains = cls._domain_names(left)
-        right_domains = cls._domain_names(right)
-        return not left_domains.isdisjoint(right_domains)
-
     @staticmethod
     async def _acquire_domain_lock(session: AsyncSession) -> None:
         dialect_name = session.get_bind().dialect.name

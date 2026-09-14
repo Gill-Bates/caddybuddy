@@ -154,7 +154,12 @@ class AuthService:
             logger.info("Authentication attempt rejected due to invalid password input")
             return None
 
-        user = await user_repository.get_by_username(session, username)
+        try:
+            user = await user_repository.get_by_username(session, username)
+        except ValueError:
+            logger.debug("User not found (username failed normalization): %r", username)
+            await self.verify_password(password, _DUMMY_BCRYPT_HASH)
+            return None
         if user is None or not user.is_active:
             logger.debug("User not found or inactive: %r", username)
             await self.verify_password(password, _DUMMY_BCRYPT_HASH)

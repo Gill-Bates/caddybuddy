@@ -25,6 +25,7 @@ _ALLOWED_SCRIPT_ROOTS = (
 _SCRIPT_RUNNING_OUTPUTS = {"running", "active", "ok"}
 _SCRIPT_STOPPED_OUTPUTS = {"stopped", "inactive", "failed"}
 _SYSTEMD_STOPPED_OUTPUTS = {"inactive", "failed", "unknown", "deactivating", "activating"}
+_ALLOWED_SYSTEMCTL_ACTIONS = frozenset({"restart", "reload", "is-active"})
 
 
 async def _communicate_with_timeout(process: asyncio.subprocess.Process, timeout: float) -> tuple[bytes, bytes]:
@@ -83,6 +84,8 @@ class SystemdSupervisor:
         self.timeout = timeout
 
     async def _run_systemctl(self, action: str) -> RestartResult:
+        if action not in _ALLOWED_SYSTEMCTL_ACTIONS:
+            raise ValueError(f"Invalid systemctl action: {action!r}")
         try:
             process = await asyncio.create_subprocess_exec(
                 "sudo", "-n", "/bin/systemctl", action, self.unit,

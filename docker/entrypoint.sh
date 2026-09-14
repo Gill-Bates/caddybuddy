@@ -89,9 +89,13 @@ ensure_caddy_cert_permissions() {
     # slashes, and symlinks must not let an unsafe-looking path resolve to
     # something dangerous (e.g. "/var/.." resolves to "/", which the old
     # check - comparing the raw string to "/" - would not have caught).
-    # readlink -f resolves whatever already exists and appends any
-    # not-yet-created tail unchanged, so this works before mkdir too.
-    cert_dir="$(readlink -f -- "$cert_dir" 2>/dev/null || true)"
+    # Use -m, not -f: -f requires every component but the last to already
+    # exist and prints nothing otherwise, which made the default certificate
+    # path abort startup whenever no Caddy storage was mounted. -m
+    # canonicalizes symlinks and '..' segments with no existence
+    # requirement, so an absent path still resolves and is handled by the
+    # "[ ! -e ]" no-op below instead of being treated as unresolvable.
+    cert_dir="$(readlink -m -- "$cert_dir" 2>/dev/null || true)"
     if [ -z "$cert_dir" ]; then
         echo "ERROR: could not resolve CB_CADDY_CERTIFICATES_PATH" >&2
         exit 1

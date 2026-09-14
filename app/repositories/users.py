@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.entities import User
+from app.models.entities import _normalize_username as _normalize_username_strict
 
 _BCRYPT_HASH_RE = re.compile(r"^\$2[aby]\$(?P<cost>\d{2})\$[./A-Za-z0-9]{53}$")
 _MIN_BCRYPT_COST = 12
@@ -26,10 +27,15 @@ class DuplicateUserError(ValueError):
 
 
 def _normalize_username(username: str) -> str:
-    normalized = username.strip()
-    if not normalized:
+    """Normalize a username using the same rules the User model enforces.
+
+    Reusing the model's validator keeps lookups and inserts on a single
+    canonical definition of a valid username, so a query can never target a
+    username string that the model would reject on insert.
+    """
+    if not username.strip():
         raise ValueError("Username must not be empty.")
-    return normalized
+    return _normalize_username_strict(username)
 
 
 def _normalize_email(email: str | None) -> str | None:

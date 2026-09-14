@@ -37,6 +37,7 @@ CSRF_PREFIXES = (
     "/sites",
     "/settings",
     "/ssl-labs",
+    "/onboarding",
     "/api/",
 )
 _CSRF_EXEMPT_API_PATHS = frozenset({

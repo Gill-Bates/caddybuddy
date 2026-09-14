@@ -15,6 +15,18 @@ CaddyBuddy is a lightweight web UI for managing a single Caddy installation.
 
 It provides a dashboard, site management, a Caddyfile editor, certificate monitoring and renewal, SSL Labs assessments with weekly or monthly scheduling, onboarding, and secure defaults in one compact container image.
 
+## Screenshots
+
+<p align="center">
+  <img src="https://github.com/Gill-Bates/caddybuddy/raw/main/.github/img/screen_1.jpeg" alt="Sign In" width="80%" style="border-radius: 6px; margin-bottom: 16px;">
+</p>
+<p align="center">
+  <img src="https://github.com/Gill-Bates/caddybuddy/raw/main/.github/img/screen_2.jpeg" alt="Dashboard" width="80%" style="border-radius: 6px; margin-bottom: 16px;">
+</p>
+<p align="center">
+  <img src="https://github.com/Gill-Bates/caddybuddy/raw/main/.github/img/screen_3.jpeg" alt="SSL Labs rank history" width="80%" style="border-radius: 6px;">
+</p>
+
 ## Image
 
 ```bash

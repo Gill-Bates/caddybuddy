@@ -148,6 +148,7 @@ async def settings_page(
 
 
 @router.post("/settings/caddy", response_class=HTMLResponse)
+@limiter.limit("10/minute")
 async def update_caddy_settings(
     request: Request,
     session: AsyncSession = Depends(get_db_session),

@@ -824,7 +824,6 @@ async def onboard_caddy(session: AsyncSession) -> CaddyOnboardingResult:
             source_path=str(path),
         )
 
-        # Parse Caddyfile and import sites
         parsed = parse_caddyfile(content)
         imported_count = 0
         skipped_count = 0
@@ -846,7 +845,6 @@ async def onboard_caddy(session: AsyncSession) -> CaddyOnboardingResult:
                 skipped_count += 1
                 logger.warning("Failed to import site %s: %s", domain, exc)
 
-        # Log import summary
         global_block_lines = len(parsed.global_block.strip().splitlines()) if parsed.global_block.strip() else 0
         logger.info(
             "Caddyfile parsed: imported=%d sites, skipped=%d, global_block=%d lines, snippets=%d",
