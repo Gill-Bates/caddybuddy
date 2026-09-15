@@ -16,7 +16,7 @@ SQLAlchemy ORM entities for CaddyBuddy's SQLite database.
 ## For AI Agents
 
 ### Working In This Directory
-- Models should only be queried/mutated from `app/repositories/*` — routers and services should not import `entities.py` to build queries directly (they may import entity types for type hints/return values).
+- Repositories own ordinary aggregate queries. Existing transaction-bound services may query configuration snapshots/state directly; keep such exceptions narrow. Routers may import entity types for type hints but must not add raw ORM queries.
 - This project does not use Alembic-style migrations visible here; schema changes to `entities.py` should be checked against `app/database/session.py` init logic and `tests/test_entities_hardening.py`/`test_models_base.py` for expected constraints.
 - `Site` and `SslLabsTarget`/`SslLabsScan`/`SslLabsRankHistory` model the core domain (a managed Caddy site and its SSL Labs assessment history); `CaddySyncEvent`/`CaddyConfigVersion`/`CaddyfileSnapshot` track Caddy config sync/versioning; `CaddyBuddyState` and `AppSetting` hold singleton/key-value app state.
 
@@ -29,7 +29,7 @@ SQLAlchemy ORM entities for CaddyBuddy's SQLite database.
 ## Dependencies
 
 ### Internal
-- Consumed exclusively by `app/repositories/*`.
+- Consumed primarily by `app/repositories/*`, with entity types and tightly scoped transaction-bound operations also used by services and route helpers.
 
 ### External
 - `sqlalchemy` (`DeclarativeBase`, `Mapped`, `mapped_column`, `JSON`, `Boolean`, etc.).

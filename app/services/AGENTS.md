@@ -4,15 +4,15 @@
 # services
 
 ## Purpose
-Business logic layer, sitting between `app/routers/*` and `app/repositories/*`. This is where Caddy process control, the onboarding wizard, certificate inspection, SSL Labs scanning, and dashboard aggregation live. `caddy_onboarding.py` and `ssllabs.py` are the most frequently modified files in the whole codebase (per project history).
+Business logic layer, sitting between `app/routers/*` and persistence/integration boundaries. This is where Caddy process control, the onboarding wizard, certificate inspection, SSL Labs scanning, and dashboard aggregation live.
 
 ## Key Files
 | File | Description |
 |------|-------------|
-| `caddy_onboarding.py` | First-run Caddy onboarding wizard service (largest file in `app/`, ~47KB). Drives the multi-step flow behind `app/routers/ui/onboarding.py`. Frequently modified — check `../../tests/test_caddy_onboarding.py` and `test_caddy_onboarding_flow.py` (also two of the largest test files) before changing behavior. |
+| `caddy_onboarding.py` | First-run Caddy onboarding wizard service. Drives the multi-step flow behind `app/routers/ui/onboarding.py`; check `../../tests/test_caddy_onboarding.py` and `test_caddy_onboarding_flow.py` before changing behavior. |
 | `caddy.py` | Core Caddy control/integration logic (status, Admin API interaction). |
 | `caddyfile_manager.py` | Reading/writing/validating the managed Caddyfile, snapshotting, and versioning. |
-| `ssllabs.py` | SSL Labs API integration: scan scheduling, polling, result ingestion, rank history. Frequently modified — see `../../tests/test_ssllabs_service.py` (largest test file in the repo). |
+| `ssllabs.py` | SSL Labs API integration: scan scheduling, polling, result ingestion, rank history. See `../../tests/test_ssllabs_service.py`. |
 | `certificates.py` | Certificate inspection (expiry, issuer, chain status) used by the sites/dashboard UI. |
 | `dashboard.py` | Aggregates metrics shown on the dashboard/home page and its API endpoint. |
 | `renewal.py` | Certificate renewal orchestration. |
@@ -27,8 +27,8 @@ Business logic layer, sitting between `app/routers/*` and `app/repositories/*`. 
 ## For AI Agents
 
 ### Working In This Directory
-- `caddy_onboarding.py` and `ssllabs.py` are hot paths with the largest matching test files — treat any change here as needing thorough test coverage, not just a quick manual check.
-- Services should depend on `app/repositories/*` for persistence and `app/utils/*` for stateless helpers (Caddyfile parsing, domain validation) rather than querying the DB or shelling out directly.
+- Treat changes to `caddy_onboarding.py` and `ssllabs.py` as requiring focused regression coverage.
+- Prefer repositories for ordinary aggregate persistence and utilities for stateless helpers. Existing transaction-bound services may own tightly coupled snapshot/state queries; process execution belongs in the validated `supervisor.py` adapters rather than ad hoc subprocess calls elsewhere.
 - `events.py`'s bus is in-process/in-memory — if the deployment model ever moves to multiple worker processes, SSE delivery would need rework; don't assume events fan out across processes today.
 
 ### Testing Requirements

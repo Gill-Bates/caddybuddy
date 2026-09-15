@@ -21,7 +21,7 @@ HTTP routing layer. Contains the JSON API (`api.py`, `caddy_api.py`) and, in the
 ## For AI Agents
 
 ### Working In This Directory
-- `api.py`/`caddy_api.py` return Pydantic models from `app/schemas/` — don't return raw dicts/ORM entities from these endpoints.
+- JSON endpoints should use Pydantic response contracts from `app/schemas/` or a small route-local model. Streaming, file, redirect, and empty responses are explicit exceptions; never serialize ORM entities directly.
 - Admin-gated endpoints use `_require_admin_api_user`/`_require_api_user` helpers defined locally in each file — reuse them rather than re-implementing auth checks.
 - `/events` (SSE) is powered by `app/services/events.py`'s in-memory event bus (`_event_stream`) — it is single-process; be aware of this if changing deployment to multiple worker processes.
 
@@ -29,7 +29,7 @@ HTTP routing layer. Contains the JSON API (`api.py`, `caddy_api.py`) and, in the
 - See `../../tests/test_api_router.py`, `test_caddy_api.py`, `test_caddy_api_sites.py`.
 
 ### Common Patterns
-- FastAPI `APIRouter` per module; `response_model=` on every route for schema enforcement; module-local private helpers prefixed `_`.
+- FastAPI `APIRouter` per module; use `response_model=` for JSON routes where FastAPI can enforce a schema, while streaming and other non-JSON responses use an explicit response class; module-local private helpers are prefixed `_`.
 
 ## Dependencies
 

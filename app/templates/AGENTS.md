@@ -27,7 +27,7 @@ Jinja2 templates rendered by `app/routers/ui/*` — the entire visible applicati
 ## For AI Agents
 
 ### Working In This Directory
-- All templates extend `base.html` — keep shared chrome (nav, flash rendering, CSP nonce attribute on `<script>` tags) there rather than duplicating it per page.
+- Full-page templates extend `base.html`; fragments under `partials/` are included and do not extend a layout. Keep shared chrome (nav, flash rendering, CSP nonce attributes) in the base template rather than duplicating it per page.
 - Any inline `<script>` must carry the CSP nonce (see `ensure_csp_nonce` usage in `app/dependencies/web.py`) or it will be blocked by the Content-Security-Policy.
 - Template filenames map 1:1 to a router module in `app/routers/ui/` of (mostly) the same name — check that router for the exact context variables a template can expect.
 

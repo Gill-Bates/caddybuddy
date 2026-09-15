@@ -10,12 +10,12 @@ CaddyBuddy is a focused, server-rendered web control plane for administering a s
 |------|-------------|
 | `run.py` | Process entrypoint: builds uvicorn config/logging, prints startup banner, runs the ASGI app. |
 | `pyproject.toml` | Single source of truth for project version and dependencies (build-system, `[project]`, `docs` extra, ruff config). Only the `app` package is distributed. |
-| `Caddyfile` | Default/template Caddy configuration used by the app and Docker image. |
-| `setup.conf` | Local/onboarding setup configuration (non-Docker deployments). |
+| `Caddyfile` | Host/development starter configuration read by onboarding when available; it is not copied into the Docker image. |
+| `setup.conf` | Maintainer command notes, not application configuration. Do not source it or treat embedded examples as credentials. |
 | `mkdocs.yml` | Config for the MkDocs Material documentation site built from `docs/`. |
 | `CHANGELOG.md` | Human-curated release history. |
 | `README.md` | Project overview, screenshots, quick start. |
-| `LICENSE` | AGPL-3.0 license text. |
+| `LICENSE` | MIT license text. |
 
 ## Subdirectories
 | Directory | Purpose |
@@ -32,17 +32,18 @@ Not documented here (generated, runtime, or tool-local state, all gitignored): `
 
 ### Working In This Directory
 - This is a single-package project: only `app/` ships (see the `[tool.setuptools.packages.find]` comment in `pyproject.toml`). Everything else is dev/docs/CI tooling.
-- Python 3.13, fully async (FastAPI + SQLAlchemy async ORM + `aiosqlite`). Keep new I/O-bound code async.
+- Python 3.13 with async-first I/O (FastAPI + SQLAlchemy async ORM + `aiosqlite`). Keep I/O-bound paths async; pure helpers may remain synchronous.
 - Templates are server-rendered Jinja2 (`app/templates/`) — this is not an SPA; there is no frontend build step for the main UI beyond the vendored/bundled JS in `app/static/vendor/`.
 - The app is designed for a single SQLite database file with file-locking coordination (`fcntl`) for multi-worker safety — see `app/database/AGENTS.md` before touching session/engine code.
 
 ### Testing Requirements
-- Python: `pytest` from the repo root; test files in `tests/` are named `test_<module>.py` mirroring the `app/` module they cover.
-- Lint: `ruff check`.
+- Use the repository-local environment for Python commands.
+- Python: `.venv/bin/python -m pytest` from the repo root; tests in `tests/` generally follow the source module or behavior they cover.
+- Lint: `.venv/bin/ruff check .`.
 - Frontend/UI: `tools/ui-lint/` runs Playwright-based accessibility, visual-regression, and lint checks against the running app; a couple of narrow `.mjs` logic tests live directly in `tests/`.
 
 ### Common Patterns
-- Layering: `routers/` (HTTP layer, both JSON API and server-rendered UI) → `services/` (business logic) → `repositories/` (DB access) → `models/` (SQLAlchemy ORM). `schemas/` holds Pydantic request/response models for the JSON API.
+- Preferred layering: `routers/` orchestrate HTTP concerns, `services/` own non-trivial business workflows, `repositories/` own ordinary aggregate access, and `models/` define persistence. Existing routers may call repositories for simple lookups, and transaction-bound services may issue tightly scoped ORM operations; follow the local guide before adding a new exception. `schemas/` holds shared Pydantic API contracts.
 - Copyright header convention: most `.py`/`.sh` files open with a `#!/usr/bin/env ...` + `Copyright (C) 2026 Gill-Bates` banner comment — match it in new files.
 
 ## Dependencies

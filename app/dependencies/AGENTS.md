@@ -20,7 +20,7 @@ FastAPI dependency-injection helpers (`Depends(...)`) shared across the server-r
 - `_csrf_secret()` is `@cache`d — it derives from settings once per process; don't reintroduce per-request secret derivation.
 
 ### Testing Requirements
-- Covered indirectly by the many `tests/test_ui_*.py` files and directly relevant to `tests/test_security_middleware.py` and `tests/test_hidden_captcha.py` (CSRF/session behavior).
+- Covered indirectly by the many `tests/test_ui_*.py` files and directly by `../../tests/test_security_middleware.py` for CSRF/session behavior.
 
 ### Common Patterns
 - HMAC-based CSRF token validation (`hmac`, `sha256`/`sha384`) rather than a third-party CSRF library.

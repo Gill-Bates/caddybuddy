@@ -13,13 +13,13 @@ Playwright-based UI audit tool for CaddyBuddy: accessibility checks (axe-core), 
 | `playwright.config.mjs` | Playwright project/browser configuration (chromium/firefox/webkit + mobile projects referenced in `package.json` scripts). |
 | `test-click.mjs` | Small standalone click/interaction script. |
 | `visual-regression.mjs` | Thin entry point delegating to `visual/visual-regression.mjs`. |
-| `package.json` | Scripts: `audit`, `audit:visual`, `install:browsers`(`:ci`), `test`/`ci:test`/`test:mobile`(`:update-snapshots`)/`test:headed`/`test:ui`, `report`. Dependencies use unpinned `"latest"` — expect version drift; re-run `npm install` if behavior seems stale. |
+| `package.json` | Audit/browser-install scripts and dependency declarations. Dependencies use unpinned `"latest"`, so refreshes can change behavior and must be reviewed with the lockfile diff. |
 
 ## Subdirectories
 | Directory | Purpose |
 |-----------|---------|
 | `browser/` | Code injected into the page context during audits: `analyzers/accessibility.js` (axe-core-based accessibility analyzer), `analyzers.bundle.js` (bundled analyzers for injection), `utils/dom-cache.js` (DOM query caching for analyzer performance). |
-| `lib/` | Node-side support library: `constants.mjs`, `browser-utils.mjs` (+ its `.test.mjs`), `device-page-pool.mjs` (browser/page pooling across device projects), `findings.mjs` (+ `.test.mjs`, finding/result data model), `inject-analyzers.mjs` (injects `browser/` code into pages), `result-serializer.mjs`, `views.mjs` (report/output formatting). |
+| `lib/` | Node-side support library, including `node:test` unit tests in `*.test.mjs`. |
 | `visual/` | Visual regression implementation: `visual-regression.mjs` (+ `.test.mjs`) and baseline `artifacts/` (gitignored). |
 | `node_modules/` | npm dependencies (gitignored) — not documented. |
 | `test-results/` | Playwright output (gitignored) — not documented. |
@@ -32,9 +32,9 @@ Playwright-based UI audit tool for CaddyBuddy: accessibility checks (axe-core), 
 - Dependencies are pinned to `"latest"` in `package.json` — if an audit starts failing unexpectedly, check for an upstream (Playwright/axe-core/lighthouse) version bump before assuming an app regression.
 
 ### Testing Requirements
-- `npm test` / `npm run ci:test` (Playwright) for the tool's own test suite (`lib/*.test.mjs`, `visual/visual-regression.test.mjs`).
-- `npm run audit` for a full lint/accessibility pass; `npm run audit:visual` to include visual regression (chromium only, single-worker by default).
-- `npm run test:mobile` for mobile-specific projects.
+- Run `node --test lib/*.test.mjs visual/*.test.mjs` for the tracked Node unit tests.
+- Run `npm run audit` against a running app for a full lint/accessibility pass; use `npm run audit:visual` to include Chromium visual regression.
+- The Playwright `npm test` and mobile scripts expect `tests/**/*.spec.*`, which are not currently tracked; do not use them as the default verification command until that suite exists in the repository.
 
 ### Common Patterns
 - ESM (`.mjs`) throughout; browser-context code kept physically separate (`browser/`) from Node-context orchestration (`lib/`, root).

@@ -20,11 +20,11 @@ Developer tooling that is not part of the shipped Python package: a dependency-r
 ## For AI Agents
 
 ### Working In This Directory
-- Nothing here ships in the Docker image or the Python package — it's build-time/dev-time only. Don't add runtime imports from `app/` into anything here (or vice versa, beyond the built `codemirror` JS artifact).
+- Nothing here ships as Python runtime code — it is build-time/dev-time tooling. CodeMirror's bundler intentionally imports first-party modules from `app/static/js/`; production `app` code must not import from `tools/`.
 - Both `codemirror/` and `ui-lint/` are independent Node projects with their own `package.json`/`node_modules` (gitignored) — install dependencies per-directory, not from the repo root.
 
 ### Testing Requirements
-- `codemirror/` has its own small test file (`scan-braces.test.mjs`); `ui-lint/` runs via Playwright (`npm test` / `npm run audit` inside that directory).
+- For `codemirror/`, run `npm run build` and the focused Python UI tests documented in its local guide. For `ui-lint/`, run the tracked `node:test` files directly and use `npm run audit` against a running app; see its local guide for exact commands.
 
 ## Dependencies
 

@@ -31,13 +31,13 @@ The CaddyBuddy FastAPI application package — the only package actually distrib
 ## For AI Agents
 
 ### Working In This Directory
-- Respect the layering: `routers/` should call `services/`, `services/` should call `repositories/` for persistence, `repositories/` should be the only layer issuing SQLAlchemy queries against `models/`. Avoid routers reaching directly into repositories/models.
-- `routers/api.py` + `routers/caddy_api.py` are the JSON API (consumed by scripts/automation and the Caddy Admin API integration); `routers/ui/*` are server-rendered HTML pages consumed by browsers. Keep response shapes for the former in `schemas/`.
-- Async everywhere: route handlers, services, and repository methods are `async def` using the SQLAlchemy async ORM (`AsyncSession`).
+- Prefer `routers` → `services` → `repositories` for non-trivial workflows. Existing routers may use repositories for simple lookups, and transaction-bound services such as `caddyfile_manager.py` may perform tightly coupled ORM work. Do not add raw SQLAlchemy queries to routers.
+- `routers/api.py` + `routers/caddy_api.py` are the JSON API; `routers/ui/*` are server-rendered HTML pages. Keep shared/stable JSON contracts in `schemas/`; small route-local models and streaming responses are established exceptions.
+- Keep asynchronous I/O paths async. Pure parsing/formatting helpers may be synchronous, and blocking filesystem work should use the existing offload patterns.
 
 ### Testing Requirements
 - Corresponding tests live in `../tests/test_<module>.py` (e.g. `app/services/ssllabs.py` ↔ `tests/test_ssllabs_service.py`). Add/extend the matching test file when changing a module here.
-- Run `pytest` from the repo root; `ruff check` for lint.
+- Run `.venv/bin/python -m pytest` from the repo root and `.venv/bin/ruff check .` for lint.
 
 ### Common Patterns
 - Settings are read via `app.config.settings.get_settings()` (cached) rather than reading env vars directly outside `config/`.

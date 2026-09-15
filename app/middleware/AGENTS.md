@@ -23,7 +23,7 @@ ASGI middleware for the server-rendered UI: CSRF protection and session-cookie h
 - See `../../tests/test_security_middleware.py`.
 
 ### Common Patterns
-- Cookie payloads are base64-encoded JSON (`json`, `b64decode`/`b64encode`), not a third-party session-cookie library.
+- Session cookies contain Base64-encoded JSON and are integrity-protected and timestamped with `itsdangerous.TimestampSigner`; Base64 is encoding, not the security boundary. Preserve signature and expiry validation when changing the format.
 
 ## Dependencies
 

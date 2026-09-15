@@ -9,13 +9,13 @@ Async SQLAlchemy engine and session management for the SQLite-backed application
 ## Key Files
 | File | Description |
 |------|-------------|
-| `session.py` | Engine/session factory, `AsyncSession` creation, and `fcntl`-based file locking (coordinating DB init/access across processes/workers sharing `data/caddybuddy.db`). The largest file in this package. |
+| `session.py` | Engine/session factory, `AsyncSession` creation, SQLite pragmas, and `fcntl`-based serialization of database initialization across processes. |
 | `__init__.py` | Package marker. |
 
 ## For AI Agents
 
 ### Working In This Directory
-- The `fcntl` file locking in `session.py` (paired with lock files under `data/` and `data/locks/`) exists specifically to make single-file SQLite safe across multiple worker processes/threads. Do not remove or weaken this locking without understanding the multi-worker deployment story (see `docker/entrypoint.sh` for how `data/` is bootstrapped).
+- The `fcntl` sidecar lock in `session.py` serializes schema/database initialization across processes; ordinary requests rely on SQLite WAL, transactions, and connection pragmas rather than that lock. Do not broaden or weaken either mechanism without dedicated concurrency tests.
 - Sessions should be obtained through the dependency-injection path (`app.dependencies.web` / FastAPI `Depends`), not instantiated ad hoc in routers.
 
 ### Testing Requirements

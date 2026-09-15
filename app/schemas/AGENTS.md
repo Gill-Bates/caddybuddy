@@ -17,7 +17,7 @@ Pydantic request/response models for the JSON API (`app/routers/api.py`, `app/ro
 ## For AI Agents
 
 ### Working In This Directory
-- Note there are two distinctly-named `CaddyStatusResponse` classes (one in `caddy.py`, one in `system.py`) — check imports carefully when editing either; they serve different endpoints (`caddy_api.py` vs `api.py`).
+- There are two same-named `CaddyStatusResponse` classes (one in `caddy.py`, one in `system.py`) — check imports carefully when editing either; they serve different endpoints (`caddy_api.py` vs `api.py`).
 - Changing a field here is a wire-format/API-contract change — check both the router that uses it and any JS/template consumers (e.g. dashboard chart data) before renaming or removing fields.
 
 ### Testing Requirements

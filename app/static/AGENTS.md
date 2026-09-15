@@ -22,7 +22,7 @@ Static assets served directly by the app: first-party CSS/JS/images plus vendore
 - Assets referenced by UI pages get Subresource Integrity hashes computed via `app/dependencies/web.py`'s `asset_integrity()` — renaming/moving files here may require checking template references still resolve.
 
 ### Testing Requirements
-- Visual/behavioral coverage for static assets comes from `tools/ui-lint/` (Playwright), not `pytest`.
+- Use focused `../../tests/test_ui_*.py` checks for source-contract assertions and `../../tools/ui-lint/` for live browser, accessibility, and visual behavior.
 
 ## Dependencies
 

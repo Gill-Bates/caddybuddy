@@ -4,7 +4,7 @@
 # repositories
 
 ## Purpose
-Database access layer — one repository class per aggregate, wrapping `AsyncSession` queries against `app/models/entities.py`. This is the only layer that should issue SQLAlchemy queries.
+Database access layer — one repository class per aggregate, wrapping ordinary `AsyncSession` queries against `app/models/entities.py`. A few transaction-bound services own tightly coupled snapshot/state operations; do not expand those exceptions casually.
 
 ## Key Files
 | File | Description |
