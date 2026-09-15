@@ -1,7 +1,8 @@
 ## [1.5.2] - 2026-09-15
 
 - `New` Onboarding now warns when a host-mode Caddy Admin API binds to a non-loopback address that may be unavailable during boot, with guidance for reliable systemd startup.
-- `Security` Added invisible anti-bot checks to sign-in and first-run account setup forms, combining a honeypot with signed, time-bound form tokens.
+- `Fix` The dashboard's SSL Labs rank history chart now only offers time ranges covered by the configured retention window, and hosts on a monthly scan schedule no longer show gaps in the earliest weeks of a range.
+- `Security` Added invisible anti-bot checks to the sign-in and first-run account setup forms, combining a honeypot with a signed, time-bound form token; rejected submissions are logged in the same structured format used for other failed login attempts.
 
 ## [1.5.1] - 2026-09-14
 

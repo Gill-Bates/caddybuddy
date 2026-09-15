@@ -2412,12 +2412,14 @@ body.app-body--menu-open .app-sidebar {
 @media (min-width: 1200px) {
 
     .app-page--sites .app-page__header,
-    .ssllabs-page .app-page__header {
+    .ssllabs-page .app-page__header,
+    .app-page--settings .app-page__header {
         margin-bottom: 0.25rem;
     }
 
     .app-page--sites .app-page__header,
-    .ssllabs-page .app-page__header {
+    .ssllabs-page .app-page__header,
+    .app-page--settings .app-page__header {
         flex: 0 0 auto;
     }
 

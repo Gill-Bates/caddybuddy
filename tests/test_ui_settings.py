@@ -91,6 +91,17 @@ class UISettingsTests(unittest.TestCase):
             "The first secondary settings card must cancel Bootstrap's vertical gutter and align with the primary card.",
         )
 
+    def test_desktop_settings_header_uses_the_compact_page_gap(self) -> None:
+        template = Path("app/templates/settings.html").read_text(encoding="utf-8")
+        css = Path("app/static/css/app.css").read_text(encoding="utf-8")
+
+        self.assertIn('class="app-page app-page--settings"', template)
+        self.assertIn(
+            ".app-page--settings .app-page__header {\n        margin-bottom: 0.25rem;\n    }",
+            css,
+            "Settings must use the same compact desktop header gap as the other card-based pages.",
+        )
+
     def test_settings_page_renders_caddy_configuration_values(self) -> None:
         app = self._build_app()
         current_user = SimpleNamespace(username="admin", role="admin")
