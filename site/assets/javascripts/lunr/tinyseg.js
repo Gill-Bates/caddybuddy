@@ -1,3 +1,8 @@
+//
+// site/assets/javascripts/lunr/tinyseg.js
+// Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
+//
+
 /**
  * export the module via AMD, CommonJS or as a browser global
  * Export code from https://github.com/umdjs/umd/blob/master/returnExports.js

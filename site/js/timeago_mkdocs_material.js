@@ -1,3 +1,8 @@
+//
+// site/js/timeago_mkdocs_material.js
+// Copyright (C) 2026 Gill-Bates http://github.com/Gill-Bates
+//
+
 // Script to ensure timeago keeps working when
 // used with mkdocs-material's instant loading feature
 

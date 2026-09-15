@@ -71,9 +71,36 @@ class UIDashboardTests(unittest.TestCase):
             ],
         )
 
-    def test_home_page_renders_dashboard_metrics(self) -> None:
+    def _render_home(
+        self,
+        *,
+        metrics: SimpleNamespace,
+        retention_days: int = 365,
+        onboarding_status: str = "completed",
+    ):
         app = self._build_app()
         current_user = SimpleNamespace(username="admin", role="admin")
+
+        with (
+            patch("app.routers.ui.dashboard.require_user", new=AsyncMock(return_value=current_user)),
+            patch("app.routers.ui.dashboard.get_dashboard_shell_metrics", new=AsyncMock(return_value=metrics)),
+            patch(
+                "app.routers.ui.dashboard.get_ssllabs_history_retention_days",
+                new=AsyncMock(return_value=retention_days),
+            ),
+            patch(
+                "app.routers.ui.dashboard.get_caddy_runtime_status",
+                new=AsyncMock(return_value=SimpleNamespace(onboarding_required=False)),
+            ),
+            patch(
+                "app.routers.ui._common.get_onboarding_state",
+                new=AsyncMock(return_value=SimpleNamespace(status=onboarding_status)),
+            ),
+            TestClient(app) as client,
+        ):
+            return client.get("/")
+
+    def test_home_page_renders_dashboard_metrics(self) -> None:
         metrics = SimpleNamespace(
             domain_count=12,
             enabled_domain_count=10,
@@ -85,24 +112,7 @@ class UIDashboardTests(unittest.TestCase):
             caddy_version="v2.8.4",
         )
 
-        with (
-            patch("app.routers.ui.dashboard.require_user", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.dashboard.get_dashboard_shell_metrics", new=AsyncMock(return_value=metrics)),
-            patch(
-                "app.routers.ui.dashboard.get_ssllabs_history_retention_days",
-                new=AsyncMock(return_value=365),
-            ),
-            patch(
-                "app.routers.ui.dashboard.get_caddy_runtime_status",
-                new=AsyncMock(return_value=SimpleNamespace(onboarding_required=False)),
-            ),
-            patch(
-                "app.routers.ui._common.get_onboarding_state",
-                new=AsyncMock(return_value=SimpleNamespace(status="completed")),
-            ),
-            TestClient(app) as client,
-        ):
-            response = client.get("/")
+        response = self._render_home(metrics=metrics)
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('<option value="30d" selected>30 d</option>', response.text)
@@ -153,8 +163,6 @@ class UIDashboardTests(unittest.TestCase):
         self.assertNotIn("Create your first managed site", response.text)
 
     def test_home_page_renders_empty_state_when_no_domains_exist(self) -> None:
-        app = self._build_app()
-        current_user = SimpleNamespace(username="admin", role="admin")
         metrics = SimpleNamespace(
             domain_count=0,
             enabled_domain_count=0,
@@ -166,24 +174,7 @@ class UIDashboardTests(unittest.TestCase):
             caddy_version="v2.8.4",
         )
 
-        with (
-            patch("app.routers.ui.dashboard.require_user", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.dashboard.get_dashboard_shell_metrics", new=AsyncMock(return_value=metrics)),
-            patch(
-                "app.routers.ui.dashboard.get_ssllabs_history_retention_days",
-                new=AsyncMock(return_value=365),
-            ),
-            patch(
-                "app.routers.ui.dashboard.get_caddy_runtime_status",
-                new=AsyncMock(return_value=SimpleNamespace(onboarding_required=False)),
-            ),
-            patch(
-                "app.routers.ui._common.get_onboarding_state",
-                new=AsyncMock(return_value=SimpleNamespace(status="completed")),
-            ),
-            TestClient(app) as client,
-        ):
-            response = client.get("/")
+        response = self._render_home(metrics=metrics)
 
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("Create your first managed site", response.text)
@@ -191,8 +182,6 @@ class UIDashboardTests(unittest.TestCase):
         self.assertIn('d-none', response.text)
 
     def test_home_page_hides_history_ranges_beyond_retention(self) -> None:
-        app = self._build_app()
-        current_user = SimpleNamespace(username="admin", role="admin")
         metrics = SimpleNamespace(
             domain_count=1,
             enabled_domain_count=1,
@@ -204,24 +193,7 @@ class UIDashboardTests(unittest.TestCase):
             caddy_version="v2.8.4",
         )
 
-        with (
-            patch("app.routers.ui.dashboard.require_user", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.dashboard.get_dashboard_shell_metrics", new=AsyncMock(return_value=metrics)),
-            patch(
-                "app.routers.ui.dashboard.get_ssllabs_history_retention_days",
-                new=AsyncMock(return_value=90),
-            ),
-            patch(
-                "app.routers.ui.dashboard.get_caddy_runtime_status",
-                new=AsyncMock(return_value=SimpleNamespace(onboarding_required=False)),
-            ),
-            patch(
-                "app.routers.ui._common.get_onboarding_state",
-                new=AsyncMock(return_value=SimpleNamespace(status="completed")),
-            ),
-            TestClient(app) as client,
-        ):
-            response = client.get("/")
+        response = self._render_home(metrics=metrics, retention_days=90)
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('value="30d"', response.text)
