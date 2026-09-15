@@ -9,7 +9,7 @@ Application configuration: environment-driven settings, the shared rate limiter 
 ## Key Files
 | File | Description |
 |------|-------------|
-| `settings.py` | Main `pydantic-settings` model — env var parsing, validation (paths, timezone, URLs), and the cached `get_settings()` accessor. Largest and most central file in this package. |
+| `settings.py` | Main `pydantic-settings` model — env var parsing, validation (paths, timezone, URLs), and the cached `get_settings()` accessor. |
 | `limiter.py` | Shared `slowapi.Limiter` instance (keyed by remote address). Created `enabled=True` by default; the enabled flag is updated at runtime from DB-stored settings (see `app/services/runtime_settings.py`). |
 | `logging.py` | Customizes uvicorn's `LOGGING_CONFIG` (access/default formatters) for consistent structured log output. |
 | `__init__.py` | Package marker. |

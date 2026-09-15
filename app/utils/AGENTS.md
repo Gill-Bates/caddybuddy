@@ -9,7 +9,7 @@ Stateless helper modules with no dependency on the database or FastAPI request c
 ## Key Files
 | File | Description |
 |------|-------------|
-| `caddyfile.py` | Caddyfile parsing/generation logic. The largest file in `utils/` — the core text-format handling behind `services/caddyfile_manager.py`. |
+| `caddyfile.py` | Caddyfile parsing/generation logic behind `services/caddyfile_manager.py`. |
 | `admin_targets.py` | Shared allow/deny policy for Caddy Admin API network targets. Used by **both** the runtime-settings validator (checks a user-supplied Admin API URL before persisting) and the Admin API client (pins a resolved IP before connecting) — security-relevant (SSRF prevention); keep both call sites in sync. |
 | `hidden_captcha.py` | Invisible, no-interaction anti-bot validation for public auth forms (honeypot-style, no user-facing CAPTCHA challenge). |
 | `security_logging.py` | Stable, injection-safe security event log formatting for external log consumers — don't interpolate untrusted input into these messages without going through the helpers here. |

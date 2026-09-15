@@ -19,7 +19,7 @@ Static assets served directly by the app: first-party CSS/JS/images plus vendore
 ### Working In This Directory
 - `vendor/codemirror/` is a **build artifact**: it's produced by `tools/codemirror/` (`npm run build` there runs esbuild and writes `caddybuddy-codemirror.js` here). Do not hand-edit it — change the source in `tools/codemirror/` and rebuild instead.
 - `bootstrap/`, `chartjs/`, and `confetti/` under `vendor/` are checked-in third-party libraries; treat them as read-only unless deliberately upgrading a vendored version.
-- Assets referenced by UI pages get Subresource Integrity hashes computed via `app/dependencies/web.py`'s `asset_integrity()` — renaming/moving files here may require checking template references still resolve.
+- `app/dependencies/web.py` exposes `asset_integrity()` for SRI generation. When renaming, moving, or integrity-protecting assets, verify template references and cache invalidation together.
 
 ### Testing Requirements
 - Use focused `../../tests/test_ui_*.py` checks for source-contract assertions and `../../tools/ui-lint/` for live browser, accessibility, and visual behavior.

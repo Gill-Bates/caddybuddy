@@ -22,7 +22,7 @@ Source content for the MkDocs Material documentation site, published to GitHub P
 ### Working In This Directory
 - This is documentation content (Markdown), not application code — changes here don't require `pytest`, but should stay consistent with actual `app/` behavior (this repo has `tests/test_docs_workflow.py` asserting on docs build/workflow expectations).
 - `docs/changelog.md` and `docs/license.md` are copied from `../CHANGELOG.md` and `../LICENSE` by `.github/workflows/docs-build.yml` and are gitignored. Edit the root sources, never these generated copies.
-- Navigation structure and plugin config (git-revision-date, minify, redirects) live in `../mkdocs.yml`, not here — update both together when adding/moving pages.
+- Navigation structure and active plugin config (search, minify, git revision dates) live in `../mkdocs.yml`, not here — update both together when adding or moving pages.
 
 ### Testing Requirements
 - `tests/test_docs_workflow.py` covers docs build/workflow assumptions; a real `mkdocs build` (extras in `pyproject.toml`'s `docs` group) is the practical way to verify rendering.

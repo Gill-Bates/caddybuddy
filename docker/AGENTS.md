@@ -27,7 +27,7 @@ Container image definition and runtime bootstrap for deploying CaddyBuddy.
 ## Dependencies
 
 ### Internal
-- Packages `app/` and the root `Caddyfile`; entrypoint provisions the `data/` volume consumed by `app/database/session.py`.
+- Packages `app/`, `run.py`, and build metadata; entrypoint provisions the `data/` volume consumed by `app/database/session.py`. The root `Caddyfile` is not copied into the image.
 
 ### External
 - Debian-based Python base images and apt packages declared in `Dockerfile`; Python dependencies are resolved from `pyproject.toml` during the release workflow.

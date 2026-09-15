@@ -34,7 +34,7 @@ Not documented here (generated, runtime, or tool-local state, all gitignored): `
 - This is a single-package project: only `app/` ships (see the `[tool.setuptools.packages.find]` comment in `pyproject.toml`). Everything else is dev/docs/CI tooling.
 - Python 3.13 with async-first I/O (FastAPI + SQLAlchemy async ORM + `aiosqlite`). Keep I/O-bound paths async; pure helpers may remain synchronous.
 - Templates are server-rendered Jinja2 (`app/templates/`) — this is not an SPA; there is no frontend build step for the main UI beyond the vendored/bundled JS in `app/static/vendor/`.
-- The app is designed for a single SQLite database file with file-locking coordination (`fcntl`) for multi-worker safety — see `app/database/AGENTS.md` before touching session/engine code.
+- The app uses one SQLite database with WAL/transaction coordination; an `fcntl` sidecar lock serializes cross-process initialization only. See `app/database/AGENTS.md` before touching session/engine code.
 
 ### Testing Requirements
 - Use the repository-local environment for Python commands.

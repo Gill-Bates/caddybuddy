@@ -12,8 +12,8 @@ Jinja2 templates rendered by `app/routers/ui/*` — the entire visible applicati
 | `base.html` | Shared page layout (nav, CSP nonce wiring, flash-message rendering, asset includes) extended by every other page template. |
 | `login.html` | Sign-in page (`app/routers/ui/auth.py`), including the invisible-captcha markup. |
 | `home.html` | Dashboard/home page (`app/routers/ui/dashboard.py`). |
-| `onboarding.html` | First-run onboarding wizard (`app/routers/ui/onboarding.py`) — the largest template. |
-| `sites.html` | Site management page (`app/routers/ui/sites.py`) — second largest template. |
+| `onboarding.html` | First-run onboarding wizard (`app/routers/ui/onboarding.py`). |
+| `sites.html` | Site management page (`app/routers/ui/sites.py`). |
 | `settings.html` | App settings page (`app/routers/ui/settings.py`). |
 | `caddyfile.html` | Caddyfile viewer/editor (`app/routers/ui/caddyfile.py`), embeds the CodeMirror editor bundle. |
 | `ssllabs.html` | SSL Labs scan results/schedule page (`app/routers/ui/ssllabs.py`). |

@@ -14,7 +14,7 @@ Server-rendered HTML pages — the actual browser-facing application. Each modul
 | `dashboard.py` | Home/dashboard page (`home_page`). |
 | `onboarding.py` | First-run onboarding wizard: location/mode/preflight/enable-admin-API/execute steps. |
 | `settings.py` | App settings page: Caddy settings, SSL Labs settings/retention, password change, SSL Labs email registration; also `restart_onboarding_wizard`. |
-| `sites.py` | Site management: listing, create/update/delete, certificate status/renewal, validation. The largest file in the whole `app/` package by line count. |
+| `sites.py` | Site management: listing, create/update/delete, certificate status/renewal, validation. |
 | `caddyfile.py` | Caddyfile viewer/editor page: view, save, validate-only, and trigger onboarding re-run. |
 | `ssllabs.py` | SSL Labs scan UI: page render, start scan, update schedule, grade filtering (`_normalize_filter_grade`). |
 | `about.py` | About page and update-check action. |

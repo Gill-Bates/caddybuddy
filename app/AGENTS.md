@@ -36,7 +36,7 @@ The CaddyBuddy FastAPI application package — the only package actually distrib
 - Keep asynchronous I/O paths async. Pure parsing/formatting helpers may be synchronous, and blocking filesystem work should use the existing offload patterns.
 
 ### Testing Requirements
-- Corresponding tests live in `../tests/test_<module>.py` (e.g. `app/services/ssllabs.py` ↔ `tests/test_ssllabs_service.py`). Add/extend the matching test file when changing a module here.
+- Corresponding tests live under `../tests/` (e.g. `app/services/ssllabs.py` ↔ `tests/test_ssllabs_service.py`). When behavior changes, extend the closest relevant tests; documentation-only or structural edits do not require artificial test changes.
 - Run `.venv/bin/python -m pytest` from the repo root and `.venv/bin/ruff check .` for lint.
 
 ### Common Patterns

@@ -19,7 +19,7 @@ Async SQLAlchemy engine and session management for the SQLite-backed application
 - Sessions should be obtained through the dependency-injection path (`app.dependencies.web` / FastAPI `Depends`), not instantiated ad hoc in routers.
 
 ### Testing Requirements
-- See `../../tests/test_database_session.py` — this is a large, dedicated test file; extend it for any locking/session-lifecycle changes.
+- See `../../tests/test_database_session.py`; extend it for locking or session-lifecycle behavior changes.
 
 ### Common Patterns
 - Async context managers for session lifecycle; `threading`/`asyncio` primitives combined with `fcntl` for cross-process coordination.
