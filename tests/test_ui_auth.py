@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, patch
 
 from app.config.settings import get_settings
 from app.services.auth import PASSWORD_MIN_LENGTH
+from app.utils.hidden_captcha import CaptchaOutcome
 
 _ENV_OVERRIDES = {
     "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
@@ -49,8 +50,14 @@ class UIAuthTests(unittest.TestCase):
         for key, value in _ENV_OVERRIDES.items():
             os.environ[key] = value
         get_settings.cache_clear()
+        self.captcha_verifier_patcher = patch(
+            "app.routers.ui.auth.verify_captcha_token",
+            return_value=CaptchaOutcome.OK,
+        )
+        self.captcha_verifier = self.captcha_verifier_patcher.start()
 
     def tearDown(self) -> None:
+        self.captcha_verifier_patcher.stop()
         get_settings.cache_clear()
 
     def _build_app(self):
@@ -65,6 +72,13 @@ class UIAuthTests(unittest.TestCase):
         match = re.search(r'name="csrf_token" value="([^"]+)"', html)
         if match is None:
             raise AssertionError("csrf_token input not found in login page")
+        return match.group(1)
+
+    @staticmethod
+    def _extract_captcha_token(html: str) -> str:
+        match = re.search(r'name="captcha_token" value="([^"]+)"', html)
+        if match is None:
+            raise AssertionError("captcha_token input not found in login page")
         return match.group(1)
 
     @staticmethod
@@ -125,6 +139,48 @@ class UIAuthTests(unittest.TestCase):
             unittest.mock.ANY,
             username="admin",
             reason="invalid_credentials",
+            status_code=403,
+        )
+
+    def test_login_page_renders_the_hidden_captcha_challenge(self) -> None:
+        app = self._build_app()
+
+        with TestClient(app) as client:
+            response = client.get("/login")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('class="cb-honeypot"', response.text)
+        self.assertIn('name="website"', response.text)
+        self.assertTrue(self._extract_captcha_token(response.text))
+
+    def test_filled_honeypot_is_rejected_before_password_validation(self) -> None:
+        app = self._build_app()
+        self.captcha_verifier.return_value = CaptchaOutcome.HONEYPOT_FILLED
+
+        with (
+            patch("app.routers.ui.auth.auth_service.authenticate", new=AsyncMock()) as authenticate,
+            patch("app.routers.ui.auth.log_authentication_failure") as log_failure,
+            TestClient(app) as client,
+        ):
+            login_page = client.get("/login")
+            response = client.post(
+                "/login",
+                data={
+                    "username": "admin",
+                    "password": "Password123!",
+                    "website": "https://spam.example",
+                    "captcha_token": self._extract_captcha_token(login_page.text),
+                    "csrf_token": self._extract_csrf_token(login_page.text),
+                },
+            )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("verify your submission.", response.text)
+        authenticate.assert_not_awaited()
+        log_failure.assert_called_once_with(
+            unittest.mock.ANY,
+            username=None,
+            reason="anti_bot_rejected",
             status_code=403,
         )
 

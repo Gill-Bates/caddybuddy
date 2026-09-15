@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 import os
+import re
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -66,6 +68,33 @@ class UIOnboardingTests(unittest.TestCase):
                 ("GET", "/sites", "sites_page"),
                 ("POST", "/logout", "logout_action"),
             ],
+        )
+
+    @staticmethod
+    def _extract_csrf_token(html: str) -> str:
+        match = re.search(r'name="csrf_token" value="([^"]+)"', html)
+        if not match:
+            raise AssertionError("csrf_token input not found in onboarding page")
+        return match.group(1)
+
+    def _enter_csrf_token_patches(self, stack: ExitStack) -> None:
+        """Patch what's needed to render the onboarding page so a real CSRF token can be extracted."""
+        stack.enter_context(
+            patch("app.routers.ui.onboarding.get_onboarding_state", new=AsyncMock(return_value=OnboardingWizardState()))
+        )
+        stack.enter_context(
+            patch(
+                "app.routers.ui.onboarding.get_caddy_config",
+                new=AsyncMock(return_value=SimpleNamespace(admin_url="http://localhost:2019", caddyfile_path_str="/app/Caddyfile")),
+            )
+        )
+        stack.enter_context(patch("app.routers.ui.onboarding.get_ssllabs_email", new=AsyncMock(return_value="")))
+        stack.enter_context(patch("app.routers.ui.onboarding.suggest_caddyfile_path", return_value="/etc/caddy/Caddyfile"))
+        stack.enter_context(
+            patch(
+                "app.routers.ui.onboarding.get_onboarding_caddyfile_path_candidates",
+                return_value=("/etc/caddy/Caddyfile", "/usr/local/etc/caddy/Caddyfile"),
+            )
         )
 
     def test_completed_onboarding_redirects_to_home(self) -> None:
@@ -448,9 +477,17 @@ class UIOnboardingTests(unittest.TestCase):
             patch("app.routers.ui.onboarding.validated_form", new=AsyncMock(return_value={})),
             patch("app.routers.ui.onboarding.enable_admin_api_and_reprobe", new=service),
             patch("app.routers.ui.onboarding.push_flash") as push_flash,
+            ExitStack() as stack,
             TestClient(app) as client,
         ):
-            response = client.post("/onboarding/enable-admin-api", follow_redirects=False)
+            self._enter_csrf_token_patches(stack)
+            page = client.get("/onboarding")
+            csrf_token = self._extract_csrf_token(page.text)
+            response = client.post(
+                "/onboarding/enable-admin-api",
+                data={"csrf_token": csrf_token},
+                follow_redirects=False,
+            )
 
         self.assertEqual(response.status_code, 303)
         service.assert_not_awaited()
@@ -468,9 +505,17 @@ class UIOnboardingTests(unittest.TestCase):
             patch("app.routers.ui.onboarding.enable_admin_api_and_reprobe",
                   new=AsyncMock(return_value=result_state)),
             patch("app.routers.ui.onboarding.push_flash") as push_flash,
+            ExitStack() as stack,
             TestClient(app) as client,
         ):
-            response = client.post("/onboarding/enable-admin-api", follow_redirects=False)
+            self._enter_csrf_token_patches(stack)
+            page = client.get("/onboarding")
+            csrf_token = self._extract_csrf_token(page.text)
+            response = client.post(
+                "/onboarding/enable-admin-api",
+                data={"csrf_token": csrf_token, "confirm_admin_api_enablement": "yes"},
+                follow_redirects=False,
+            )
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/onboarding")
@@ -486,9 +531,17 @@ class UIOnboardingTests(unittest.TestCase):
             patch("app.routers.ui.onboarding.enable_admin_api_and_reprobe",
                   new=AsyncMock(side_effect=ValueError("Caddy restart capability is not configured."))),
             patch("app.routers.ui.onboarding.push_flash") as push_flash,
+            ExitStack() as stack,
             TestClient(app) as client,
         ):
-            response = client.post("/onboarding/enable-admin-api", follow_redirects=False)
+            self._enter_csrf_token_patches(stack)
+            page = client.get("/onboarding")
+            csrf_token = self._extract_csrf_token(page.text)
+            response = client.post(
+                "/onboarding/enable-admin-api",
+                data={"csrf_token": csrf_token, "confirm_admin_api_enablement": "yes"},
+                follow_redirects=False,
+            )
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(push_flash.call_args.args[1], "danger")

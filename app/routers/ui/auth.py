@@ -28,6 +28,12 @@ from app.services.auth import (
     WeakPasswordError,
     auth_service,
 )
+from app.utils.hidden_captcha import (
+    HONEYPOT_FIELD_NAME,
+    CaptchaOutcome,
+    issue_captcha_token,
+    verify_captcha_token,
+)
 from app.utils.security_logging import log_authentication_failure
 
 from ._common import commit_and_flash, logger, safe_next, validated_form
@@ -36,10 +42,25 @@ router = APIRouter()
 
 _MAX_USERNAME_LENGTH = 50
 _MAX_PASSWORD_LENGTH = 4096
+_CAPTCHA_REJECTED_MESSAGE = "We couldn't verify your submission. Please reload the page and try again."
 
 
-def _render_login_failure(request: Request, *, next_path: str, status_code: int = 403) -> HTMLResponse:
-    push_flash(request, "danger", "Invalid credentials.")
+def _captcha_context() -> dict[str, str]:
+    """Return a fresh anti-bot challenge for an authentication form."""
+    return {
+        "captcha_token": issue_captcha_token(get_settings().secret_key.get_secret_value()),
+        "honeypot_field": HONEYPOT_FIELD_NAME,
+    }
+
+
+def _render_login_failure(
+    request: Request,
+    *,
+    next_path: str,
+    status_code: int = 403,
+    message: str = "Invalid credentials.",
+) -> HTMLResponse:
+    push_flash(request, "danger", message)
     return render_template(
         request,
         "login.html",
@@ -47,8 +68,10 @@ def _render_login_failure(request: Request, *, next_path: str, status_code: int 
         context={
             "safe_next_url": safe_next(next_path),
             "auth_error": True,
+            "auth_error_message": message,
             "password_policy_min_length": PASSWORD_MIN_LENGTH,
             "password_policy_message": PASSWORD_POLICY_MESSAGE,
+            **_captcha_context(),
         },
         status_code=status_code,
     )
@@ -76,6 +99,7 @@ async def login_page(request: Request, session: AsyncSession = Depends(get_db_se
             "setup_mode": setup_mode,
             "password_policy_min_length": PASSWORD_MIN_LENGTH,
             "password_policy_message": PASSWORD_POLICY_MESSAGE,
+            **_captcha_context(),
         },
     )
 
@@ -90,7 +114,7 @@ async def setup_action(request: Request, session: AsyncSession = Depends(get_db_
     password = str(form.get("password", ""))
     confirm = str(form.get("confirm_password", ""))
 
-    def _error(message: str) -> HTMLResponse:
+    def _error(message: str, *, status_code: int = 422) -> HTMLResponse:
         push_flash(request, "danger", message)
         return render_template(
             request,
@@ -102,10 +126,24 @@ async def setup_action(request: Request, session: AsyncSession = Depends(get_db_
                 "setup_error": message,
                 "password_policy_min_length": PASSWORD_MIN_LENGTH,
                 "password_policy_message": PASSWORD_POLICY_MESSAGE,
+                **_captcha_context(),
             },
-            status_code=422,
+            status_code=status_code,
         )
 
+    captcha_outcome = verify_captcha_token(
+        token=str(form.get("captcha_token", "")),
+        honeypot=str(form.get(HONEYPOT_FIELD_NAME, "")),
+        secret_key=get_settings().secret_key.get_secret_value(),
+    )
+    if captcha_outcome is not CaptchaOutcome.OK:
+        log_authentication_failure(
+            request,
+            username=None,
+            reason="anti_bot_rejected",
+            status_code=403,
+        )
+        return _error(_CAPTCHA_REJECTED_MESSAGE, status_code=403)
     if len(password) > _MAX_PASSWORD_LENGTH:
         return _error("Password is too long.")
     if password != confirm:
@@ -138,6 +176,23 @@ async def login_action(request: Request, session: AsyncSession = Depends(get_db_
     username = str(form.get("username", "")).strip()
     password = str(form.get("password", ""))
     next_path = str(form.get("next", "/")) or "/"
+    captcha_outcome = verify_captcha_token(
+        token=str(form.get("captcha_token", "")),
+        honeypot=str(form.get(HONEYPOT_FIELD_NAME, "")),
+        secret_key=get_settings().secret_key.get_secret_value(),
+    )
+    if captcha_outcome is not CaptchaOutcome.OK:
+        log_authentication_failure(
+            request,
+            username=None,
+            reason="anti_bot_rejected",
+            status_code=403,
+        )
+        return _render_login_failure(
+            request,
+            next_path=next_path,
+            message=_CAPTCHA_REJECTED_MESSAGE,
+        )
     if len(username) > _MAX_USERNAME_LENGTH:
         log_authentication_failure(
             request,

@@ -16,6 +16,7 @@ CaddyBuddy includes:
 
 - authenticated sessions with inactivity and absolute timeouts;
 - CSRF tokens and origin validation for state-changing browser requests;
+- an invisible honeypot plus a signed, time-bound token on public authentication forms;
 - security response headers;
 - rate limiting for sensitive endpoints;
 - password complexity validation;
@@ -46,7 +47,7 @@ Example Fail2Ban filter for `docker logs` or a Docker systemd-journal backend:
 
 ```ini
 [Definition]
-failregex = ^\S+\s+WARNING:\s+SECURITY authentication_failed client_ip=<HOST> username=.* reason=(?:invalid_credentials|username_too_long|password_too_long|rate_limited) status_code=(?:403|429)$
+failregex = ^\S+\s+WARNING:\s+SECURITY authentication_failed client_ip=<HOST> username=.* reason=(?:anti_bot_rejected|invalid_credentials|username_too_long|password_too_long|rate_limited) status_code=(?:403|429)$
 ignoreregex =
 ```
 

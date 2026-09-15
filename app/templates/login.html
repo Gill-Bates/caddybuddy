@@ -27,6 +27,11 @@
             <form action="{{ request.app.url_path_for('setup_action') }}" method="post" class="auth-form"
                 id="setup-form" data-setup-form data-password-checklist-form>
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <div class="cb-honeypot" aria-hidden="true">
+                    <label for="setup-honeypot">Website (leave this empty)</label>
+                    <input id="setup-honeypot" name="{{ honeypot_field }}" type="text" autocomplete="off" tabindex="-1">
+                </div>
+                <input type="hidden" name="captcha_token" value="{{ captcha_token }}">
 
                 <div class="mb-3">
                     <label for="setup-password" class="form-label auth-field-label">Password</label>
@@ -62,13 +67,18 @@
             {% else %}
 
             {% if auth_error %}
-            <div class="alert alert-danger login-error" role="alert" data-testid="login-error">Invalid credentials.</div>
+            <div class="alert alert-danger login-error" role="alert" data-testid="login-error">{{ auth_error_message | default("Invalid credentials.") }}</div>
             {% endif %}
 
             <form action="{{ request.app.url_path_for('login_action') }}" method="post" class="auth-form"
                 data-loading-submit-form>
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <input type="hidden" name="next" value="{{ safe_next_url if safe_next_url is defined else '/' }}">
+                <div class="cb-honeypot" aria-hidden="true">
+                    <label for="login-honeypot">Website (leave this empty)</label>
+                    <input id="login-honeypot" name="{{ honeypot_field }}" type="text" autocomplete="off" tabindex="-1">
+                </div>
+                <input type="hidden" name="captcha_token" value="{{ captcha_token }}">
 
                 <div class="mb-3">
                     <label for="username" class="form-label auth-field-label">Username</label>

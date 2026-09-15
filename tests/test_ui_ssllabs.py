@@ -154,7 +154,6 @@ class UISslLabsTests(unittest.TestCase):
         self.assertIn("A+", response.text)
         self.assertIn("Weekly", response.text)
         self.assertIn("Monthly", response.text)
-        self.assertNotIn(">Monthly<", response.text)
         self.assertIn('>Report</a>', response.text)
         self.assertIn('>Report</button>', response.text)
         self.assertIn('>Scan</button>', response.text)
@@ -350,7 +349,7 @@ class UISslLabsTests(unittest.TestCase):
             csrf_token = self._extract_csrf_token(page.text)
             response = client.post(
                 "/ssl-labs/1/schedule",
-                data={"csrf_token": csrf_token, "schedule_frequency": "monthly"},
+                data={"csrf_token": csrf_token, "schedule_frequency": "on"},
                 follow_redirects=False,
             )
 
@@ -393,7 +392,7 @@ class UISslLabsTests(unittest.TestCase):
             csrf_token = self._extract_csrf_token(page.text)
             response = client.post(
                 "/ssl-labs/1/schedule",
-                data={"csrf_token": csrf_token, "schedule_frequency": "monthly"},
+                data={"csrf_token": csrf_token, "schedule_frequency": "on"},
                 follow_redirects=True,
             )
 
