@@ -275,39 +275,6 @@ class SslLabsRepository:
         )
         return list(result.scalars().all())
 
-    async def list_latest_rank_history_between(
-        self,
-        session: AsyncSession,
-        *,
-        since: datetime,
-        before: datetime,
-    ) -> list[SslLabsRankHistory]:
-        """Return each host's latest sample recorded in ``[since, before)``, ordered by host."""
-        _require_aware_datetime(since, name="since")
-        _require_aware_datetime(before, name="before")
-        latest = (
-            select(
-                SslLabsRankHistory.host.label("host"),
-                func.max(SslLabsRankHistory.recorded_at).label("recorded_at"),
-            )
-            .where(SslLabsRankHistory.recorded_at >= since, SslLabsRankHistory.recorded_at < before)
-            .group_by(SslLabsRankHistory.host)
-            .subquery()
-        )
-        result = await session.execute(
-            select(SslLabsRankHistory)
-            .join(
-                latest,
-                (SslLabsRankHistory.host == latest.c.host)
-                & (SslLabsRankHistory.recorded_at == latest.c.recorded_at),
-            )
-            .order_by(SslLabsRankHistory.host.asc(), SslLabsRankHistory.id.asc())
-        )
-        rows: dict[str, SslLabsRankHistory] = {}
-        for row in result.scalars().all():
-            rows[row.host] = row
-        return list(rows.values())
-
     async def prune_rank_history_older_than(
         self,
         session: AsyncSession,

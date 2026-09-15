@@ -908,18 +908,12 @@ class GradeRankTests(unittest.TestCase):
         self.assertEqual(resolve_history_range(None), ("30d", 30))
 
     def test_available_history_ranges_respects_retention(self) -> None:
-        def keys(retention: int) -> list[str]:
-            return [option.key for option in available_history_ranges(retention)]
-
-        self.assertEqual(keys(0), ["30d", "90d", "180d", "1y"])
-        self.assertEqual(keys(365), ["30d", "90d", "180d", "1y"])
-        self.assertEqual(keys(180), ["30d", "90d", "180d"])
-        self.assertEqual(keys(90), ["30d", "90d"])
-        self.assertEqual(keys(7), ["30d"])  # default range is never dropped
-        self.assertEqual(
-            [option.label for option in available_history_ranges(0)],
-            ["30 d", "90 d", "180 d", "1 y"],
-        )
+        all_ranges = {"30d": "30 d", "90d": "90 d", "180d": "180 d", "1y": "1 y"}
+        self.assertEqual(available_history_ranges(0), all_ranges)
+        self.assertEqual(available_history_ranges(365), all_ranges)
+        self.assertEqual(list(available_history_ranges(180)), ["30d", "90d", "180d"])
+        self.assertEqual(list(available_history_ranges(90)), ["30d", "90d"])
+        self.assertEqual(list(available_history_ranges(7)), ["30d"])  # default range is never dropped
 
 
 class SslLabsRankHistoryTests(unittest.IsolatedAsyncioTestCase):
@@ -1028,7 +1022,10 @@ class SslLabsRankHistoryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(history.series), 1)
         points = history.series[0].points
-        self.assertEqual([(p.date, p.grade) for p in points], [("2026-05-11", "A"), ("2026-06-08", "A+")])
+        self.assertEqual(
+            [(p.date, p.grade) for p in points],
+            [("2026-04-27", "B"), ("2026-05-11", "A"), ("2026-06-08", "A+")],
+        )
 
     async def test_build_rank_history_seed_lookback_is_bounded(self) -> None:
         now = datetime(2026, 6, 13, 12, 0, tzinfo=UTC)
