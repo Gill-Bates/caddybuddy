@@ -249,6 +249,45 @@ class CaddyOnboardingServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Admin API and version check are skipped", "; ".join(state.preflight_warnings))
         self.assertIn("Caddyfile path does not exist yet", "; ".join(state.preflight_warnings))
 
+    async def _run_host_preflight(self, admin_api_url: str, *, mode: str = "host") -> OnboardingWizardState:
+        async with self.session_factory() as session:
+            await start_onboarding(session, mode=mode)
+            with (
+                patch("app.services.caddy_onboarding._probe_admin_api", new=AsyncMock(return_value=(True, "v2.8.4", True, None))),
+                patch("app.services.caddy_onboarding._inspect_caddyfile_path", return_value=(True, True, None)),
+            ):
+                return await run_onboarding_preflight(
+                    session,
+                    admin_api_url=admin_api_url,
+                    acme_email="admin@example.com",
+                    caddyfile_path="/etc/caddy/Caddyfile",
+                )
+
+    async def test_preflight_warns_when_admin_api_binds_to_non_loopback_ip(self) -> None:
+        state = await self._run_host_preflight("http://10.30.0.1:2019")
+
+        self.assertTrue(state.preflight_ok)
+        self.assertIn("bind: cannot assign requested address", "; ".join(state.preflight_warnings))
+        self.assertIn("10.30.0.1", "; ".join(state.preflight_warnings))
+
+    async def test_preflight_warns_for_non_loopback_ipv6_admin_address(self) -> None:
+        state = await self._run_host_preflight("http://[fd00::1]:2019")
+
+        self.assertIn("bind: cannot assign requested address", "; ".join(state.preflight_warnings))
+
+    async def test_preflight_does_not_warn_for_loopback_or_hostname_admin_address(self) -> None:
+        for admin_api_url in ("http://localhost:2019", "http://127.0.0.1:2019", "http://[::1]:2019"):
+            with self.subTest(admin_api_url=admin_api_url):
+                async with self.session_factory() as session:
+                    await reset_onboarding_state(session)
+                state = await self._run_host_preflight(admin_api_url)
+                self.assertNotIn("bind: cannot assign requested address", "; ".join(state.preflight_warnings))
+
+    async def test_preflight_does_not_warn_about_boot_order_in_docker_mode(self) -> None:
+        state = await self._run_host_preflight("http://10.30.0.1:2019", mode="docker")
+
+        self.assertNotIn("bind: cannot assign requested address", "; ".join(state.preflight_warnings))
+
     async def test_preflight_rejects_non_caddy_2_runtime(self) -> None:
         async with self.session_factory() as session:
             await start_onboarding(session, mode="host")

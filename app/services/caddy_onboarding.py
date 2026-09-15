@@ -253,6 +253,20 @@ def _is_loopback_host(hostname: str) -> bool:
         return False
 
 
+def _is_boot_order_sensitive_admin_host(hostname: str) -> bool:
+    """Return True when Caddy's admin bind depends on an interface address existing at startup.
+
+    CaddyBuddy writes ``admin <host:port>`` into the managed Caddyfile. A specific non-loopback IP
+    (for example a bridge or VPN address) can be missing when a host Caddy service starts during
+    boot, which makes Caddy exit with ``bind: cannot assign requested address``.
+    """
+    try:
+        address = ip_address(hostname.strip("[]"))
+    except ValueError:
+        return False
+    return not (address.is_loopback or address.is_unspecified)
+
+
 def normalize_runtime_location(raw_value: str) -> str:
     normalized = raw_value.strip().lower()
     if not normalized:
@@ -789,6 +803,15 @@ async def run_onboarding_preflight(
         normalized_admin_url = admin_api_url.strip()
         admin_url_valid = False
         add_error(str(exc), "admin_api_url")
+
+    admin_hostname = urlsplit(normalized_admin_url).hostname if admin_url_valid else None
+    if state.mode != "docker" and admin_hostname and _is_boot_order_sensitive_admin_host(admin_hostname):
+        warnings.append(
+            f"Caddy will bind its Admin API to {admin_hostname}, which is not a loopback address. "
+            "If that address belongs to a bridge or VPN interface, Caddy can fail to start after a "
+            "reboot with 'bind: cannot assign requested address'. Order the Caddy service after that "
+            "interface and enable Restart=on-failure (see Troubleshooting in the documentation)."
+        )
 
     normalized_email = ""
     if acme_email.strip():
