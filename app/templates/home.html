@@ -117,11 +117,9 @@
                 <span class="visually-hidden">Select time range</span>
                 <select id="ssllabs-history-range" class="form-select form-select-sm ssllabs-history-range"
                     aria-label="Select time range">
-                    <option value="7d">7 d</option>
-                    <option value="30d" selected>30 d</option>
-                    <option value="90d">90 d</option>
-                    <option value="180d">180 d</option>
-                    <option value="1y">1 y</option>
+                    {% for option in ssllabs_history_ranges %}
+                    <option value="{{ option.key }}"{% if option.key == ssllabs_history_default_range %} selected{% endif %}>{{ option.label }}</option>
+                    {% endfor %}
                 </select>
             </label>
         </div>

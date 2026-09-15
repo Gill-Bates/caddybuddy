@@ -44,9 +44,11 @@ SSLLABS_HISTORY_RANGES: dict[str, int] = {
     "90d": 90,
     "180d": 180,
     "1y": 365,
-    "2y": 730,
 }
 SSLLABS_HISTORY_DEFAULT_RANGE = "30d"
+# Monthly schedules drift up to 31 days + 2 days jitter; the slack covers delayed scans.
+# Bounded so hosts whose target was deleted are not carried forward indefinitely.
+_HISTORY_SEED_LOOKBACK = timedelta(days=40)
 
 _INITIAL_POLL_SECONDS = 5
 _RUNNING_POLL_SECONDS = 10
@@ -968,6 +970,26 @@ def resolve_history_range(range_key: str | None) -> tuple[str, int]:
     return key, SSLLABS_HISTORY_RANGES[key]
 
 
+@dataclass(slots=True, frozen=True)
+class SslLabsHistoryRangeOption:
+    key: str
+    label: str
+
+
+def available_history_ranges(retention_days: int) -> list[SslLabsHistoryRangeOption]:
+    """Return range presets covered by the retention window (0 = unlimited).
+
+    The default range is always kept so the dashboard selector never ends up empty.
+    """
+    options: list[SslLabsHistoryRangeOption] = []
+    for key, days in SSLLABS_HISTORY_RANGES.items():
+        if retention_days > 0 and days > retention_days and key != SSLLABS_HISTORY_DEFAULT_RANGE:
+            continue
+        label = f"{days // 365} y" if days % 365 == 0 else f"{days} d"
+        options.append(SslLabsHistoryRangeOption(key=key, label=label))
+    return options
+
+
 async def build_rank_history(
     session: AsyncSession,
     *,
@@ -978,12 +1000,17 @@ async def build_rank_history(
 
     Samples are bucketed to the Monday of their UTC week; when a host has multiple
     samples in the same week the latest one wins, giving a clean weekly-resolution series.
+    Each host's last sample before the window is prepended so the client can forward-fill
+    hosts scanned less often than the window's first week (e.g. monthly schedules).
     """
     key, days = resolve_history_range(range_key)
     reference = now or datetime.now(UTC)
     since = reference - timedelta(days=days)
 
-    entries = await ssllabs_repository.list_rank_history_since(session, since=since)
+    seeds = await ssllabs_repository.list_latest_rank_history_between(
+        session, since=since - _HISTORY_SEED_LOOKBACK, before=since
+    )
+    entries = [*seeds, *await ssllabs_repository.list_rank_history_since(session, since=since)]
 
     # host -> {week_monday -> (recorded_at, grade)}; keep the latest sample per week.
     by_host: dict[str, dict[str, tuple[datetime, str]]] = {}

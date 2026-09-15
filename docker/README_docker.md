@@ -13,7 +13,7 @@
 
 CaddyBuddy is a lightweight web UI for managing a single Caddy installation.
 
-It provides a dashboard, site management, a Caddyfile editor, certificate monitoring and renewal, SSL Labs assessments with weekly or monthly scheduling, onboarding, and secure defaults in one compact container image.
+It provides a dashboard, site management, a Caddyfile editor, certificate monitoring and renewal, SSL Labs assessments with weekly or monthly scheduling, onboarding, and secure defaults in one compact container image. Public authentication forms combine CSRF protection, invisible anti-bot checks, and rate limiting.
 
 ## Screenshots
 

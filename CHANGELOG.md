@@ -1,3 +1,8 @@
+## [1.5.2] - 2026-09-15
+
+- `New` Onboarding now warns when a host-mode Caddy Admin API binds to a non-loopback address that may be unavailable during boot, with guidance for reliable systemd startup.
+- `Security` Added invisible anti-bot checks to sign-in and first-run account setup forms, combining a honeypot with signed, time-bound form tokens.
+
 ## [1.5.1] - 2026-09-14
 
 - `New` Added CSRF protection to the onboarding wizard's form submissions.

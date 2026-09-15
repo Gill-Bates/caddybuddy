@@ -16,6 +16,8 @@ from app.database.session import get_db_session
 from app.dependencies.web import redirect_to, render_template
 from app.services.caddyfile_manager import get_caddy_runtime_status
 from app.services.dashboard import get_dashboard_shell_metrics
+from app.services.runtime_settings import get_ssllabs_history_retention_days
+from app.services.ssllabs import SSLLABS_HISTORY_DEFAULT_RANGE, available_history_ranges
 
 from ._common import require_onboarding_completed, require_user
 
@@ -40,6 +42,7 @@ async def home_page(
 
     show_confetti = request.session.pop("show_onboarding_confetti", False)
     metrics = await get_dashboard_shell_metrics(session)
+    ssllabs_history_ranges = available_history_ranges(await get_ssllabs_history_retention_days(session))
     return render_template(
         request,
         "home.html",
@@ -49,5 +52,7 @@ async def home_page(
             "metrics": metrics,
             "runtime_status": runtime_status,
             "show_onboarding_confetti": show_confetti,
+            "ssllabs_history_ranges": ssllabs_history_ranges,
+            "ssllabs_history_default_range": SSLLABS_HISTORY_DEFAULT_RANGE,
         },
     )

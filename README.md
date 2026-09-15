@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/platform-linux%2Famd64%20%7C%20linux%2Farm64-lightgrey?logo=linux&logoColor=white" alt="Platform">
 </p>
 
-CaddyBuddy provides guided onboarding, site and Caddyfile management, certificate visibility and renewal, weekly or monthly SSL Labs assessments, and health monitoring from a server-rendered FastAPI application.
+CaddyBuddy provides guided onboarding, site and Caddyfile management, certificate visibility and renewal, weekly or monthly SSL Labs assessments, and health monitoring from a server-rendered FastAPI application. Public authentication forms combine CSRF protection, invisible anti-bot checks, and rate limiting.
 
 ## Screenshots
 

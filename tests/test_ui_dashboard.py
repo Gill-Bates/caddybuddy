@@ -89,6 +89,10 @@ class UIDashboardTests(unittest.TestCase):
             patch("app.routers.ui.dashboard.require_user", new=AsyncMock(return_value=current_user)),
             patch("app.routers.ui.dashboard.get_dashboard_shell_metrics", new=AsyncMock(return_value=metrics)),
             patch(
+                "app.routers.ui.dashboard.get_ssllabs_history_retention_days",
+                new=AsyncMock(return_value=365),
+            ),
+            patch(
                 "app.routers.ui.dashboard.get_caddy_runtime_status",
                 new=AsyncMock(return_value=SimpleNamespace(onboarding_required=False)),
             ),
@@ -101,6 +105,12 @@ class UIDashboardTests(unittest.TestCase):
             response = client.get("/")
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn('<option value="30d" selected>30 d</option>', response.text)
+        self.assertIn('<option value="90d">90 d</option>', response.text)
+        self.assertIn('<option value="180d">180 d</option>', response.text)
+        self.assertIn('<option value="1y">1 y</option>', response.text)
+        self.assertNotIn('value="7d"', response.text)
+        self.assertNotIn('value="2y"', response.text)
         self.assertIn("Dashboard", response.text)
         self.assertIn("Managed sites, certificate state and local Caddy runtime status.", response.text)
         self.assertNotIn("Enabled / total site domains tracked by CaddyBuddy.", response.text)
@@ -160,6 +170,10 @@ class UIDashboardTests(unittest.TestCase):
             patch("app.routers.ui.dashboard.require_user", new=AsyncMock(return_value=current_user)),
             patch("app.routers.ui.dashboard.get_dashboard_shell_metrics", new=AsyncMock(return_value=metrics)),
             patch(
+                "app.routers.ui.dashboard.get_ssllabs_history_retention_days",
+                new=AsyncMock(return_value=365),
+            ),
+            patch(
                 "app.routers.ui.dashboard.get_caddy_runtime_status",
                 new=AsyncMock(return_value=SimpleNamespace(onboarding_required=False)),
             ),
@@ -175,6 +189,45 @@ class UIDashboardTests(unittest.TestCase):
         self.assertNotIn("Create your first managed site", response.text)
         self.assertIn('id="dashboard-certificate-warning"', response.text)
         self.assertIn('d-none', response.text)
+
+    def test_home_page_hides_history_ranges_beyond_retention(self) -> None:
+        app = self._build_app()
+        current_user = SimpleNamespace(username="admin", role="admin")
+        metrics = SimpleNamespace(
+            domain_count=1,
+            enabled_domain_count=1,
+            valid_certificate_count=1,
+            expired_certificate_count=0,
+            expiring_soon_certificate_count=0,
+            caddy_service_status="Running",
+            caddy_service_uptime="1h",
+            caddy_version="v2.8.4",
+        )
+
+        with (
+            patch("app.routers.ui.dashboard.require_user", new=AsyncMock(return_value=current_user)),
+            patch("app.routers.ui.dashboard.get_dashboard_shell_metrics", new=AsyncMock(return_value=metrics)),
+            patch(
+                "app.routers.ui.dashboard.get_ssllabs_history_retention_days",
+                new=AsyncMock(return_value=90),
+            ),
+            patch(
+                "app.routers.ui.dashboard.get_caddy_runtime_status",
+                new=AsyncMock(return_value=SimpleNamespace(onboarding_required=False)),
+            ),
+            patch(
+                "app.routers.ui._common.get_onboarding_state",
+                new=AsyncMock(return_value=SimpleNamespace(status="completed")),
+            ),
+            TestClient(app) as client,
+        ):
+            response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('value="30d"', response.text)
+        self.assertIn('value="90d"', response.text)
+        self.assertNotIn('value="180d"', response.text)
+        self.assertNotIn('value="1y"', response.text)
 
     def test_ssllabs_history_chart_uses_week_based_previous_comparison_labels(self) -> None:
         chart_script = Path("app/static/js/ssllabs-history-chart.js").read_text(encoding="utf-8")
