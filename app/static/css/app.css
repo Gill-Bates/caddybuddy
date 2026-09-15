@@ -4482,6 +4482,21 @@ body.app-body--menu-open .app-sidebar {
     position: relative;
 }
 
+/* Thinner track than the Bootstrap default (0.5rem); the thumb's margin-top is
+   re-centered for the new track height using Bootstrap's own formula:
+   -(thumb-height - track-height) / 2 = -(1rem - 0.3rem) / 2. */
+#ssllabs-retention-slider.form-range::-webkit-slider-runnable-track {
+    height: 0.3rem;
+}
+
+#ssllabs-retention-slider.form-range::-webkit-slider-thumb {
+    margin-top: -0.35rem;
+}
+
+#ssllabs-retention-slider.form-range::-moz-range-track {
+    height: 0.3rem;
+}
+
 .ssllabs-retention-ticks {
     position: absolute;
     inset: 0;
@@ -4502,29 +4517,46 @@ body.app-body--menu-open .app-sidebar {
     border-radius: var(--cb-pill-radius);
     background: color-mix(in srgb, var(--cb-muted) 15%, var(--cb-surface));
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--cb-surface) 82%, transparent);
-    transform: translate(-50%, -50%);
+    transform: translateX(-50%);
 }
 
-.ssllabs-retention-tick:nth-child(1) { grid-column: 1; }
-.ssllabs-retention-tick:nth-child(2) { grid-column: 2; }
-.ssllabs-retention-tick:nth-child(3) { grid-column: 3; }
-.ssllabs-retention-tick:nth-child(4) { grid-column: 4; }
-.ssllabs-retention-tick:nth-child(5) { grid-column: 5; }
-.ssllabs-retention-tick:nth-child(6) { grid-column: 6; }
+.ssllabs-retention-tick:nth-child(1) {
+    grid-column: 1;
+}
+
+.ssllabs-retention-tick:nth-child(2) {
+    grid-column: 2;
+}
+
+.ssllabs-retention-tick:nth-child(3) {
+    grid-column: 3;
+}
+
+.ssllabs-retention-tick:nth-child(4) {
+    grid-column: 4;
+}
+
+.ssllabs-retention-tick:nth-child(5) {
+    grid-column: 5;
+}
+
+.ssllabs-retention-tick:nth-child(6) {
+    grid-column: 6;
+}
 
 .ssllabs-retention-tick:nth-child(7) {
     grid-column: 6;
     justify-self: end;
-    transform: translate(50%, -50%);
+    transform: translateX(50%);
 }
 
-#ssllabs-retention-slider[data-active-index="0"] ~ .ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(1),
-#ssllabs-retention-slider[data-active-index="1"] ~ .ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(2),
-#ssllabs-retention-slider[data-active-index="2"] ~ .ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(3),
-#ssllabs-retention-slider[data-active-index="3"] ~ .ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(4),
-#ssllabs-retention-slider[data-active-index="4"] ~ .ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(5),
-#ssllabs-retention-slider[data-active-index="5"] ~ .ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(6),
-#ssllabs-retention-slider[data-active-index="6"] ~ .ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(7) {
+#ssllabs-retention-slider[data-active-index="0"]~.ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(1),
+#ssllabs-retention-slider[data-active-index="1"]~.ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(2),
+#ssllabs-retention-slider[data-active-index="2"]~.ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(3),
+#ssllabs-retention-slider[data-active-index="3"]~.ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(4),
+#ssllabs-retention-slider[data-active-index="4"]~.ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(5),
+#ssllabs-retention-slider[data-active-index="5"]~.ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(6),
+#ssllabs-retention-slider[data-active-index="6"]~.ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(7) {
     visibility: hidden;
 }
 
@@ -4540,19 +4572,42 @@ body.app-body--menu-open .app-sidebar {
 .ssllabs-retention-label {
     grid-row: 1;
     justify-self: start;
-    font-size: 0.675rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
     color: var(--bs-secondary-color);
     line-height: 1;
     white-space: nowrap;
     transform: translateX(-50%);
 }
 
-.ssllabs-retention-label:nth-child(1) { grid-column: 1; }
-.ssllabs-retention-label:nth-child(2) { grid-column: 2; }
-.ssllabs-retention-label:nth-child(3) { grid-column: 3; }
-.ssllabs-retention-label:nth-child(4) { grid-column: 4; }
-.ssllabs-retention-label:nth-child(5) { grid-column: 5; }
-.ssllabs-retention-label:nth-child(6) { grid-column: 6; }
+/* The infinity glyph reads noticeably smaller than digits at the same font-size,
+   so scale it up. The reduced line-height keeps its line box equal to the other
+   labels (1.125 x 0.72 = 0.81rem) so the label row height stays unchanged. */
+.ssllabs-retention-label:nth-child(1) {
+    grid-column: 1;
+    font-size: 1.125rem;
+    line-height: 0.72;
+}
+
+.ssllabs-retention-label:nth-child(2) {
+    grid-column: 2;
+}
+
+.ssllabs-retention-label:nth-child(3) {
+    grid-column: 3;
+}
+
+.ssllabs-retention-label:nth-child(4) {
+    grid-column: 4;
+}
+
+.ssllabs-retention-label:nth-child(5) {
+    grid-column: 5;
+}
+
+.ssllabs-retention-label:nth-child(6) {
+    grid-column: 6;
+}
 
 .ssllabs-retention-label:nth-child(7) {
     grid-column: 6;
@@ -4648,7 +4703,7 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .about-deps-table code {
-    font-size: 0.82rem;
+    font-size: 0.875rem;
 }
 
 .about-changelog-content {
@@ -4683,7 +4738,7 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .about-changelog-content code {
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
     padding: 0.05rem 0.3rem;
     border-radius: 0.3rem;
     background: var(--bs-tertiary-bg);
