@@ -515,13 +515,14 @@ class UISitesTests(unittest.TestCase):
             caddy_directives="reverse_proxy backend:8080",
         )
         certificate_info = {
-            "example.com": SimpleNamespace(
+            "example.com": CertificateInfo(
                 exists=False,
                 valid=False,
                 issued_at=None,
                 expires_at=None,
                 days_remaining=None,
                 error_message="TLS handshake failed: the remote server aborted the connection with an internal TLS error.",
+                status="error",
             )
         }
 

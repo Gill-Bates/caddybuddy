@@ -111,7 +111,7 @@ class UICaddyfileTests(unittest.TestCase):
         css = css_path.read_text(encoding="utf-8")
 
         self.assertIn(
-            ".app-page--caddyfile > .app-grid > .col-12 {\n        display: flex;\n        flex: 1 1 0;\n        flex-direction: column;\n        min-height: 0;\n        overflow: visible;\n        padding: 0.35rem;\n        margin: -0.35rem;\n    }",
+            ".app-page--caddyfile>.app-grid>.col-12 {\n        display: flex;\n        flex: 1 1 0;\n        flex-direction: column;\n        min-height: 0;\n        overflow: visible;\n        padding: 0.35rem;\n        margin: -0.35rem;\n    }",
             css,
             "Desktop Caddyfile column must keep a small gutter so the panel shadow is not clipped.",
         )
@@ -131,7 +131,7 @@ class UICaddyfileTests(unittest.TestCase):
         css = css_path.read_text(encoding="utf-8")
 
         self.assertIn(
-            "@media (max-width: 767.98px) {\n    .caddyfile-editor-panel__textarea,\n    #site-caddy-directives {\n        white-space: pre;\n        overflow-wrap: normal;\n        overflow-x: auto;\n        min-height: 18rem;\n        -webkit-overflow-scrolling: touch;\n    }\n\n    .caddyfile-editor-panel .cm-scroller,\n    .sites-form-panel__config .cm-scroller {\n        width: 100%;\n        min-width: 0;\n        overflow-x: auto;\n        overflow-y: auto;\n        -webkit-overflow-scrolling: touch;\n    }\n\n    .caddyfile-editor-panel .cm-content,\n    .sites-form-panel__config .cm-content {\n        min-width: 0;\n    }\n\n    .caddyfile-editor-panel__actions {\n        min-width: 0;\n    }\n}",
+            "@media (max-width: 767.98px) {\n\n    .caddyfile-editor-panel__textarea,\n    #site-caddy-directives {\n        white-space: pre;\n        overflow-wrap: normal;\n        overflow-x: auto;\n        min-height: 18rem;\n        -webkit-overflow-scrolling: touch;\n    }\n\n    .caddyfile-editor-panel .cm-scroller,\n    .sites-form-panel__config .cm-scroller {\n        width: 100%;\n        min-width: 0;\n        overflow-x: auto;\n        overflow-y: auto;\n        -webkit-overflow-scrolling: touch;\n    }\n\n    .caddyfile-editor-panel .cm-content,\n    .sites-form-panel__config .cm-content {\n        min-width: 0;\n    }\n\n    .caddyfile-editor-panel__actions {\n        min-width: 0;\n    }\n}",
             css,
             "Mobile code editors must keep horizontal swipe/scroll instead of forcing wrapped lines.",
         )
