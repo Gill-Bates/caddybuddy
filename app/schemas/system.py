@@ -50,7 +50,7 @@ class SslLabsRankSeriesResponse(BaseModel):
 
 
 class SslLabsRankHistoryResponse(BaseModel):
-    """Per-host daily SSL Labs rank timeseries for the dashboard chart."""
+    """Per-host weekly SSL Labs rank timeseries for the dashboard chart."""
     range_key: str
     days: int
     grade_scale: dict[str, int]

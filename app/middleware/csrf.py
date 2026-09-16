@@ -40,12 +40,11 @@ CSRF_PREFIXES = (
     "/onboarding",
     "/api/",
 )
-_CSRF_EXEMPT_API_PATHS = frozenset({
-    "/api/login",
-    "/api/mfa/verify",
-    "/api/passkeys/login/start",
-    "/api/passkeys/login/finish",
-})
+# Cookie-authenticated API requests are CSRF-validated. The passkey sign-in
+# ceremony (/api/passkeys/login/*) is deliberately *not* exempt: the login page
+# always renders a CSRF token, so the browser can send it, and the exemption
+# would otherwise also skip the Origin check.
+_CSRF_EXEMPT_API_PATHS: frozenset[str] = frozenset()
 _BASE_CONTENT_SECURITY_POLICY = (
     b"default-src 'self'; style-src 'self'; "
     b"script-src 'self'; worker-src blob:; font-src 'self' data:; img-src 'self' data: https:; "

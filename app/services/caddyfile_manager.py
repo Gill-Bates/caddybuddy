@@ -334,23 +334,30 @@ def _record_sync_event(
     )
 
 
-# errno values returned when renaming over a destination that is a separate
-# mount point (e.g. a single-file Docker bind mount): the atomic temp-file +
-# rename strategy cannot be used and we must write the file in place instead.
-_BIND_MOUNT_RENAME_ERRNOS = frozenset({errno.EBUSY, errno.EXDEV, errno.EINVAL})
+# errno values meaning the atomic temp-file + rename strategy is unavailable for
+# this destination, so the file must be written in place through its existing inode:
+# - EACCES/EPERM/EROFS: the *parent directory* is not writable, so the sibling
+#   temp file cannot even be created. This is the normal case for a single-file
+#   bind mount into an intentionally read-only application directory
+#   (`/etc/caddy/Caddyfile:/app/Caddyfile`), where only the mounted file itself
+#   is writable by the app user.
+# - EBUSY/EXDEV/EINVAL: the destination is its own mount point, so renaming over
+#   it fails even though the temp file could be created.
+_INPLACE_WRITE_FALLBACK_ERRNOS = frozenset(
+    {
+        errno.EACCES,
+        errno.EPERM,
+        errno.EROFS,
+        errno.EBUSY,
+        errno.EXDEV,
+        errno.EINVAL,
+    }
+)
 
 
-def _write_caddyfile_sync(path: Path, content: str) -> None:
-    """Persist content to a Caddyfile path on disk.
-
-    Prefer an atomic temp-file + rename. When the destination is a single-file
-    bind mount (common in containers), renaming over the mount point fails with
-    EBUSY/EXDEV; fall back to an in-place write through the bind-mounted inode so
-    restart-resilience is preserved. Writes are serialized by the operation guard.
-    """
+def _replace_caddyfile_atomically(path: Path, content: str, *, file_mode: int) -> None:
+    """Write content to a sibling temp file and atomically rename it over ``path``."""
     tmp_path = path.with_name(f".{path.name}.caddybuddy.tmp")
-    file_mode = path.stat().st_mode & 0o777
-
     try:
         with tmp_path.open("w", encoding="utf-8") as handle:
             handle.write(content)
@@ -358,29 +365,10 @@ def _write_caddyfile_sync(path: Path, content: str) -> None:
             os.fsync(handle.fileno())
         os.chmod(tmp_path, file_mode)
         tmp_path.replace(path)
-    except OSError as exc:
+    except OSError:
         with suppress(OSError):
             tmp_path.unlink()
-        if exc.errno not in _BIND_MOUNT_RENAME_ERRNOS:
-            raise
-        original_content = None
-        try:
-            original_content = path.read_text(encoding="utf-8")
-        except OSError:
-            pass
-        try:
-            with path.open("w", encoding="utf-8") as handle:
-                handle.write(content)
-                handle.flush()
-                os.fsync(handle.fileno())
-        except OSError:
-            if original_content is not None:
-                with suppress(OSError), path.open("w", encoding="utf-8") as restore_handle:
-                    restore_handle.write(original_content)
-                    restore_handle.flush()
-                    os.fsync(restore_handle.fileno())
-            raise
-        return
+        raise
 
     # The replace already succeeded; a failing directory fsync only weakens the
     # durability guarantee and must not turn a completed write into an error.
@@ -392,6 +380,57 @@ def _write_caddyfile_sync(path: Path, content: str) -> None:
             os.close(dir_fd)
     except OSError:
         logger.warning("Could not fsync Caddyfile directory after replace: %s", path.parent)
+
+
+def _write_caddyfile_in_place(path: Path, content: str) -> None:
+    """Truncate and rewrite ``path`` through its existing inode.
+
+    Used when no sibling temp file can be renamed over the destination. The write is
+    not atomic, so the previous content is read up front and restored on failure to
+    avoid leaving a truncated Caddyfile behind.
+    """
+    original_content: str | None = None
+    try:
+        original_content = path.read_text(encoding="utf-8")
+    except OSError:
+        pass
+    try:
+        with path.open("w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except OSError:
+        if original_content is not None:
+            with suppress(OSError), path.open("w", encoding="utf-8") as restore_handle:
+                restore_handle.write(original_content)
+                restore_handle.flush()
+                os.fsync(restore_handle.fileno())
+        raise
+
+
+def _write_caddyfile_sync(path: Path, content: str) -> None:
+    """Persist content to a Caddyfile path on disk.
+
+    Prefer an atomic temp-file + rename. When the Caddyfile is a single-file bind
+    mount (common in containers), that strategy fails either because the parent
+    directory is not writable or because renaming over the mount point is rejected;
+    fall back to an in-place write through the mounted inode so restart-resilience is
+    preserved without granting the app write access to its own directory. Writes are
+    serialized by the operation guard.
+    """
+    file_mode = path.stat().st_mode & 0o777
+
+    try:
+        _replace_caddyfile_atomically(path, content, file_mode=file_mode)
+    except OSError as exc:
+        if exc.errno not in _INPLACE_WRITE_FALLBACK_ERRNOS:
+            raise
+        logger.info(
+            "Caddyfile %s cannot be replaced atomically (%s); writing in place through the mounted inode.",
+            path,
+            exc,
+        )
+        _write_caddyfile_in_place(path, content)
 
 
 async def get_baseline_caddyfile(session: AsyncSession) -> str:

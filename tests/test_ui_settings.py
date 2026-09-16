@@ -29,8 +29,10 @@ for key, value in _ENV_OVERRIDES.items():
 
 get_settings.cache_clear()
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.database.session import get_db_session
 from app.routers.ui.settings import router as settings_router
 from tests.ui_test_app import build_ui_test_app
 
@@ -54,9 +56,17 @@ class UISettingsTests(unittest.TestCase):
             new=AsyncMock(return_value=SimpleNamespace(status="completed")),
         )
         self.onboarding_patcher.start()
+        # The Passkey tab lists the current user's passkeys; the mocked session
+        # cannot answer that, so tests opt in explicitly where it matters.
+        self.passkey_list_patcher = patch(
+            "app.routers.ui.settings.passkey_service.list_for_user",
+            new=AsyncMock(return_value=[]),
+        )
+        self.passkey_list = self.passkey_list_patcher.start()
 
     def tearDown(self) -> None:
         self.onboarding_patcher.stop()
+        self.passkey_list_patcher.stop()
         get_settings.cache_clear()
 
     @staticmethod
@@ -82,13 +92,124 @@ class UISettingsTests(unittest.TestCase):
             ],
         )
 
-    def test_desktop_settings_stack_starts_its_first_card_at_the_row_top(self) -> None:
+    def _build_action_app(self) -> FastAPI:
+        app = FastAPI()
+        app.include_router(settings_router)
+        app.dependency_overrides[get_db_session] = self._session_override
+        return app
+
+    def test_settings_page_uses_tabs_for_navigation(self) -> None:
+        template = Path("app/templates/settings.html").read_text(encoding="utf-8")
+        css = Path("app/static/css/app.css").read_text(encoding="utf-8")
+
+        self.assertIn('class="nav settings-tabs mb-4"', template)
+        self.assertIn('id="settingsGeneralTab"', template)
+        self.assertIn('id="settingsSecurityTab"', template)
+        self.assertIn('id="settingsPasskeyTab"', template)
+        self.assertIn('id="settingsSslLabsTab"', template)
+        self.assertIn('class="tab-content" id="settingsTabContent"', template)
+        self.assertIn(".settings-tabs .nav-link.active {", css)
+
+    def test_passkey_deletion_rejects_an_incorrect_current_password(self) -> None:
+        app = self._build_action_app()
+        current_user = SimpleNamespace(id=7, username="admin", role="admin", password_hash="stored-hash")
+
+        with (
+            patch("app.routers.ui.settings.require_admin", new=AsyncMock(return_value=current_user)),
+            patch(
+                "app.routers.ui.settings.validated_csrf_form",
+                new=AsyncMock(return_value={"current_password": "wrong-password"}),
+            ),
+            patch("app.routers.ui.settings.auth_service.verify_password", new=AsyncMock(return_value=False)) as verify,
+            patch("app.routers.ui.settings.passkey_service.delete_for_user", new=AsyncMock()) as delete,
+            TestClient(app) as client,
+        ):
+            response = client.post(
+                "/settings/passkeys/42/delete",
+                headers={"Accept": "application/json"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json(), {"success": False, "message": "Current password is incorrect."})
+        verify.assert_awaited_once_with("wrong-password", "stored-hash")
+        delete.assert_not_awaited()
+
+    def test_passkey_deletion_accepts_the_current_password(self) -> None:
+        app = self._build_action_app()
+        current_user = SimpleNamespace(id=7, username="admin", role="admin", password_hash="stored-hash")
+
+        with (
+            patch("app.routers.ui.settings.require_admin", new=AsyncMock(return_value=current_user)),
+            patch(
+                "app.routers.ui.settings.validated_csrf_form",
+                new=AsyncMock(return_value={"current_password": "correct-password"}),
+            ),
+            patch("app.routers.ui.settings.auth_service.verify_password", new=AsyncMock(return_value=True)) as verify,
+            patch(
+                "app.routers.ui.settings.passkey_service.delete_for_user",
+                new=AsyncMock(return_value=True),
+            ) as delete,
+            TestClient(app) as client,
+        ):
+            response = client.post(
+                "/settings/passkeys/42/delete",
+                headers={"Accept": "application/json"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"success": True, "message": "Passkey removed."})
+        verify.assert_awaited_once_with("correct-password", "stored-hash")
+        delete.assert_awaited_once_with(ANY, current_user, 42)
+
+    def test_two_factor_setup_page_is_not_cacheable(self) -> None:
+        app = self._build_app()
+        current_user = SimpleNamespace(
+            id=1,
+            username="admin",
+            role="admin",
+            password_hash="password-hash",
+            otp_secret="encrypted-secret",
+            otp_enabled=False,
+        )
+
+        with (
+            patch("app.routers.ui.settings.require_admin", new=AsyncMock(return_value=current_user)),
+            patch("app.routers.ui.settings.auth_service.pending_otp_secret", return_value="OTPSECRET"),
+            patch("app.routers.ui.settings.auth_service.provisioning_uri", return_value="otpauth://totp/test"),
+            patch("app.routers.ui.settings.provisioning_qr_data_url", return_value="data:image/png;base64,AA=="),
+            TestClient(app) as client,
+        ):
+            response = client.get("/settings/two-factor")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertIn("OTPSECRET", response.text)
+
+    def test_desktop_settings_header_uses_the_dashboard_page_gap(self) -> None:
+        template = Path("app/templates/settings.html").read_text(encoding="utf-8")
+        css = Path("app/static/css/app.css").read_text(encoding="utf-8")
+
+        self.assertIn('class="app-page app-page--settings"', template)
+        self.assertIn(
+            "--cb-page-header-content-gap: 2.2rem;",
+            css,
+            "Settings must inherit the dashboard-derived page-header spacing token.",
+        )
+        self.assertIn(".app-grid> :first-child {\n    padding-inline-start: 0;\n}", css)
+        self.assertNotIn(".app-page--settings .app-page__header {\n        margin-bottom:", css)
+
+    def test_mobile_settings_tab_grid_does_not_overflow_the_clipped_page(self) -> None:
         css = Path("app/static/css/app.css").read_text(encoding="utf-8")
 
         self.assertIn(
-            '    .settings-stack>[class*="col-"]:first-child {\n        margin-top: 0;\n    }',
+            ".app-page--settings .tab-pane>.row {\n        margin-inline: 0;\n    }",
             css,
-            "The first secondary settings card must cancel Bootstrap's vertical gutter and align with the primary card.",
+            "Below lg the settings rows must not extend past the clipped .app-page box.",
+        )
+        self.assertIn(
+            '.app-page--settings .tab-pane>.row>[class*="col-"] {\n        padding-inline: 0;\n    }',
+            css,
+            "Full-width settings columns must drop the gutter padding so panels stay aligned with the header.",
         )
 
     def test_settings_page_renders_caddy_configuration_values(self) -> None:
@@ -130,8 +251,8 @@ class UISettingsTests(unittest.TestCase):
         self.assertIn("SSL Labs API", response.text)
         self.assertIn("SSL Labs History Retention", response.text)
         self.assertIn("Change Password", response.text)
-        self.assertLess(response.text.index("Change Password"), response.text.index("Global Settings"))
-        self.assertLess(response.text.index("Global Settings"), response.text.index("SSL Labs API"))
+        self.assertLess(response.text.index("Global Settings"), response.text.index("Change Password"))
+        self.assertLess(response.text.index("Change Password"), response.text.index("SSL Labs API"))
         self.assertLess(response.text.index("SSL Labs API"), response.text.index("SSL Labs History Retention"))
         self.assertIn("data-auto-save-form", response.text)
         self.assertIn("data-auto-save-field", response.text)
@@ -147,12 +268,7 @@ class UISettingsTests(unittest.TestCase):
         self.assertNotIn('data-auto-save-status', response.text)
         self.assertIn('minlength="8"', response.text)
         self.assertIn("Password must be at least 8 characters long and contain uppercase, lowercase, digit, and special character.", response.text)
-        self.assertIn('class="row app-grid settings-layout"', response.text)
-        self.assertIn('class="col-12 col-xl-6 settings-column settings-column--primary"', response.text)
-        self.assertIn('class="col-12 col-xl-6 settings-column settings-column--secondary"', response.text)
-        self.assertIn('class="col-12 settings-column settings-column--retention"', response.text)
         self.assertIn('class="panel-card settings-panel settings-panel--primary"', response.text)
-        self.assertIn('class="row g-4 settings-stack"', response.text)
         self.assertIn('id="ssllabs-retention-settings"', response.text)
         self.assertIn("How long SSL Labs grade history samples are kept for the dashboard chart.", response.text)
         self.assertNotIn("How long daily SSL Labs grade history is kept for the dashboard chart.", response.text)
@@ -162,7 +278,8 @@ class UISettingsTests(unittest.TestCase):
         self.assertIn('class="ssllabs-retention-tick"', response.text, "Retention slider must have individual tick bubbles")
         self.assertIn('class="ssllabs-retention-labels"', response.text, "Retention slider must have tick label container")
         self.assertIn('class="ssllabs-retention-label"', response.text, "Retention slider must have individual tick labels")
-        self.assertIn('value="6"', response.text)
+        # Factory default retention is unlimited (0 days), the first slider position.
+        self.assertIn('value="0"', response.text)
         self.assertEqual(response.text.count('class="ssllabs-retention-tick"'), 7)
         self.assertEqual(response.text.count('class="ssllabs-retention-label"'), 7)
         self.assertIn('class="badge cb-pill text-bg-secondary" id="ssllabs-retention-badge"', response.text)
@@ -176,7 +293,7 @@ class UISettingsTests(unittest.TestCase):
         self.assertIn("1y", response.text, "Tick label for 365 days must render as '1y'")
         self.assertNotIn("365d", response.text, "365 days must not appear as '365d' — use '1y'")
         # Slider range must span exactly 0 … len(values)-1 to match the label grid
-        self.assertIn('min="0" max="6"', response.text, "Slider range must cover 7 steps (0-6) for the 7 retention values")
+        self.assertRegex(response.text, r'min="0"\s+max="6"', "Slider range must cover 7 steps (0-6) for the 7 retention values")
         # data-retention-values must expose the full allowed set for the JS formatLabel
         self.assertIn('data-retention-values="[0, 7, 14, 30, 90, 180, 365]"', response.text, "data-retention-values must list all allowed retention day counts")
 
@@ -352,6 +469,56 @@ class UISettingsTests(unittest.TestCase):
         )
         set_rate_limit.assert_awaited_once_with(ANY, True)
         update_rate_limit.assert_called_once_with(True)
+
+    def test_settings_page_enabling_rate_limit_does_not_crash_request_in_flight(self) -> None:
+        # Regression test: slowapi's `@limiter.limit` wrapper reads the shared
+        # `limiter.enabled` flag both before and after the handler body runs.
+        # If the handler itself flips `limiter.enabled` from False to True
+        # synchronously (as this endpoint's rate-limit checkbox does), the
+        # wrapper's post-call check sees `enabled=True` and tries to read
+        # `request.state.view_rate_limit`, which was never set because the
+        # pre-call check saw `enabled=False` and skipped binding `request`.
+        # This must not raise UnboundLocalError; the toggle is deferred to a
+        # background task that runs after slowapi's wrapper has returned.
+        app = self._build_app()
+        current_user = SimpleNamespace(username="admin", role="admin")
+        original_rate_limit_enabled = limiter.enabled
+
+        with (
+            patch("app.routers.ui.settings.require_admin", new=AsyncMock(return_value=current_user)),
+            patch(
+                "app.routers.ui.settings.get_caddy_config",
+                new=AsyncMock(
+                    return_value=SimpleNamespace(
+                        admin_url="http://localhost:2019",
+                        caddyfile_path_str="/app/Caddyfile",
+                    )
+                ),
+            ),
+            patch("app.routers.ui.settings.get_rate_limit_enabled", new=AsyncMock(return_value=False)),
+            patch("app.routers.ui.settings.get_ssllabs_email", new=AsyncMock(return_value=None)),
+            patch("app.routers.ui.settings.set_caddy_config", new=AsyncMock()),
+            patch("app.routers.ui.settings.set_rate_limit_enabled", new=AsyncMock()),
+        ):
+            limiter.enabled = False
+            try:
+                with TestClient(app, raise_server_exceptions=True) as client:
+                    page = client.get("/settings")
+                    csrf_token = self._extract_csrf_token(page.text)
+                    response = client.post(
+                        "/settings/caddy",
+                        data={
+                            "csrf_token": csrf_token,
+                            "caddy_api_url": "http://host.docker.internal:2019",
+                            "caddyfile_path": "/etc/caddy/Caddyfile",
+                            "rate_limit_enabled": "on",
+                        },
+                        follow_redirects=False,
+                    )
+                self.assertEqual(response.status_code, 303)
+                self.assertTrue(limiter.enabled)
+            finally:
+                limiter.enabled = original_rate_limit_enabled
 
     def test_settings_page_disables_rate_limit_when_checkbox_is_off(self) -> None:
         app = self._build_app()
@@ -607,4 +774,4 @@ class UISettingsTests(unittest.TestCase):
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/settings")
         update_password.assert_awaited_once_with(ANY, current_user, "new-hash")
-        initialize_session.assert_called_once_with(unittest.mock.ANY, 7, "new-hash")
+        initialize_session.assert_called_once_with(unittest.mock.ANY, current_user)

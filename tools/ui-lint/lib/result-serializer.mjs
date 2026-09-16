@@ -69,6 +69,9 @@ export function serializeResultForOutput(result, { summaryPath, visualRegression
         badgeAlignmentIssues: countItems(metrics.badgeAlignmentIssues),
         clickTargetsTooSmall: countItems(metrics.clickTargetsTooSmall),
         clickTargetDetails: sanitizeDetails(metrics.clickTargetsTooSmall),
+        inputZoomRisks: countItems(metrics.inputZoomRisks),
+        inputZoomRiskDetails: sanitizeDetails(metrics.inputZoomRisks),
+        pageBackdropPass: metrics.pageBackdrop?.present ? (metrics.pageBackdrop.passesBackdrop ? 1 : 0) : null,
         iconButtonsTouchBlocked: countItems(metrics.iconButtonsTouchBlocked),
         hiddenInteractive: countItems(metrics.hiddenInteractiveElements),
         bootstrapGridIssues: countItems(metrics.bootstrapGridIssues),
@@ -122,10 +125,21 @@ export function serializeResultForOutput(result, { summaryPath, visualRegression
             : null,
         primaryPanelPaddingMismatch: countItems(metrics.primaryPanelPadding?.mismatches),
         pageStructureMissingRowWrapper: countItems(metrics.pageStructureConsistent?.issues),
+        pageHeaderContentGapPx: metrics.pageHeaderContentGap?.gapPx ?? null,
+        pageHeaderContentGapExpectedPx: metrics.pageHeaderContentGap?.expected ?? null,
+        pageHeaderContentGapDeltaPx: metrics.pageHeaderContentGap?.delta ?? null,
+        pageHeaderContentGapPass: metrics.pageHeaderContentGap?.present
+            ? (metrics.pageHeaderContentGap.passesTolerance ? 1 : 0)
+            : null,
+        pageHeaderContentAlignmentOffsetPx: metrics.pageHeaderContentAlignment?.offsetPx ?? null,
+        pageHeaderContentAlignmentPass: metrics.pageHeaderContentAlignment?.present
+            ? (metrics.pageHeaderContentAlignment.passesTolerance ? 1 : 0)
+            : null,
         ghostScrollContainers: countItems(metrics.ghostScrollContainers),
         nestedScrollContainers: countItems(metrics.nestedScrollContainers),
         flexScrollTraps: countItems(metrics.flexScrollTraps),
         badgeStyleMismatches: countItems(metrics.badgeStyleMismatches),
+        aboutValueFontSizeMismatches: countItems(metrics.aboutValueFontSizeMismatches),
         buttonContrastIssues: countItems(metrics.buttonContrastIssues),
         nonTokenColorUsage: countItems(metrics.nonTokenColorUsage),
         monospaceToneMismatches: countItems(metrics.monospaceToneMismatches),

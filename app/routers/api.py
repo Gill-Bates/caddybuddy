@@ -167,7 +167,7 @@ async def dashboard_ssllabs_history(
     _current_user: User = Depends(_require_api_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> SslLabsRankHistoryResponse:
-    """Return the per-host daily SSL Labs rank timeseries for the dashboard chart."""
+    """Return the per-host weekly SSL Labs rank timeseries for the dashboard chart."""
     del request
     history = await build_rank_history(session, range_key=range_key)
     return SslLabsRankHistoryResponse(

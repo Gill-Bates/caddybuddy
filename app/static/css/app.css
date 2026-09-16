@@ -3,6 +3,7 @@
     --cb-bg: #ebe3d2;
     --cb-surface: rgba(255, 255, 255, 0.88);
     --cb-surface-strong: rgba(21, 34, 46, 0.92);
+    --cb-surface-muted: rgba(21, 34, 46, 0.035);
     --cb-text: #15222e;
     --cb-muted: #5c6773;
     --cb-accent: #0f766e;
@@ -16,7 +17,7 @@
     --cb-success-strong: #166534;
     /* headings / emphasis */
     --cb-success-subtle: #16a34a;
-    /* secondary text */
+    /* fills / decoration only — ~3.3:1 on white, too weak for text */
     --cb-success-bg: rgba(16, 185, 129, 0.14);
     /* Danger — red scale */
     --cb-danger: #b91c1c;
@@ -32,9 +33,16 @@
     --cb-info-bg: rgba(59, 130, 246, 0.12);
     /* Warning — amber */
     --cb-warning: #d97706;
+    --cb-warning-strong: #92400e;
+    /* text on warning backgrounds */
     --cb-warning-bg: rgba(245, 158, 11, 0.12);
     /* Neutral / muted badge */
     --cb-neutral: #64748b;
+
+    /* ── Form focus tokens ───────────────────────────────────────────── */
+    /* Static fallbacks equal the color-mix() results below for --cb-accent. */
+    --cb-focus-border: #6fada8;
+    --cb-focus-ring: rgba(15, 118, 110, 0.16);
 
     /* ── Shadow tokens ───────────────────────────────────────────────── */
     /* Generic card shadow used by .cb-shadow and similar utilities */
@@ -75,6 +83,9 @@
     --cb-footer-safe-gap: 0.75rem;
     --cb-footer-viewport-reserve: calc(3.55rem + 1rem + var(--cb-footer-safe-gap));
     --cb-app-main-vertical-padding: 2.5rem;
+    /* Dashboard-derived distance from the page header to its first content surface. */
+    --cb-page-stack-gap: 1rem;
+    --cb-page-header-content-gap: 2.2rem;
 
     /* ── Feature-specific layout ─────────────────────────────────────── */
     --cb-ssllabs-site-column-width: clamp(11rem, 14vw, 14.5rem);
@@ -90,6 +101,9 @@
     --cb-z-backdrop: 1029;
     --cb-z-sidebar: 1030;
     --cb-z-mobile-toggle: 1040;
+    /* Above Bootstrap's own --bs-toast-zindex (1090) so toasts win against the
+       sidebar/backdrop, but below the skip link. */
+    --cb-z-toast: 1095;
     --cb-z-skip-link: 1100;
 
     /* ── Pill / badge sizing ─────────────────────────────────────────── */
@@ -103,6 +117,13 @@
     --cb-pill-font-weight: 700;
 }
 
+@supports (color: color-mix(in srgb, black 50%, white 50%)) {
+    :root {
+        --cb-focus-border: color-mix(in srgb, var(--cb-accent) 60%, white 40%);
+        --cb-focus-ring: color-mix(in srgb, var(--cb-accent) 16%, transparent);
+    }
+}
+
 html,
 body {
     min-height: 100dvh;
@@ -111,10 +132,20 @@ body {
     font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
     line-height: 1.5;
     color: var(--cb-text);
+}
+
+/* Page backdrop is painted once on the root; body must be explicitly
+   transparent (Bootstrap reboot paints it with --bs-body-bg) so the gradient
+   shows through without being rasterised twice. */
+html {
     background:
         radial-gradient(circle at top left, rgba(15, 118, 110, 0.12), transparent 26%),
         radial-gradient(circle at right top, rgba(217, 119, 6, 0.12), transparent 18%),
         linear-gradient(180deg, #f6f1e7 0%, #e8dfd0 100%);
+}
+
+body {
+    background: transparent;
 }
 
 html:has(body.app-body--menu-open),
@@ -133,7 +164,6 @@ body.app-body--menu-open .sidebar-backdrop {
 
 body.app-body--menu-open .app-sidebar {
     overscroll-behavior: contain;
-    -webkit-overflow-scrolling: touch;
 }
 
 .app-skip-link {
@@ -363,7 +393,6 @@ body.app-body--menu-open .app-sidebar {
         max(1.5rem, env(safe-area-inset-top)) max(1.25rem, env(safe-area-inset-right)) max(1.5rem, env(safe-area-inset-bottom)) max(1.25rem, env(safe-area-inset-left));
     overflow-y: auto;
     overflow-x: hidden;
-    -webkit-overflow-scrolling: touch;
 }
 
 .app-footer {
@@ -456,13 +485,24 @@ body.app-body--menu-open .app-sidebar {
     margin-inline: auto;
 }
 
+/* Toasts are anchored to the bottom of the viewport, not the top. Top-right put
+   them straight over .app-page__header — covering (and blocking clicks on) the
+   dashboard status pill and the page action buttons — and over the fixed
+   .mobile-topbar between 576px and 991.98px. The bottom edge carries only the
+   footer, and on touch devices it is the easier corner to reach. */
 .app-toast-stack {
-    z-index: 1095;
+    z-index: var(--cb-z-toast);
     display: grid;
     gap: 0.75rem;
-    top: max(1rem, env(safe-area-inset-top)) !important;
+    bottom: max(1rem, env(safe-area-inset-bottom)) !important;
     right: max(1rem, env(safe-area-inset-right)) !important;
     max-width: min(100vw - 1.5rem, 24rem);
+}
+
+/* The grid gap owns the spacing between stacked toasts; Bootstrap's own
+   --bs-toast-spacing margin would add another 1.5rem on top of it. */
+.app-toast-stack> :not(:last-child) {
+    margin-bottom: 0;
 }
 
 .app-toast-stack .toast.toast-slide {
@@ -495,16 +535,46 @@ body.app-body--menu-open .app-sidebar {
 
 @media (max-width: 575.98px) {
     .app-toast-stack {
-        top: calc(var(--cb-mobile-topbar-height) + env(safe-area-inset-top) + 0.75rem) !important;
+        bottom: max(0.75rem, env(safe-area-inset-bottom)) !important;
         left: max(0.75rem, env(safe-area-inset-left)) !important;
         right: max(0.75rem, env(safe-area-inset-right)) !important;
         max-width: none;
+        /* Bootstrap's .toast-container is width:max-content, so the left/right
+           insets alone would not stretch a short message across the viewport. */
+        width: auto;
     }
 }
 
+/* A full-width toast has no free edge to slide in from horizontally, so it rises
+   from the bottom instead. Kept in its own query so the reduced-motion rule
+   above is not overridden by source order. */
+@media (max-width: 575.98px) and (prefers-reduced-motion: no-preference) {
+
+    .app-toast-stack .toast.toast-slide,
+    .app-toast-stack .toast.toast-slide.showing {
+        transform: translate3d(0, calc(100% + 1.25rem), 0);
+    }
+}
+
+/* Bootstrap's .btn-close is a 1em content box (~21px inside a toast), well under
+   the ~44px pointer-target guidance in WCAG 2.5.8 / 2.5.5. */
+.app-toast-stack .btn-close {
+    flex: 0 0 auto;
+    align-self: center;
+    box-sizing: border-box;
+    width: 2.75rem;
+    height: 2.75rem;
+    margin: 0.15rem 0.15rem 0.15rem 0;
+    padding: 0;
+    background-position: center;
+    background-size: 0.75rem;
+    border-radius: 0.65rem;
+}
+
 .app-page {
+    --cb-page-header-margin-bottom: calc(var(--cb-page-header-content-gap) - var(--cb-page-stack-gap));
     display: grid;
-    gap: 1rem;
+    gap: var(--cb-page-stack-gap);
     min-width: 0;
 }
 
@@ -514,7 +584,7 @@ body.app-body--menu-open .app-sidebar {
     align-items: end;
     gap: 1rem;
     min-width: 0;
-    margin-bottom: 1.2rem;
+    margin-bottom: var(--cb-page-header-margin-bottom);
 }
 
 .app-page__lede {
@@ -538,6 +608,16 @@ body.app-body--menu-open .app-sidebar {
        editor, the sites table) blow the layout past the viewport and get
        clipped by the shell's overflow-x:hidden instead of scrolling. */
     min-width: 0;
+}
+
+/* Bootstrap gutters belong between sibling panels, not between the first or
+   last panel and its page heading. */
+.app-grid> :first-child {
+    padding-inline-start: 0;
+}
+
+.app-grid> :last-child {
+    padding-inline-end: 0;
 }
 
 .metric-grid {
@@ -757,6 +837,17 @@ body.app-body--menu-open .app-sidebar {
     display: block;
 }
 
+.cb-honeypot {
+    position: absolute;
+    left: -9999px;
+    top: -9999px;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
+}
+
 .auth-form__group {
     display: grid;
     gap: 0;
@@ -785,10 +876,14 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .auth-form__control:focus {
-    border-color: var(--cb-accent);
-    box-shadow: 0 0 0 0.25rem rgba(15, 118, 110, 0.14);
-    border-color: color-mix(in srgb, var(--cb-accent) 60%, white 40%);
-    box-shadow: 0 0 0 0.25rem color-mix(in srgb, var(--cb-accent) 14%, transparent);
+    border-color: var(--cb-focus-border);
+    box-shadow: 0 0 0 0.25rem var(--cb-focus-ring);
+}
+
+.app-page--narrow {
+    width: 100%;
+    max-width: 40rem;
+    margin-inline: auto;
 }
 
 .auth-form__submit {
@@ -802,6 +897,9 @@ body.app-body--menu-open .app-sidebar {
     list-style: none;
     padding: 0;
     margin: 0;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    column-gap: 0.75rem;
 }
 
 .setup-check {
@@ -845,6 +943,10 @@ body.app-body--menu-open .app-sidebar {
     .auth-card {
         padding: 1.5rem;
         border-radius: 1.4rem;
+    }
+
+    .setup-checklist {
+        grid-template-columns: repeat(2, 1fr);
     }
 }
 
@@ -1172,7 +1274,7 @@ body.app-body--menu-open .app-sidebar {
     transform: translate(-50%, -50%);
     font-size: 2rem;
     font-weight: 700;
-    color: var(--cb-success-subtle);
+    color: var(--cb-success);
     text-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
     pointer-events: none;
     z-index: 9999;
@@ -1261,7 +1363,7 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .cb-field-check[data-field-check-status="failed"] {
-    color: #b42318;
+    color: var(--cb-danger);
     border-color: rgba(180, 35, 24, 0.16);
     background: rgba(244, 63, 94, 0.08);
 }
@@ -1672,8 +1774,8 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .status-pill--online {
-    background: rgba(16, 185, 129, 0.14);
-    color: #065f46;
+    background: var(--cb-success-bg);
+    color: var(--cb-success-strong);
 }
 
 .status-pill--offline {
@@ -1688,7 +1790,7 @@ body.app-body--menu-open .app-sidebar {
 
 .status-pill--warning {
     background: rgba(245, 158, 11, 0.18);
-    color: #92400e;
+    color: var(--cb-warning-strong);
 }
 
 .badge {
@@ -1698,38 +1800,48 @@ body.app-body--menu-open .app-sidebar {
 /* .ssllabs-callout and #ssllabs-api-config need no height override —
    height is auto by default. */
 
-.settings-layout {
-    align-items: stretch;
+.settings-tabs {
+    flex-wrap: nowrap;
+    gap: 0.5rem;
+    overflow-x: auto;
+    scrollbar-width: none;
 }
 
-.settings-column {
-    display: flex;
-    flex-direction: column;
+.settings-tabs::-webkit-scrollbar {
+    display: none;
 }
 
-.settings-column--primary>.settings-panel,
-.settings-column--secondary>.settings-stack {
-    flex: 1 1 auto;
+.settings-tabs .nav-link {
+    flex: 0 0 auto;
+    padding: 0.4rem 1rem;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    border-radius: var(--cb-pill-radius);
+    border: 1px solid var(--cb-border);
+    background: var(--cb-surface);
+    color: var(--cb-muted);
+    font-size: 0.9rem;
+    font-weight: 500;
+    white-space: nowrap;
+    transition: color var(--cb-duration-fast) ease, border-color var(--cb-duration-fast) ease,
+        background-color var(--cb-duration-fast) ease;
 }
 
-.settings-stack {
-    --bs-gutter-x: 0;
-    --bs-gutter-y: 1.5rem;
-    align-content: start;
-    height: 100%;
-    margin: 0;
+.settings-tabs .nav-link:hover {
+    color: var(--cb-text);
+    border-color: var(--cb-accent);
 }
 
-.settings-stack>[class*="col-"] {
-    display: flex;
-    flex-direction: column;
-    padding: 0;
+.settings-tabs .nav-link:focus-visible {
+    color: var(--cb-text);
+    border-color: var(--cb-accent);
 }
 
-@media (min-width: 1200px) {
-    .settings-stack>[class*="col-"]:first-child {
-        margin-top: 0;
-    }
+.settings-tabs .nav-link.active {
+    color: #fff;
+    background: var(--cb-accent);
+    border-color: var(--cb-accent);
 }
 
 .settings-panel {
@@ -1738,6 +1850,194 @@ body.app-body--menu-open .app-sidebar {
 
 .settings-panel--primary {
     min-height: 100%;
+}
+
+.settings-panel__icon {
+    width: 1.25rem;
+    height: 1.25rem;
+    margin-inline-end: 0.5rem;
+    vertical-align: -0.2rem;
+}
+
+/* Passkeys (Settings -> Passkey) */
+.passkey-management {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(18rem, 26rem);
+    gap: 1.25rem;
+    align-items: stretch;
+}
+
+.passkey-management__list,
+.passkey-management__add {
+    min-width: 0;
+}
+
+.passkey-management__list {
+    display: flex;
+    flex-direction: column;
+}
+
+.passkey-management__add {
+    padding: 1rem;
+    border: 1px solid var(--cb-border);
+    border-radius: 1rem;
+    background: var(--cb-surface-muted);
+}
+
+.passkey-management__section-title {
+    margin: 0 0 0.65rem;
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--cb-muted);
+}
+
+@media (max-width: 991.98px) {
+    .passkey-management {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+.passkey-empty {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: 0.85rem;
+    min-height: 7.5rem;
+    padding: 1rem 1.1rem;
+    border: 1px dashed var(--cb-border);
+    border-radius: 1rem;
+    background: var(--cb-surface-muted);
+    color: var(--cb-muted);
+}
+
+.passkey-empty__icon {
+    width: 2rem;
+    height: 2rem;
+    flex: 0 0 auto;
+    opacity: 0.65;
+}
+
+.passkey-empty__title {
+    margin-bottom: 0.2rem;
+    font-weight: 700;
+    color: var(--cb-text);
+}
+
+.passkey-empty__text {
+    max-width: 42ch;
+    font-size: 0.84rem;
+    line-height: 1.4;
+}
+
+.passkey-list {
+    display: grid;
+    flex: 1;
+    align-content: start;
+    gap: 0.5rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.passkey-list__item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.85rem;
+    flex-wrap: wrap;
+    padding: 0.65rem 0.85rem;
+    border: 1px solid var(--cb-border);
+    border-radius: 0.85rem;
+    background: var(--cb-surface-muted);
+}
+
+.passkey-list__info {
+    display: grid;
+    gap: 0.15rem;
+    min-width: 0;
+}
+
+.passkey-list__name {
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.passkey-list__meta {
+    font-size: 0.78rem;
+    color: var(--cb-muted);
+    overflow-wrap: anywhere;
+}
+
+.passkey-list__remove-form {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex: 0 0 auto;
+}
+
+.passkey-list__remove-form .form-control {
+    width: 11rem;
+    max-width: 100%;
+}
+
+@media (max-width: 575.98px) {
+    .passkey-list__remove-form {
+        flex: 1 1 100%;
+    }
+
+    .passkey-list__remove-form .form-control {
+        flex: 1 1 auto;
+        width: auto;
+    }
+}
+
+/* Alternative sign-in block on the login page */
+.auth-alt {
+    margin-top: 1.25rem;
+}
+
+.auth-alt__divider {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 0 0 1rem;
+    color: var(--cb-muted);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.auth-alt__divider::before,
+.auth-alt__divider::after {
+    content: "";
+    flex: 1 1 auto;
+    height: 1px;
+    background: var(--cb-border);
+}
+
+.auth-alt__icon-row {
+    display: flex;
+    justify-content: center;
+}
+
+.auth-alt__icon-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 3rem;
+    padding: 0.65rem 0.9rem;
+}
+
+.auth-alt__icon {
+    width: 1.15rem;
+    height: 1.15rem;
+}
+
+.auth-alt__icon-button .auth-alt__icon {
+    inline-size: 1.4rem;
+    block-size: 1.4rem;
 }
 
 .ssllabs-status-panel {
@@ -1791,10 +2091,6 @@ body.app-body--menu-open .app-sidebar {
     max-width: min(14rem, 30vw);
     width: 100%;
     height: auto;
-}
-
-.ssllabs-table-wrap {
-    -webkit-overflow-scrolling: touch;
 }
 
 .ssllabs-table {
@@ -1903,8 +2199,8 @@ body.app-body--menu-open .app-sidebar {
 .ssllabs-filterbar .form-control:focus,
 .ssllabs-filterbar .form-select:focus {
     background: rgba(255, 255, 255, 0.92);
-    border-color: color-mix(in srgb, var(--cb-accent) 60%, white 40%);
-    box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--cb-accent) 16%, transparent);
+    border-color: var(--cb-focus-border);
+    box-shadow: 0 0 0 0.2rem var(--cb-focus-ring);
     outline: none;
 }
 
@@ -1928,7 +2224,6 @@ body.app-body--menu-open .app-sidebar {
     overscroll-behavior: contain;
     scrollbar-gutter: stable;
     padding: 0 0.45rem 0.3rem;
-    -webkit-overflow-scrolling: touch;
 }
 
 .ssllabs-scrollbox .ssllabs-table-wrap {
@@ -1938,6 +2233,231 @@ body.app-body--menu-open .app-sidebar {
 
 .ssllabs-filter-empty {
     border-top: 1px solid rgba(21, 34, 46, 0.08);
+}
+
+/* SSL Labs scan rows use the panel itself as their primary surface. Individual
+   domains are intentionally flat so repeated healthy results stay quiet. */
+.ssllabs-table__result-col {
+    width: auto;
+}
+
+.ssllabs-table__scheduler-col {
+    width: var(--cb-ssllabs-scheduler-column-width);
+}
+
+.ssllabs-table__actions-col {
+    width: var(--cb-ssllabs-actions-column-width);
+}
+
+.ssllabs-table td {
+    padding: 0.55rem 0.75rem;
+    border-bottom-color: transparent;
+}
+
+/* Rows belonging to the same site sit close together; the border only
+   reappears at the boundary to the next site so the eye reads "site group"
+   rather than a uniform row list. */
+.ssllabs-table tr[data-ssllabs-site-group-end] td {
+    border-bottom-color: rgba(21, 34, 46, 0.08);
+}
+
+.ssllabs-table .ssllabs-site-cell {
+    padding: 0.75rem 0.9rem;
+    background: rgba(21, 34, 46, 0.025);
+    border-right: 1px solid rgba(21, 34, 46, 0.06);
+}
+
+.ssllabs-domain-card {
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+}
+
+.ssllabs-domain-card__host {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-weight: 700;
+}
+
+.ssllabs-domain-card__main {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-width: 0;
+    min-height: 2.1rem;
+    overflow: visible;
+    white-space: nowrap;
+}
+
+.ssllabs-domain-card__muted {
+    flex: 0 0 auto;
+    color: var(--cb-muted);
+    font-size: 0.78rem;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+
+.ssllabs-domain-card__quick-actions {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.45rem;
+    min-width: 0;
+    min-height: 2.1rem;
+}
+
+.ssllabs-result__status-badge--not-scanned {
+    color: var(--cb-warning-strong);
+    background: var(--cb-warning-bg);
+    font-weight: 700;
+}
+
+.ssllabs-endpoint-chip {
+    min-height: 1.5rem;
+    padding: 0;
+    border: 0;
+    background: transparent;
+}
+
+.ssllabs-endpoint-chip__check {
+    color: var(--cb-muted);
+    font-size: 0.8rem;
+    font-weight: 800;
+}
+
+.ssllabs-actions-cell .ssllabs-scan-action {
+    --bs-btn-color: var(--cb-accent);
+    --bs-btn-border-color: color-mix(in srgb, var(--cb-accent) 55%, transparent);
+    --bs-btn-hover-bg: var(--cb-accent);
+    --bs-btn-hover-border-color: var(--cb-accent);
+    --bs-btn-hover-color: #fff;
+}
+
+.ssllabs-filterbar {
+    grid-template-columns: minmax(14rem, 0.8fr) minmax(9rem, 11rem) auto auto;
+}
+
+.ssllabs-filterbar__search {
+    max-width: 32rem;
+}
+
+.ssllabs-filterbar__quick-filters {
+    display: inline-flex;
+    align-items: center;
+    height: 2.75rem;
+    gap: 0.25rem;
+    min-width: 0;
+    padding: 0.2rem;
+    border: 1px solid rgba(21, 34, 46, 0.1);
+    border-radius: 999px;
+    background: rgba(21, 34, 46, 0.025);
+}
+
+.ssllabs-quick-filter {
+    padding: 0.3rem 0.5rem;
+    border: 0;
+    border-radius: 999px;
+    color: var(--cb-muted);
+    background: transparent;
+    font: inherit;
+    font-size: 0.76rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.ssllabs-quick-filter.is-active,
+.ssllabs-quick-filter:hover {
+    color: var(--cb-text);
+    background: rgba(255, 255, 255, 0.82);
+}
+
+@media (max-width: 67.999rem) {
+    .ssllabs-filterbar {
+        grid-template-columns: minmax(12rem, 1fr) minmax(9rem, 11rem) auto;
+    }
+
+    .ssllabs-filterbar__quick-filters {
+        grid-column: 1 / -1;
+        justify-self: start;
+    }
+}
+
+@media (max-width: 767.98px) {
+    .ssllabs-filterbar {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .ssllabs-filterbar__search {
+        max-width: none;
+    }
+
+    /* Drop out of table layout so the row grid below can lay each site out as a
+       card; the head row and colgroup widths must not survive that switch. */
+    .ssllabs-table colgroup,
+    .ssllabs-table thead {
+        display: none;
+    }
+
+    .ssllabs-table,
+    .ssllabs-table tbody {
+        display: block;
+        width: 100%;
+    }
+
+    .ssllabs-table tr[data-ssllabs-site-row] {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 0.45rem 0.75rem;
+        padding: 0.8rem 0.9rem;
+        margin-bottom: 0.65rem;
+    }
+
+    .ssllabs-table td,
+    .ssllabs-table .ssllabs-site-cell {
+        display: block;
+        padding: 0;
+        background: transparent;
+        border: 0;
+    }
+
+    .ssllabs-table .ssllabs-site-cell {
+        grid-column: 1 / -1;
+    }
+
+    .ssllabs-table td[data-label="Domain / Result"] {
+        grid-column: 1 / -1;
+    }
+
+    .ssllabs-table td[data-label="Schedule"] {
+        grid-column: 1;
+    }
+
+    .ssllabs-table td[data-label="Actions"] {
+        grid-column: 2;
+        align-self: end;
+    }
+
+    .ssllabs-table td[data-label]::before {
+        content: attr(data-label);
+        display: block;
+        margin-bottom: 0.25rem;
+        color: var(--cb-muted);
+        font-size: 0.65rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+    }
+
+    .ssllabs-table .ssllabs-site-cell::before,
+    .ssllabs-table td[data-label="Domain / Result"]::before {
+        display: none;
+    }
+
+    .ssllabs-domain-card__quick-actions {
+        justify-content: flex-end;
+    }
 }
 
 @media (min-width: 1200px) {
@@ -2217,7 +2737,6 @@ body.app-body--menu-open .app-sidebar {
     overscroll-behavior: contain;
     padding: 0 0.45rem 0.45rem;
     scrollbar-gutter: stable;
-    -webkit-overflow-scrolling: touch;
 }
 
 .sites-list-scroll .table-responsive {
@@ -2401,12 +2920,8 @@ body.app-body--menu-open .app-sidebar {
 @media (min-width: 1200px) {
 
     .app-page--sites .app-page__header,
-    .ssllabs-page .app-page__header {
-        margin-bottom: 0.25rem;
-    }
-
-    .app-page--sites .app-page__header,
-    .ssllabs-page .app-page__header {
+    .ssllabs-page .app-page__header,
+    .app-page--settings .app-page__header {
         flex: 0 0 auto;
     }
 
@@ -2522,7 +3037,6 @@ body.app-body--menu-open .app-sidebar {
 
     .app-page--caddyfile .app-page__header {
         flex: 0 0 auto;
-        margin-bottom: 0.75rem;
     }
 
     .app-page--caddyfile>.app-grid {
@@ -2538,8 +3052,10 @@ body.app-body--menu-open .app-sidebar {
         flex-direction: column;
         min-height: 0;
         overflow: visible;
-        padding: 0.35rem;
-        margin: -0.35rem;
+        /* Retain the editor's horizontal bleed without collapsing the shared
+           header-to-content spacing through Bootstrap's vertical gutters. */
+        padding-inline: 0.35rem;
+        margin-inline: -0.35rem;
     }
 
     .app-page--caddyfile .caddyfile-editor-panel {
@@ -2877,8 +3393,8 @@ body.app-body--menu-open .app-sidebar {
 
 .sites-search__input:focus {
     background: rgba(255, 255, 255, 0.92);
-    border-color: color-mix(in srgb, var(--cb-accent) 60%, white 40%);
-    box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--cb-accent) 16%, transparent);
+    border-color: var(--cb-focus-border);
+    box-shadow: 0 0 0 0.2rem var(--cb-focus-ring);
 }
 
 .sites-search__input::placeholder {
@@ -2961,276 +3477,6 @@ body.app-body--menu-open .app-sidebar {
     .sites-form-modal .modal-body {
         overflow-y: auto;
         padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
-        -webkit-overflow-scrolling: touch;
-    }
-}
-
-.ssllabs-domain-card {
-    overflow: hidden;
-    border: 1px solid rgba(21, 34, 46, 0.08);
-    border-radius: 1rem;
-    background: rgba(21, 34, 46, 0.03);
-}
-
-.ssllabs-domain-card__summary {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
-    align-items: center;
-    gap: 0.75rem;
-    min-height: 46px;
-    padding: 0.35rem 0.75rem 0.35rem 0.85rem;
-}
-
-.ssllabs-domain-card__main {
-    display: flex;
-    align-items: center;
-    gap: 0.45rem;
-    min-width: 0;
-    overflow: hidden;
-    white-space: nowrap;
-}
-
-.ssllabs-domain-card__host {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    font-weight: 700;
-}
-
-.ssllabs-domain-card__muted {
-    flex: 0 0 auto;
-    color: var(--cb-muted);
-    font-size: 0.78rem;
-    line-height: 1.2;
-    white-space: nowrap;
-}
-
-.ssllabs-domain-card__quick-actions {
-    display: inline-flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 0.45rem;
-    min-width: 0;
-}
-
-.ssllabs-domain-card__quick-actions .btn {
-    white-space: nowrap;
-}
-
-.ssllabs-domain-card__details {
-    display: grid;
-    gap: 0.6rem;
-    padding: 0.7rem 0.85rem 0.85rem;
-    border-top: 1px solid rgba(21, 34, 46, 0.08);
-}
-
-.ssllabs-domain-card__inline-scheduler {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    min-width: 0;
-    align-items: flex-start;
-}
-
-/* Grade keeps a heavier weight and a stable min-width for alignment,
-   but never grows taller than the shared pill geometry. */
-.ssllabs-result__grade {
-    min-width: 1.7rem;
-    font-weight: 800;
-    text-decoration: none;
-}
-
-.ssllabs-result__grade--compact,
-.ssllabs-result__status-badge--compact {
-    flex: 0 0 auto;
-}
-
-.ssllabs-result__endpoints {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.35rem;
-    margin-top: 0;
-}
-
-.ssllabs-endpoint-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-    min-height: 1.65rem;
-    padding: 0.15rem 0.35rem;
-    border: 1px solid rgba(21, 34, 46, 0.08);
-    border-radius: 999px;
-    background: rgba(21, 34, 46, 0.04);
-    font-size: 0.76rem;
-    white-space: nowrap;
-}
-
-.ssllabs-endpoint-chip__label {
-    color: var(--cb-muted);
-    font-weight: 600;
-}
-
-.ssllabs-endpoint-chip__grade {
-    min-width: 1.7rem;
-    font-weight: 800;
-}
-
-.ssllabs-result__error {
-    max-width: 28rem;
-    margin-top: 0.1rem;
-    color: var(--cb-muted);
-    font-size: 0.78rem;
-    overflow-wrap: anywhere;
-}
-
-@container ssllabs-panel (min-width: 68rem) {
-    .ssllabs-table {
-        table-layout: fixed;
-    }
-
-    .ssllabs-table__domains-headings {
-        grid-template-columns: var(--cb-ssllabs-domain-grid);
-    }
-
-    .ssllabs-table__domains-headings> :first-child {
-        grid-column: 1;
-    }
-
-    .ssllabs-table__scheduler-heading {
-        grid-column: 2;
-        justify-self: start;
-    }
-
-    .ssllabs-table td[data-label="Site"] {
-        overflow: hidden;
-    }
-
-    .site-row-title,
-    .ssllabs-site-domains {
-        max-width: 100%;
-    }
-
-    .site-row-title .fw-semibold {
-        flex: 1 1 auto;
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-
-    .ssllabs-site-domain-badge {
-        min-width: 0;
-        max-width: 100%;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-
-    .ssllabs-domain-list {
-        gap: 0.45rem;
-    }
-
-    .ssllabs-domain-card {
-        border-radius: 0.9rem;
-    }
-
-    .ssllabs-domain-card__summary {
-        grid-template-columns: minmax(0, 1fr) var(--cb-ssllabs-scheduler-column-width) var(--cb-ssllabs-actions-column-width);
-        min-height: 44px;
-        padding-block: 0.25rem;
-    }
-
-    .ssllabs-domain-card__inline-scheduler {
-        align-items: flex-start;
-        min-width: 0;
-        width: 100%;
-    }
-
-    .ssllabs-domain-card__inline-scheduler .ssllabs-schedule-form {
-        width: 100%;
-        min-width: 0;
-    }
-
-    .ssllabs-domain-card__inline-scheduler .ssllabs-schedule-form .form-select {
-        width: 100%;
-        min-width: 0;
-        max-width: var(--cb-ssllabs-scheduler-column-width);
-    }
-
-    .ssllabs-domain-card__main {
-        gap: 0.4rem;
-    }
-
-    .ssllabs-domain-card__quick-actions {
-        width: var(--cb-ssllabs-actions-column-width);
-        justify-content: flex-end;
-    }
-
-    .ssllabs-table .ssllabs-actions {
-        width: 100%;
-    }
-
-    .ssllabs-table .ssllabs-domain-card__controls .ssllabs-actions {
-        width: 100%;
-        min-width: 0;
-    }
-
-    .ssllabs-domain-card .btn-sm {
-        min-block-size: 2.1rem;
-        padding-inline: 0.65rem;
-        border-radius: 999px;
-        font-size: 0.78rem;
-        white-space: nowrap;
-    }
-
-    .ssllabs-domain-card .form-select-sm {
-        min-height: 2.1rem;
-        padding-block: 0.35rem;
-        padding-inline: 0.65rem 2rem;
-        border-radius: 999px;
-        font-size: 0.78rem;
-    }
-
-    .ssllabs-table .ssllabs-schedule-form .form-select {
-        width: 100%;
-        min-width: 0;
-    }
-}
-
-@container ssllabs-panel (max-width: 67.999rem) {
-    .ssllabs-table__domains-headings {
-        display: flex;
-        justify-content: space-between;
-    }
-
-    .ssllabs-table__scheduler-heading {
-        display: none;
-    }
-
-    .ssllabs-domain-card__summary {
-        grid-template-columns: minmax(0, 1fr) var(--cb-ssllabs-actions-column-width);
-        align-items: center;
-    }
-
-    .ssllabs-domain-card__main {
-        grid-column: 1 / -1;
-        flex-wrap: wrap;
-        white-space: normal;
-    }
-
-    .ssllabs-domain-card__inline-scheduler {
-        grid-column: 1;
-        align-items: flex-start;
-    }
-
-    .ssllabs-domain-card__quick-actions {
-        grid-column: 2;
-        justify-content: flex-end;
-        align-self: center;
-    }
-
-    .ssllabs-domain-card__details {
-        gap: 0.7rem;
     }
 }
 
@@ -3299,29 +3545,6 @@ body.app-body--menu-open .app-sidebar {
         padding: 0;
     }
 
-    .ssllabs-table,
-    .ssllabs-table tbody,
-    .ssllabs-table tr,
-    .ssllabs-table td {
-        display: block;
-        width: 100%;
-    }
-
-    .ssllabs-table colgroup,
-    .ssllabs-table thead {
-        display: none;
-    }
-
-    /* Each configured site renders as a self-contained card / tile */
-    .ssllabs-table tr[data-ssllabs-site-row] {
-        padding: 1rem 1.05rem;
-        margin-bottom: 0.85rem;
-        border: 1px solid var(--cb-border);
-        border-radius: 1.1rem;
-        background: var(--cb-surface);
-        box-shadow: var(--cb-shadow-card);
-    }
-
     .ssllabs-table tr[data-ssllabs-site-row]:last-child {
         margin-bottom: 0;
     }
@@ -3329,25 +3552,6 @@ body.app-body--menu-open .app-sidebar {
     .ssllabs-table td {
         padding: 0;
         border-bottom: 0;
-    }
-
-    /* Divider + spacing between the Site heading and the Domains block */
-    .ssllabs-table td+td {
-        margin-top: 0.7rem;
-        padding-top: 0.7rem;
-        border-top: 1px solid var(--cb-border);
-    }
-
-    /* Field labels sit above their value, not beside it */
-    .ssllabs-table td[data-label="Domains"]::before {
-        content: attr(data-label);
-        display: block;
-        margin-bottom: 0.45rem;
-        color: var(--cb-muted);
-        font-size: 0.68rem;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
     }
 
     /* Site name is the card heading; no label needed */
@@ -3393,43 +3597,6 @@ body.app-body--menu-open .app-sidebar {
         font-size: 0.75rem;
     }
 
-    .ssllabs-domain-list {
-        gap: 0.7rem;
-    }
-
-    .ssllabs-domain-card__summary {
-        grid-template-columns: minmax(0, 1fr) auto;
-        align-items: start;
-        padding: 0.7rem 0.75rem;
-    }
-
-    .ssllabs-domain-card__main {
-        grid-column: 1 / -1;
-        flex-wrap: wrap;
-        white-space: normal;
-    }
-
-    .ssllabs-domain-card__inline-scheduler {
-        align-items: stretch;
-        width: 100%;
-    }
-
-    .ssllabs-domain-card__quick-actions {
-        grid-column: 1 / -1;
-        justify-content: space-between;
-    }
-
-    .ssllabs-domain-card .ssllabs-schedule-form {
-        display: flex;
-        width: 100%;
-        min-width: 0;
-    }
-
-    .ssllabs-domain-card .ssllabs-schedule-form .form-select {
-        width: 100%;
-        min-width: 0;
-        flex: 1 1 auto;
-    }
 }
 
 @media (min-width: 768px) {
@@ -3450,7 +3617,6 @@ body.app-body--menu-open .app-sidebar {
         overflow-wrap: normal;
         overflow-x: auto;
         min-height: 18rem;
-        -webkit-overflow-scrolling: touch;
     }
 
     .caddyfile-editor-panel .cm-scroller,
@@ -3459,7 +3625,6 @@ body.app-body--menu-open .app-sidebar {
         min-width: 0;
         overflow-x: auto;
         overflow-y: auto;
-        -webkit-overflow-scrolling: touch;
     }
 
     .caddyfile-editor-panel .cm-content,
@@ -3487,14 +3652,14 @@ body.app-body--menu-open .app-sidebar {
 
 .timeline-item {
     display: grid;
-    grid-template-columns: 12px 1fr;
+    grid-template-columns: 0.75rem 1fr;
     gap: 1rem;
     align-items: start;
 }
 
 .timeline-item__dot {
-    width: 12px;
-    height: 12px;
+    width: 0.75rem;
+    height: 0.75rem;
     border-radius: 999px;
     margin-top: 0.4rem;
     background: linear-gradient(135deg, #0f766e, #f59e0b);
@@ -3556,6 +3721,16 @@ body.app-body--menu-open .app-sidebar {
 }
 
 @media (max-width: 1199.98px) {
+
+    /* Both columns are full width here, so the .app-grid gutter no longer sits
+       between siblings: it would inset the stacked panels from the page header
+       (the visually first panel is the DOM last child, so the generic
+       :first-child/:last-child gutter reset does not reach it). */
+    .app-page--sites>.app-grid>.sites-form-column,
+    .app-page--sites>.app-grid>.sites-list-column {
+        padding-inline: 0;
+    }
+
     .sites-list-column {
         order: 1;
     }
@@ -3586,8 +3761,8 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .tag-input__shell:focus-within {
-    border-color: color-mix(in srgb, var(--cb-accent) 60%, white 40%);
-    box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--cb-accent) 16%, transparent);
+    border-color: var(--cb-focus-border);
+    box-shadow: 0 0 0 0.2rem var(--cb-focus-ring);
 }
 
 .tag-input__list {
@@ -3632,6 +3807,7 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .tag-input__remove {
+    position: relative;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -3642,6 +3818,19 @@ body.app-body--menu-open .app-sidebar {
     border-radius: 50%;
     background: transparent;
     color: inherit;
+}
+
+/* Invisible 2rem hit area keeps the 20px glyph but clears the WCAG 2.2 AA
+   24px target minimum; 2rem stays inside the token's inline padding so it
+   does not steal taps from the neighbouring token. */
+.tag-input__remove::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 2rem;
+    height: 2rem;
+    transform: translate(-50%, -50%);
 }
 
 .tag-input__remove:hover,
@@ -3662,10 +3851,8 @@ body.app-body--menu-open .app-sidebar {
 
 .form-control:focus,
 .form-select:focus {
-    border-color: var(--cb-accent);
-    box-shadow: 0 0 0 0.2rem rgba(15, 118, 110, 0.16);
-    border-color: color-mix(in srgb, var(--cb-accent) 60%, white 40%);
-    box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--cb-accent) 16%, transparent);
+    border-color: var(--cb-focus-border);
+    box-shadow: 0 0 0 0.2rem var(--cb-focus-ring);
 }
 
 .table .cell-actions {
@@ -3674,6 +3861,20 @@ body.app-body--menu-open .app-sidebar {
     justify-content: flex-end;
     gap: 0.4rem;
     min-width: max-content;
+}
+
+/* iOS Safari zooms into any focused field rendered below 16px. On touch
+   devices, lift the compact inputs to 1rem; desktop keeps the dense sizing. */
+@media (hover: none) and (pointer: coarse) {
+
+    .form-control,
+    .form-select,
+    .ssllabs-filterbar .form-control,
+    .ssllabs-filterbar .form-select,
+    .sites-search__input,
+    .tag-input__field {
+        font-size: 1rem;
+    }
 }
 
 .form-label {
@@ -3924,7 +4125,6 @@ body.app-body--menu-open .app-sidebar {
         overflow-y: auto;
         overflow-x: hidden;
         overscroll-behavior: contain;
-        -webkit-overflow-scrolling: touch;
         transform: translateX(-100%);
         transition: transform var(--cb-duration-slide) cubic-bezier(0.4, 0, 0.2, 1);
         box-shadow: none;
@@ -3990,15 +4190,29 @@ body.app-body--menu-open .app-sidebar {
     }
 
     .app-page {
-        gap: 0.9rem;
+        --cb-page-stack-gap: 0.9rem;
+        --cb-page-header-content-gap: 0.9rem;
         overflow-x: hidden;
+    }
+
+    /* Bootstrap rows pay for their column gutters with negative inline margins,
+       which reach 0.75rem past the clipped .app-page box above — content that
+       is cut off instead of scrollable. Every settings column is full width at
+       this breakpoint, so drop the gutter compensation and keep the panels
+       aligned with the page header. */
+    .app-page--settings .tab-pane>.row {
+        margin-inline: 0;
+    }
+
+    .app-page--settings .tab-pane>.row>[class*="col-"] {
+        padding-inline: 0;
     }
 
     .app-page__header {
         flex-direction: column;
         align-items: stretch;
         gap: 0.75rem;
-        margin-bottom: 0;
+        margin-bottom: var(--cb-page-header-margin-bottom);
         padding-top: 0.25rem;
         padding-inline-start: 0;
     }
@@ -4041,7 +4255,19 @@ body.app-body--menu-open .app-sidebar {
     .auth-panel__form {
         width: 100%;
     }
+}
 
+.ssllabs-endpoint-chip__label {
+    color: var(--cb-muted);
+    font-weight: 600;
+}
+
+.ssllabs-result__error {
+    max-width: 28rem;
+    margin-top: 0.1rem;
+    color: var(--cb-muted);
+    font-size: 0.78rem;
+    overflow-wrap: anywhere;
 }
 
 /* Keep the same breathing room below the fixed mobile topbar that the toggle
@@ -4053,7 +4279,7 @@ body.app-body--menu-open .app-sidebar {
     }
 
     /* Mobile onboarding is a linear decision flow, not a shrunken desktop wizard:
-     * surface only the active step, let every option wrap, and reduce gutters. */
+ * surface only the active step, let every option wrap, and reduce gutters. */
     .cb-onboarding-wizard__steps {
         display: grid;
         grid-template-columns: 1fr;
@@ -4201,21 +4427,23 @@ body.app-body--menu-open .app-sidebar {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 0.25rem;
+    gap: 0.4rem;
     color: var(--cb-muted);
     font-size: 0.95rem;
     text-align: center;
     pointer-events: none;
 }
 
-.ssllabs-history-empty__text {
-    color: var(--cb-text, inherit);
-    font-weight: 600;
+.ssllabs-history-empty__icon {
+    width: 3.5rem;
+    height: 3.5rem;
+    color: var(--cb-muted);
+    opacity: 0.55;
 }
 
-.ssllabs-history-empty__hint {
-    max-width: 28rem;
-    font-size: 0.85rem;
+.ssllabs-history-empty__text {
+    color: var(--cb-muted);
+    font-weight: 400;
 }
 
 .ssllabs-history-periods,
@@ -4323,11 +4551,15 @@ body.app-body--menu-open .app-sidebar {
     align-items: stretch;
 }
 
+.ssllabs-history-card.is-empty .ssllabs-history-grid {
+    grid-template-columns: 1fr;
+}
+
 .ssllabs-history-inspector {
     border: 1px solid var(--cb-border);
     border-radius: 0.85rem;
     padding: 0.85rem 1rem;
-    background: var(--cb-surface-muted, rgba(127, 127, 127, 0.04));
+    background: var(--cb-surface-muted);
     font-size: 0.85rem;
     min-height: 0;
 }
@@ -4469,6 +4701,21 @@ body.app-body--menu-open .app-sidebar {
     position: relative;
 }
 
+/* Thinner track than the Bootstrap default (0.5rem); the thumb's margin-top is
+   re-centered for the new track height using Bootstrap's own formula:
+   -(thumb-height - track-height) / 2 = -(1rem - 0.3rem) / 2. */
+#ssllabs-retention-slider.form-range::-webkit-slider-runnable-track {
+    height: 0.3rem;
+}
+
+#ssllabs-retention-slider.form-range::-webkit-slider-thumb {
+    margin-top: -0.35rem;
+}
+
+#ssllabs-retention-slider.form-range::-moz-range-track {
+    height: 0.3rem;
+}
+
 .ssllabs-retention-ticks {
     position: absolute;
     inset: 0;
@@ -4489,29 +4736,46 @@ body.app-body--menu-open .app-sidebar {
     border-radius: var(--cb-pill-radius);
     background: color-mix(in srgb, var(--cb-muted) 15%, var(--cb-surface));
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--cb-surface) 82%, transparent);
-    transform: translate(-50%, -50%);
+    transform: translateX(-50%);
 }
 
-.ssllabs-retention-tick:nth-child(1) { grid-column: 1; }
-.ssllabs-retention-tick:nth-child(2) { grid-column: 2; }
-.ssllabs-retention-tick:nth-child(3) { grid-column: 3; }
-.ssllabs-retention-tick:nth-child(4) { grid-column: 4; }
-.ssllabs-retention-tick:nth-child(5) { grid-column: 5; }
-.ssllabs-retention-tick:nth-child(6) { grid-column: 6; }
+.ssllabs-retention-tick:nth-child(1) {
+    grid-column: 1;
+}
+
+.ssllabs-retention-tick:nth-child(2) {
+    grid-column: 2;
+}
+
+.ssllabs-retention-tick:nth-child(3) {
+    grid-column: 3;
+}
+
+.ssllabs-retention-tick:nth-child(4) {
+    grid-column: 4;
+}
+
+.ssllabs-retention-tick:nth-child(5) {
+    grid-column: 5;
+}
+
+.ssllabs-retention-tick:nth-child(6) {
+    grid-column: 6;
+}
 
 .ssllabs-retention-tick:nth-child(7) {
     grid-column: 6;
     justify-self: end;
-    transform: translate(50%, -50%);
+    transform: translateX(50%);
 }
 
-#ssllabs-retention-slider[data-active-index="0"] ~ .ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(1),
-#ssllabs-retention-slider[data-active-index="1"] ~ .ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(2),
-#ssllabs-retention-slider[data-active-index="2"] ~ .ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(3),
-#ssllabs-retention-slider[data-active-index="3"] ~ .ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(4),
-#ssllabs-retention-slider[data-active-index="4"] ~ .ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(5),
-#ssllabs-retention-slider[data-active-index="5"] ~ .ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(6),
-#ssllabs-retention-slider[data-active-index="6"] ~ .ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(7) {
+#ssllabs-retention-slider[data-active-index="0"]~.ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(1),
+#ssllabs-retention-slider[data-active-index="1"]~.ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(2),
+#ssllabs-retention-slider[data-active-index="2"]~.ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(3),
+#ssllabs-retention-slider[data-active-index="3"]~.ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(4),
+#ssllabs-retention-slider[data-active-index="4"]~.ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(5),
+#ssllabs-retention-slider[data-active-index="5"]~.ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(6),
+#ssllabs-retention-slider[data-active-index="6"]~.ssllabs-retention-ticks .ssllabs-retention-tick:nth-child(7) {
     visibility: hidden;
 }
 
@@ -4527,19 +4791,42 @@ body.app-body--menu-open .app-sidebar {
 .ssllabs-retention-label {
     grid-row: 1;
     justify-self: start;
-    font-size: 0.675rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
     color: var(--bs-secondary-color);
     line-height: 1;
     white-space: nowrap;
     transform: translateX(-50%);
 }
 
-.ssllabs-retention-label:nth-child(1) { grid-column: 1; }
-.ssllabs-retention-label:nth-child(2) { grid-column: 2; }
-.ssllabs-retention-label:nth-child(3) { grid-column: 3; }
-.ssllabs-retention-label:nth-child(4) { grid-column: 4; }
-.ssllabs-retention-label:nth-child(5) { grid-column: 5; }
-.ssllabs-retention-label:nth-child(6) { grid-column: 6; }
+/* The infinity glyph reads noticeably smaller than digits at the same font-size,
+   so scale it up. The reduced line-height keeps its line box equal to the other
+   labels (1.125 x 0.72 = 0.81rem) so the label row height stays unchanged. */
+.ssllabs-retention-label:nth-child(1) {
+    grid-column: 1;
+    font-size: 1.125rem;
+    line-height: 0.72;
+}
+
+.ssllabs-retention-label:nth-child(2) {
+    grid-column: 2;
+}
+
+.ssllabs-retention-label:nth-child(3) {
+    grid-column: 3;
+}
+
+.ssllabs-retention-label:nth-child(4) {
+    grid-column: 4;
+}
+
+.ssllabs-retention-label:nth-child(5) {
+    grid-column: 5;
+}
+
+.ssllabs-retention-label:nth-child(6) {
+    grid-column: 6;
+}
 
 .ssllabs-retention-label:nth-child(7) {
     grid-column: 6;
@@ -4604,7 +4891,9 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .about-meta-value {
-    font-size: 0.82rem;
+    /* Matches .about-deps-table code (Dependencies panel) so all value
+       columns across the About cards render at the same size. */
+    font-size: 0.875rem;
     color: var(--cb-text);
     word-break: break-word;
 }
@@ -4623,7 +4912,6 @@ body.app-body--menu-open .app-sidebar {
 .about-deps-scroll {
     max-height: 19rem;
     overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
 }
 
 .about-deps-table thead th {
@@ -4635,13 +4923,12 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .about-deps-table code {
-    font-size: 0.82rem;
+    font-size: 0.875rem;
 }
 
 .about-changelog-content {
     max-height: 32rem;
     overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
     font-size: 0.82rem;
     line-height: 1.35;
 }
@@ -4670,7 +4957,7 @@ body.app-body--menu-open .app-sidebar {
 }
 
 .about-changelog-content code {
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
     padding: 0.05rem 0.3rem;
     border-radius: 0.3rem;
     background: var(--bs-tertiary-bg);

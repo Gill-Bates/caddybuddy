@@ -491,6 +491,37 @@
         window.CaddyBuddyCodeMirror?.initialize?.();
     };
 
+    // Bootstrap tabs don't restore themselves from the URL, so any reload falls
+    // back to the first tab. Mirror the active tab in the hash to restore it.
+    App.initializeSettingsTabs = () => {
+        const tabList = document.getElementById("settingsTabs");
+        if (!App.markInitialized(tabList, "settingsTabsInitialized")) {
+            return;
+        }
+
+        const triggers = Array.from(tabList.querySelectorAll("[data-bs-toggle='tab']"));
+
+        const activateFromHash = () => {
+            const target = triggers.find((trigger) => trigger.getAttribute("data-bs-target") === window.location.hash);
+            if (target instanceof HTMLElement && window.bootstrap?.Tab) {
+                window.bootstrap.Tab.getOrCreateInstance(target).show();
+            }
+        };
+
+        activateFromHash();
+
+        for (const trigger of triggers) {
+            trigger.addEventListener("shown.bs.tab", (event) => {
+                const targetSelector = event.target instanceof HTMLElement
+                    ? event.target.getAttribute("data-bs-target")
+                    : null;
+                if (targetSelector) {
+                    history.replaceState(null, "", targetSelector);
+                }
+            });
+        }
+    };
+
     App.initializeLoadingSubmitForms = () => {
         for (const form of document.querySelectorAll("form[data-loading-submit-form]")) {
             if (!(form instanceof HTMLFormElement) || form.dataset.loadingSubmitInitialized === "true") {
@@ -543,6 +574,9 @@
         }
     };
 
+    // Time a paused toast still gets after the pointer or focus leaves it.
+    const TOAST_RESUME_GRACE_MS = 1500;
+
     App.initializeAutoDismissToasts = () => {
         for (const toastElement of document.querySelectorAll("[data-auto-dismiss-toast]")) {
             if (!(toastElement instanceof HTMLElement) || toastElement.dataset.autoDismissInitialized === "true") {
@@ -557,12 +591,51 @@
                 : 5000;
 
             if (window.bootstrap?.Toast) {
-                const toast = window.bootstrap.Toast.getOrCreateInstance(toastElement, {
-                    autohide: true,
-                    delay,
-                });
+                // Bootstrap's own autohide cannot be paused, so a message can
+                // vanish while it is being read or while the pointer is on its
+                // way to the close button. Drive the countdown here instead and
+                // suspend it while the toast is hovered or holds focus.
+                const toast = window.bootstrap.Toast.getOrCreateInstance(toastElement, { autohide: false });
                 toastElement.addEventListener("hidden.bs.toast", () => toastElement.remove(), { once: true });
+
+                let timerId = 0;
+                let startedAt = 0;
+                let remaining = delay;
+
+                const clearTimer = () => {
+                    if (timerId !== 0) {
+                        window.clearTimeout(timerId);
+                        timerId = 0;
+                    }
+                };
+                const resumeTimer = () => {
+                    clearTimer();
+                    startedAt = Date.now();
+                    timerId = window.setTimeout(() => {
+                        timerId = 0;
+                        toast.hide();
+                    }, remaining);
+                };
+                const pauseTimer = () => {
+                    if (timerId === 0) {
+                        return;
+                    }
+                    clearTimer();
+                    // Always leave a grace period so the toast does not disappear
+                    // the instant the pointer or focus leaves it.
+                    remaining = Math.max(TOAST_RESUME_GRACE_MS, remaining - (Date.now() - startedAt));
+                };
+
+                for (const eventName of ["mouseenter", "focusin"]) {
+                    toastElement.addEventListener(eventName, pauseTimer);
+                }
+                for (const eventName of ["mouseleave", "focusout"]) {
+                    toastElement.addEventListener(eventName, resumeTimer);
+                }
+                toastElement.addEventListener("hide.bs.toast", clearTimer, { once: true });
+
                 toast.show();
+                resumeTimer();
                 continue;
             }
 
@@ -585,7 +658,8 @@
             return null;
         }
         const toastStack = document.createElement("div");
-        toastStack.className = "toast-container app-toast-stack position-fixed top-0 end-0 p-3";
+        // Keep this class list in sync with templates/partials/flashes.html.
+        toastStack.className = "toast-container app-toast-stack position-fixed bottom-0 end-0 p-3";
         toastStack.setAttribute("aria-live", "polite");
         toastStack.setAttribute("aria-atomic", "true");
         appContent.append(toastStack);
@@ -618,7 +692,7 @@
 
         const closeButton = document.createElement("button");
         closeButton.type = "button";
-        closeButton.className = "btn-close btn-close-white me-2 m-auto";
+        closeButton.className = "btn-close btn-close-white";
         closeButton.setAttribute("data-bs-dismiss", "toast");
         closeButton.setAttribute("aria-label", "Close");
         closeButton.addEventListener("click", () => {
@@ -628,7 +702,9 @@
         content.append(body, closeButton);
         toastElement.append(content);
 
-        toastStack.prepend(toastElement);
+        // Newest toast at the bottom of a bottom-anchored stack, matching the
+        // document order of the server-rendered flashes in flashes.html.
+        toastStack.append(toastElement);
         App.initializeAutoDismissToasts();
     };
 
@@ -850,9 +926,9 @@
 
         const rules = {
             length: (p) => p.length >= normalizedMinLength,
-            upper:   (p) => /[A-Z]/.test(p),
-            lower:   (p) => /[a-z]/.test(p),
-            digit:   (p) => /[0-9]/.test(p),
+            upper: (p) => /[A-Z]/.test(p),
+            lower: (p) => /[a-z]/.test(p),
+            digit: (p) => /[0-9]/.test(p),
             special: (p) => /[^A-Za-z0-9]/.test(p),
         };
 

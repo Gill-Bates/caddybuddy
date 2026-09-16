@@ -18,3 +18,11 @@ def test_smoke_tests_explicitly_reject_caddy_binary_in_runtime_image() -> None:
         "caddy binary is not installed",
     ):
         assert token in workflow, f"Workflow is missing required smoke-test guard: {token!r}"
+
+
+def test_release_images_are_built_from_a_fresh_unpinned_resolution() -> None:
+    workflow = Path(".github/workflows/docker-build.yml").read_text(encoding="utf-8")
+
+    assert "--pull" in workflow
+    assert "--no-cache" in workflow
+    assert "constraints" not in workflow

@@ -908,6 +908,7 @@
     App.initializeDashboardStatus?.();
     App.initializeDashboardMetrics?.();
     App.initializeSettingsPasswordValidation?.();
+    App.initializeSettingsTabs?.();
     App.initializeResponsiveCodeTextareas?.();
     App.initializeSslLabsStatus?.();
     App.initializeSitesCertificates?.();

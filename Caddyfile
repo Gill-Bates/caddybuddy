@@ -12,7 +12,7 @@
         }
     }
 
-    # Nur aktivieren, wenn Caddy hinter einem vertrauenswürdigen Proxy/CDN läuft.
+    # Only enable when Caddy runs behind a trusted proxy/CDN.
     #
     # servers {
     #     trusted_proxies static private_ranges

@@ -11,6 +11,8 @@ import { readFile, writeFile } from 'node:fs/promises';
 import pixelmatch from 'pixelmatch';
 import { PNG } from 'pngjs';
 
+import { LOGIN_CAPTCHA_MIN_AGE_MS } from './constants.mjs';
+import { createTotpCounterReserver, totpCode } from './totp.mjs';
 
 const DEFAULT_NAV_TIMEOUT_MS = Number.parseInt(process.env.UILINT_NAV_TIMEOUT_MS || '60000', 10);
 const DEFAULT_BOOTSTRAP_TIMEOUT_MS = Number.parseInt(process.env.UILINT_BOOTSTRAP_TIMEOUT_MS || '30000', 10);
@@ -22,11 +24,15 @@ const MAX_PNG_PIXELS = Number.parseInt(process.env.UILINT_MAX_PNG_PIXELS || Stri
 const PIXELMATCH_THRESHOLD = 0.1;
 const LOGIN_ERROR_SELECTOR = '.login-error, [data-testid="login-error"]';
 const POST_LOGIN_SELECTOR = '.app-sidebar, #main-content, .page-title, .metric-card';
+const OTP_CHALLENGE_PATH = '/login/otp';
+const OTP_SUBMIT_ATTEMPTS = 2;
+const defaultReserveTotpCounter = createTotpCounterReserver();
 const LOGIN_CSRF_FAILURE_RE = /(?:CSRF token missing or invalid|Invalid CSRF token\.|Security token is missing)/i;
 const SENSITIVE_QUERY_PARAM_RE = /(?:token|secret|key|password|passwd|csrf|session|auth)/i;
 const SENSITIVE_TEXT_RE = /\b(token|secret|password|passwd|csrf|session|authorization)\b\s*[:=]\s*["']?[^"'\s]+/gi;
 const URL_IN_TEXT_RE = /https?:\/\/[^\s"'<>]+/g;
 const MOTION_RESET_STYLE_ID = 'ui-lint-motion-reset';
+const STABLE_HEIGHT_ATTEMPTS = 4;
 
 
 function normalizeTimeout(value, fallback) {
@@ -166,7 +172,74 @@ export async function resetLayoutShiftMetric(page) {
     }).catch(() => { });
 }
 
-export async function login(page, { baseUrl, credentialProvider, motionResetCss }) {
+export async function waitForLoginCaptchaMinAge(page, formRenderedAtMs) {
+    const remainingMs = LOGIN_CAPTCHA_MIN_AGE_MS - (Date.now() - formRenderedAtMs);
+    if (remainingMs > 0) {
+        await page.waitForTimeout(remainingMs);
+    }
+}
+
+function pathnameOf(url, fallback) {
+    try {
+        return new URL(url).pathname.replace(/\/$/, '');
+    } catch {
+        return fallback;
+    }
+}
+
+async function completeOtpChallenge(page, { baseUrl, credentialProvider, reserveTotpCounter }) {
+    const otpSecret = typeof credentialProvider.getOtpSecret === 'function'
+        ? await credentialProvider.getOtpSecret()
+        : null;
+    if (!otpSecret) {
+        throw new Error('Account requires two-factor authentication: set UI_LINT_OTP_SECRET or "otpSecret" in the credentials file.');
+    }
+
+    for (let attempt = 0; attempt < OTP_SUBMIT_ATTEMPTS; attempt += 1) {
+        // The password step rotates the session, so read a fresh CSRF token from the challenge page.
+        await page.goto(`${baseUrl}${OTP_CHALLENGE_PATH}`, { waitUntil: 'domcontentloaded', timeout: DEFAULT_NAV_TIMEOUT_MS });
+        if (pathnameOf(page.url(), OTP_CHALLENGE_PATH) !== OTP_CHALLENGE_PATH) {
+            throw new Error('Two-factor challenge expired before a code could be submitted.');
+        }
+
+        const code = totpCode(otpSecret, await reserveTotpCounter());
+        const submission = await page.evaluate(async (otpCode) => {
+            const form = document.querySelector('form[action$="/login/otp"]');
+            if (!(form instanceof HTMLFormElement)) {
+                return { ok: false, error: 'Two-factor form not found.' };
+            }
+            const body = new URLSearchParams();
+            for (const [key, value] of new FormData(form).entries()) {
+                if (!(value instanceof File)) {
+                    body.append(key, String(value));
+                }
+            }
+            body.set('code', otpCode);
+            const response = await fetch(form.action, {
+                method: 'POST',
+                body,
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                redirect: 'follow',
+            });
+            return { ok: response.ok, status: response.status, finalUrl: response.url };
+        }, code);
+
+        if (submission?.error) {
+            throw new Error(submission.error);
+        }
+        const finalPath = pathnameOf(submission?.finalUrl, OTP_CHALLENGE_PATH);
+        if (submission?.ok && finalPath !== OTP_CHALLENGE_PATH && finalPath !== '/login') {
+            return submission;
+        }
+        if (submission?.status === 429) {
+            throw new Error('Two-factor login was rate limited (HTTP 429).');
+        }
+    }
+    throw new Error(`Two-factor code was rejected ${OTP_SUBMIT_ATTEMPTS} times; check UI_LINT_OTP_SECRET and the system clock.`);
+}
+
+export async function login(page, { baseUrl, credentialProvider, motionResetCss, reserveTotpCounter = defaultReserveTotpCounter }) {
     if (!credentialProvider || typeof credentialProvider.getUsername !== 'function' || typeof credentialProvider.getPassword !== 'function') {
         throw new Error('login() requires a credentialProvider with getUsername() and getPassword() methods.');
     }
@@ -179,11 +252,13 @@ export async function login(page, { baseUrl, credentialProvider, motionResetCss 
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
         await page.goto(`${baseUrl}/login`, { waitUntil: 'domcontentloaded', timeout: DEFAULT_NAV_TIMEOUT_MS });
+        const loginFormRenderedAt = Date.now();
         await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => { });
         await disableMotion(page, motionResetCss, 'login');
 
         await page.fill('#username', username);
         await page.fill('#password', password);
+        await waitForLoginCaptchaMinAge(page, loginFormRenderedAt);
 
         try {
             const buttonCount = await submitButton.count();
@@ -246,18 +321,16 @@ export async function login(page, { baseUrl, credentialProvider, motionResetCss 
                 throw new Error(message);
             }
 
-            const finalPath = (() => {
-                try {
-                    return new URL(submission.finalUrl || `${baseUrl}/login`).pathname.replace(/\/$/, '');
-                } catch {
-                    return '/login';
-                }
-            })();
+            const finalPath = pathnameOf(submission.finalUrl || `${baseUrl}/login`, '/login');
             if (finalPath === '/login') {
                 throw new Error(`Login request stayed on /login. Response: ${submission.bodyText || 'empty'}`);
             }
 
-            await page.goto(submission.finalUrl || `${baseUrl}/`, {
+            const completedSubmission = finalPath === OTP_CHALLENGE_PATH
+                ? await completeOtpChallenge(page, { baseUrl, credentialProvider, reserveTotpCounter })
+                : submission;
+
+            await page.goto(completedSubmission.finalUrl || `${baseUrl}/`, {
                 waitUntil: 'domcontentloaded',
                 timeout: DEFAULT_NAV_TIMEOUT_MS,
             });
@@ -480,6 +553,32 @@ async function comparePngPair(pathA, pathB) {
     };
 }
 
+/**
+ * Wait until the full-page height repeats, so both screenshots of a pair are
+ * captured at the same size.
+ *
+ * Late async content (a chart or list that resolves after `load`) changes the
+ * document height between the two captures, which surfaces as a size mismatch
+ * and a large diff ratio even when every compared pixel is identical. A page
+ * that never settles still reaches the capture and trips the mismatch.
+ */
+export async function waitForStableFullPageHeight(page, { settleMs, attempts = STABLE_HEIGHT_ATTEMPTS }) {
+    const readHeight = () => page
+        .evaluate(() => Math.ceil(document.documentElement.scrollHeight))
+        .catch(() => null);
+
+    let previousHeight = await readHeight();
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+        await page.waitForTimeout(settleMs);
+        const currentHeight = await readHeight();
+        if (currentHeight === previousHeight) {
+            return currentHeight;
+        }
+        previousHeight = currentHeight;
+    }
+    return previousHeight;
+}
+
 export async function captureStablePair(page, {
     motionResetCss,
     name,
@@ -491,7 +590,16 @@ export async function captureStablePair(page, {
     // (e.g. dashboard) never reach networkidle state
     await page.waitForLoadState('load', { timeout: 30000 })
         .catch((err) => console.warn(`[${name}] waitForLoadState timed out: ${err.message}`));
-    await page.waitForTimeout(screenshotSettleMs);
+    // Chromium's first full-page capture on a touch-emulated device (mobile/
+    // tablet projects) flips the page's hover/pointer media query match away
+    // from the emulated touch values as a side effect of the CDP
+    // capture-beyond-viewport path. Any CSS gated on
+    // `(hover: none) and (pointer: coarse)` (e.g. the 16px iOS zoom-guard
+    // font size on form controls) then un-applies, changing layout height
+    // between the first and second screenshot of the pair. Absorb that
+    // one-time flip with a throwaway capture before measuring/comparing.
+    await page.screenshot({ fullPage: true, animations: 'disabled' });
+    await waitForStableFullPageHeight(page, { settleMs: screenshotSettleMs });
     const safeName = sanitize(name);
     const shotA = resolveArtifactPath(screenshotDir, `${safeName}-a.png`);
     const shotB = resolveArtifactPath(screenshotDir, `${safeName}-b.png`);

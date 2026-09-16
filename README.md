@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/platform-linux%2Famd64%20%7C%20linux%2Farm64-lightgrey?logo=linux&logoColor=white" alt="Platform">
 </p>
 
-CaddyBuddy provides guided onboarding, site and Caddyfile management, certificate visibility and renewal, weekly or monthly SSL Labs assessments, and health monitoring from a server-rendered FastAPI application.
+CaddyBuddy provides guided onboarding, site and Caddyfile management, certificate visibility and renewal, weekly or monthly SSL Labs assessments, and health monitoring from a server-rendered FastAPI application. Authentication combines CSRF protection, invisible anti-bot checks, rate limiting, optional passkey (WebAuthn) sign-in, and optional TOTP two-factor authentication.
 
 ## Screenshots
 
@@ -33,6 +33,8 @@ CaddyBuddy provides guided onboarding, site and Caddyfile management, certificat
 export CB_SECRET_KEY="$(head -c 32 /dev/urandom | base64)"
 CADDYBUDDY_VERSION=latest docker compose -f docker/docker-compose.yml.example up -d
 ```
+
+Generate this secret once and save it securely for future starts. Reuse the same value with the existing data directory: by default it also protects password hashes and TOTP secrets, so changing it can prevent existing users from signing in.
 
 Open `http://127.0.0.1:8000`, create the initial administrator account, and complete the onboarding wizard.
 

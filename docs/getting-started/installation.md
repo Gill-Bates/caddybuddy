@@ -14,7 +14,7 @@ It mounts:
 | Host path | Container path | Purpose |
 | --- | --- | --- |
 | `/etc/caddy/Caddyfile` | `/app/Caddyfile` | Managed Caddyfile |
-| `./data` | `/app/data` | SQLite database and runtime state |
+| `./docker/data` | `/app/data` | SQLite database and runtime state |
 | `/var/lib/caddy/.local/share/caddy` | same path | Certificate inspection and renewal monitoring |
 
 Pull and start the image:
@@ -57,7 +57,7 @@ export LOG_LEVEL=DEBUG
 python run.py
 ```
 
-The development server listens on `http://127.0.0.1:8000` by default.
+The development server binds to `0.0.0.0:8000` by default and is available locally at `http://127.0.0.1:8000`.
 
 ## Upgrade
 
@@ -69,4 +69,4 @@ docker compose -f docker/docker-compose.yml.example pull
 docker compose -f docker/docker-compose.yml.example up -d --force-recreate
 ```
 
-Persist and back up the `data` directory before upgrading.
+Persist and back up the Compose example's `docker/data` directory before upgrading.

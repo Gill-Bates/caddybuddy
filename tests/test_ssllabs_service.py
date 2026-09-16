@@ -32,6 +32,7 @@ from app.services.ssllabs import (
     SslLabsEmailNotRegisteredError,
     SslLabsRetryableError,
     SslLabsService,
+    available_history_ranges,
     build_rank_history,
     check_email_registration_status,
     register_email_with_ssllabs,
@@ -901,10 +902,18 @@ class GradeRankTests(unittest.TestCase):
     def test_resolve_history_range_defaults_for_unknown(self) -> None:
         self.assertEqual(resolve_history_range("90d"), ("90d", 90))
         self.assertEqual(resolve_history_range("1y"), ("1y", 365))
-        self.assertEqual(resolve_history_range("2y"), ("2y", 730))
-        self.assertEqual(resolve_history_range("7d"), ("30d", 30))  # removed; falls back
-        self.assertEqual(resolve_history_range("bogus"), ("30d", 30))
-        self.assertEqual(resolve_history_range(None), ("30d", 30))
+        self.assertEqual(resolve_history_range("2y"), ("90d", 90))
+        self.assertEqual(resolve_history_range("7d"), ("90d", 90))
+        self.assertEqual(resolve_history_range("bogus"), ("90d", 90))
+        self.assertEqual(resolve_history_range(None), ("90d", 90))
+
+    def test_available_history_ranges_respects_retention(self) -> None:
+        all_ranges = {"30d": "30 d", "90d": "90 d", "180d": "180 d", "1y": "1 y"}
+        self.assertEqual(available_history_ranges(0), all_ranges)
+        self.assertEqual(available_history_ranges(365), all_ranges)
+        self.assertEqual(list(available_history_ranges(180)), ["30d", "90d", "180d"])
+        self.assertEqual(list(available_history_ranges(90)), ["30d", "90d"])
+        self.assertEqual(list(available_history_ranges(7)), ["90d"])  # default range is never dropped
 
 
 class SslLabsRankHistoryTests(unittest.IsolatedAsyncioTestCase):
@@ -982,6 +991,49 @@ class SslLabsRankHistoryTests(unittest.IsolatedAsyncioTestCase):
             await self._seed_history(
                 session, host="old.example.com", grade="B", rank=4,
                 recorded_at=datetime(2026, 1, 1, 8, 0, tzinfo=UTC),
+            )
+            await session.commit()
+
+        async with self.session_factory() as session:
+            history = await build_rank_history(session, range_key="30d", now=now)
+
+        self.assertEqual(history.series, [])
+
+    async def test_build_rank_history_seeds_latest_sample_before_window(self) -> None:
+        # Window starts 2026-05-14 12:00; monthly-scanned host was last seen 33 days ago.
+        now = datetime(2026, 6, 13, 12, 0, tzinfo=UTC)
+        async with self.session_factory() as session:
+            await self._seed_history(
+                session, host="monthly.example.com", grade="B", rank=4,
+                recorded_at=datetime(2026, 5, 1, 8, 0, tzinfo=UTC),
+            )
+            await self._seed_history(
+                session, host="monthly.example.com", grade="A", rank=6,
+                recorded_at=datetime(2026, 5, 11, 8, 0, tzinfo=UTC),
+            )
+            await self._seed_history(
+                session, host="monthly.example.com", grade="A+", rank=7,
+                recorded_at=datetime(2026, 6, 10, 8, 0, tzinfo=UTC),
+            )
+            await session.commit()
+
+        async with self.session_factory() as session:
+            history = await build_rank_history(session, range_key="30d", now=now)
+
+        self.assertEqual(len(history.series), 1)
+        points = history.series[0].points
+        self.assertEqual(
+            [(p.date, p.grade) for p in points],
+            [("2026-04-27", "B"), ("2026-05-11", "A"), ("2026-06-08", "A+")],
+        )
+
+    async def test_build_rank_history_seed_lookback_is_bounded(self) -> None:
+        now = datetime(2026, 6, 13, 12, 0, tzinfo=UTC)
+        async with self.session_factory() as session:
+            # 41 days before the window start: beyond the seed lookback.
+            await self._seed_history(
+                session, host="gone.example.com", grade="A", rank=6,
+                recorded_at=datetime(2026, 4, 3, 8, 0, tzinfo=UTC),
             )
             await session.commit()
 

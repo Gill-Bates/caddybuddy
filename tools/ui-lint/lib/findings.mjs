@@ -17,7 +17,10 @@ import {
     KPI_ROW_VARIANCE_MAX,
     KPI_SIDE_INSET_VARIANCE_MAX_PX,
     LAYOUT_SHIFT_THRESHOLD,
-    APP_PAGE_HEADER_CONTENT_GAP_MAX_PX,
+    APP_PAGE_HEADER_CONTENT_GAP_EXPECTED_PX,
+    APP_PAGE_HEADER_CONTENT_GAP_MOBILE_EXPECTED_PX,
+    APP_PAGE_HEADER_CONTENT_GAP_TOLERANCE_PX,
+    APP_PAGE_HEADER_CONTENT_ALIGNMENT_TOLERANCE_PX,
     MOBILE_TOGGLE_CONTENT_ALIGNMENT_TOLERANCE_PX,
     MOBILE_TOPBAR_CLEARANCE_MIN_PX,
     MOBILE_CARD_HEADING_ALIGNMENT_TOLERANCE_PX,
@@ -37,6 +40,11 @@ const CARD_HEADER_PADDING_LEFT_MAX_PX = 20;
 const DUPLICATE_REQUEST_THRESHOLD = 3;
 const EVENT_STREAM_PATH = '/api/v1/events';
 const LAYOUT_SHIFT_UNSUPPORTED_MESSAGE = 'Ignoring unsupported entryTypes: layout-shift.';
+// WebKit screenshots with `animations: 'disabled'` inject an unnonced stylesheet
+// into the page, which the app's strict style-src policy correctly rejects. The
+// violation therefore belongs to the harness, not to the audited page — and
+// Chromium/Firefox keep reporting genuine style-src violations of this wording.
+const WEBKIT_SCREENSHOT_STYLE_CSP_MESSAGE = 'Refused to apply a stylesheet because its hash, its nonce';
 const SENSITIVE_QUERY_PARAM_RE = /(?:token|secret|key|password|passwd|csrf|session|auth)/i;
 
 
@@ -75,6 +83,9 @@ function isKnownAuditConsoleNoise(entry, viewName) {
         return true;
     }
     if (viewName.includes('dashboard') && text.startsWith('Failed to load SSL Labs history:')) {
+        return true;
+    }
+    if (viewName.startsWith('webkit-') && text.includes(WEBKIT_SCREENSHOT_STYLE_CSP_MESSAGE)) {
         return true;
     }
     return false;
@@ -264,8 +275,16 @@ export function summarizeFindings(result) {
     ensureObject(metrics, 'pageHeaderContentGap', {
         present: false,
         gapPx: null,
-        maximum: APP_PAGE_HEADER_CONTENT_GAP_MAX_PX,
-        passesMaximum: true,
+        expected: APP_PAGE_HEADER_CONTENT_GAP_EXPECTED_PX,
+        tolerance: APP_PAGE_HEADER_CONTENT_GAP_TOLERANCE_PX,
+        delta: null,
+        passesTolerance: true,
+    });
+    ensureObject(metrics, 'pageHeaderContentAlignment', {
+        present: false,
+        offsetPx: null,
+        tolerance: APP_PAGE_HEADER_CONTENT_ALIGNMENT_TOLERANCE_PX,
+        passesTolerance: true,
     });
     ensureObject(metrics, 'layoutShift', { value: 0 });
     ensureObject(metrics, 'state', { loadingWithoutDisabled: [], missingAriaBusy: [] });
@@ -372,6 +391,10 @@ export function summarizeFindings(result) {
     if (metrics.buttonAlignmentIssues?.length) pushHard(`buttonAlignmentIssues=${metrics.buttonAlignmentIssues.length}`);
     if (metrics.badgeAlignmentIssues?.length) pushHard(`badgeAlignmentIssues=${metrics.badgeAlignmentIssues.length}`);
     if (metrics.clickTargetsTooSmall?.length) pushHard(`clickTargetsTooSmall=${metrics.clickTargetsTooSmall.length}`);
+    if (metrics.inputZoomRisks?.length) pushHard(`inputZoomRisks=${metrics.inputZoomRisks.length}`);
+    if (metrics.pageBackdrop?.present && metrics.pageBackdrop.passesBackdrop === false) {
+        pushHard(`pageBackdropHidden=${Number(metrics.pageBackdrop.htmlHasGradient)}/${metrics.pageBackdrop.bodyBackgroundColor || 'none'}`);
+    }
     if (metrics.viewportClippedInteractiveElements.length) {
         pushHard(`viewportClippedInteractive=${metrics.viewportClippedInteractiveElements.length}`);
     }
@@ -413,6 +436,7 @@ export function summarizeFindings(result) {
     }
 
     if (metrics.badgeStyleMismatches?.length) pushHard(`badgeStyleMismatches=${metrics.badgeStyleMismatches.length}`);
+    if (metrics.aboutValueFontSizeMismatches?.length) pushHard(`aboutValueFontSizeMismatches=${metrics.aboutValueFontSizeMismatches.length}`);
     if (metrics.buttonContrastIssues?.length) pushHard(`buttonContrastIssues=${metrics.buttonContrastIssues.length}`);
     if (metrics.nonTokenColorUsage?.length) pushWarning(`nonTokenColorUsage=${metrics.nonTokenColorUsage.length}`);
     if (metrics.monospaceToneMismatches?.length) pushWarning(`monospaceToneMismatches=${metrics.monospaceToneMismatches.length}`);
@@ -497,8 +521,15 @@ export function summarizeFindings(result) {
     if (metrics.pageStructureConsistent?.present && metrics.pageStructureConsistent.issues?.length) {
         pushHard(`pageStructureMissingRowWrapper=${metrics.pageStructureConsistent.issues.length}`);
     }
-    if (metrics.pageHeaderContentGap.present && metrics.pageHeaderContentGap.passesMaximum === false) {
-        pushWarning(`pageHeaderContentGap=${metrics.pageHeaderContentGap.gapPx}/${metrics.pageHeaderContentGap.maximum}`);
+    if (metrics.pageHeaderContentGap.present && metrics.pageHeaderContentGap.passesTolerance === false) {
+        pushHard(
+            `pageHeaderContentGap=${metrics.pageHeaderContentGap.gapPx}/${metrics.pageHeaderContentGap.expected}/${metrics.pageHeaderContentGap.tolerance}`
+        );
+    }
+    if (metrics.pageHeaderContentAlignment.present && metrics.pageHeaderContentAlignment.passesTolerance === false) {
+        pushHard(
+            `pageHeaderContentAlignment=${metrics.pageHeaderContentAlignment.offsetPx}/${metrics.pageHeaderContentAlignment.tolerance}`
+        );
     }
 
     if (metrics.spacing.outlierVerticalGaps?.length) pushWarning(`outlierVerticalGaps=${metrics.spacing.outlierVerticalGaps.length}`);

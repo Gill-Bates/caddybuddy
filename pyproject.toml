@@ -7,18 +7,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "caddybuddy"
-version = "1.5.1"
+version = "1.6.0"
 description = "Focused web control plane for one Caddy installation"
 readme = "README.md"
 requires-python = ">=3.13"
 license = "MIT"
 authors = [{ name = "Gill-Bates", email = "tn.steiner@gmail.com" }]
 
-# Nothing here carries a version pin. A release installs the newest resolvable
-# set; the release workflow resolves that set once for linux/amd64 and
-# linux/arm64 and hands the result to both architecture builds, so the images
-# still carry identical versions. See the 'Resolve runtime dependency
-# versions' step in .github/workflows/docker-build.yml.
+# Runtime dependencies are deliberately unpinned. Each release resolves the
+# newest compatible set for its target platform.
 dependencies = [
     "aiosqlite",
     "bcrypt",
@@ -32,9 +29,11 @@ dependencies = [
     "pydantic",
     "pydantic-settings",
     "python-multipart",
+    "qrcode[pil]",
     "slowapi",
     "sqlalchemy",
     "uvicorn[standard]",
+    "webauthn",
 ]
 
 [project.optional-dependencies]
@@ -45,7 +44,7 @@ docs = [
     "mkdocs-material==9.7.7",
     "mkdocs-minify-plugin==0.8.0",
     "mkdocs-redirects==1.2.3",
-    "pymdown-extensions==11.0.2",
+    "pymdown-extensions==12.0.1",
 ]
 
 # The repository root holds several other top-level directories (docker,

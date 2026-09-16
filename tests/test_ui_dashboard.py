@@ -71,9 +71,36 @@ class UIDashboardTests(unittest.TestCase):
             ],
         )
 
-    def test_home_page_renders_dashboard_metrics(self) -> None:
+    def _render_home(
+        self,
+        *,
+        metrics: SimpleNamespace,
+        retention_days: int = 365,
+        onboarding_status: str = "completed",
+    ):
         app = self._build_app()
         current_user = SimpleNamespace(username="admin", role="admin")
+
+        with (
+            patch("app.routers.ui.dashboard.require_user", new=AsyncMock(return_value=current_user)),
+            patch("app.routers.ui.dashboard.get_dashboard_shell_metrics", new=AsyncMock(return_value=metrics)),
+            patch(
+                "app.routers.ui.dashboard.get_ssllabs_history_retention_days",
+                new=AsyncMock(return_value=retention_days),
+            ),
+            patch(
+                "app.routers.ui.dashboard.get_caddy_runtime_status",
+                new=AsyncMock(return_value=SimpleNamespace(onboarding_required=False)),
+            ),
+            patch(
+                "app.routers.ui._common.get_onboarding_state",
+                new=AsyncMock(return_value=SimpleNamespace(status=onboarding_status)),
+            ),
+            TestClient(app) as client,
+        ):
+            return client.get("/")
+
+    def test_home_page_renders_dashboard_metrics(self) -> None:
         metrics = SimpleNamespace(
             domain_count=12,
             enabled_domain_count=10,
@@ -85,22 +112,15 @@ class UIDashboardTests(unittest.TestCase):
             caddy_version="v2.8.4",
         )
 
-        with (
-            patch("app.routers.ui.dashboard.require_user", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.dashboard.get_dashboard_shell_metrics", new=AsyncMock(return_value=metrics)),
-            patch(
-                "app.routers.ui.dashboard.get_caddy_runtime_status",
-                new=AsyncMock(return_value=SimpleNamespace(onboarding_required=False)),
-            ),
-            patch(
-                "app.routers.ui._common.get_onboarding_state",
-                new=AsyncMock(return_value=SimpleNamespace(status="completed")),
-            ),
-            TestClient(app) as client,
-        ):
-            response = client.get("/")
+        response = self._render_home(metrics=metrics)
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn('<option value="30d">30 d</option>', response.text)
+        self.assertIn('<option value="90d" selected>90 d</option>', response.text)
+        self.assertIn('<option value="180d">180 d</option>', response.text)
+        self.assertIn('<option value="1y">1 y</option>', response.text)
+        self.assertNotIn('value="7d"', response.text)
+        self.assertNotIn('value="2y"', response.text)
         self.assertIn("Dashboard", response.text)
         self.assertIn("Managed sites, certificate state and local Caddy runtime status.", response.text)
         self.assertNotIn("Enabled / total site domains tracked by CaddyBuddy.", response.text)
@@ -119,7 +139,9 @@ class UIDashboardTests(unittest.TestCase):
         self.assertIn('id="ssllabs-domain-search"', response.text)
         self.assertIn('id="ssllabs-history-inspector"', response.text)
         self.assertIn('id="ssllabs-history-periods"', response.text)
-        self.assertIn("Weekly samples appear here after the first completed scheduled scan.", response.text)
+        self.assertIn("No SSL Labs scan history yet.", response.text)
+        self.assertIn('class="ssllabs-history-empty__icon"', response.text)
+        self.assertNotIn("Weekly samples appear here after the first completed scheduled scan.", response.text)
         self.assertIn('id="ssllabs-problem-domains"', response.text)
         self.assertIn('id="ssllabs-focus-wrap"', response.text)
         self.assertIn('id="ssllabs-domain-focus-chart"', response.text)
@@ -143,8 +165,6 @@ class UIDashboardTests(unittest.TestCase):
         self.assertNotIn("Create your first managed site", response.text)
 
     def test_home_page_renders_empty_state_when_no_domains_exist(self) -> None:
-        app = self._build_app()
-        current_user = SimpleNamespace(username="admin", role="admin")
         metrics = SimpleNamespace(
             domain_count=0,
             enabled_domain_count=0,
@@ -156,25 +176,32 @@ class UIDashboardTests(unittest.TestCase):
             caddy_version="v2.8.4",
         )
 
-        with (
-            patch("app.routers.ui.dashboard.require_user", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.dashboard.get_dashboard_shell_metrics", new=AsyncMock(return_value=metrics)),
-            patch(
-                "app.routers.ui.dashboard.get_caddy_runtime_status",
-                new=AsyncMock(return_value=SimpleNamespace(onboarding_required=False)),
-            ),
-            patch(
-                "app.routers.ui._common.get_onboarding_state",
-                new=AsyncMock(return_value=SimpleNamespace(status="completed")),
-            ),
-            TestClient(app) as client,
-        ):
-            response = client.get("/")
+        response = self._render_home(metrics=metrics)
 
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("Create your first managed site", response.text)
         self.assertIn('id="dashboard-certificate-warning"', response.text)
         self.assertIn('d-none', response.text)
+
+    def test_home_page_hides_history_ranges_beyond_retention(self) -> None:
+        metrics = SimpleNamespace(
+            domain_count=1,
+            enabled_domain_count=1,
+            valid_certificate_count=1,
+            expired_certificate_count=0,
+            expiring_soon_certificate_count=0,
+            caddy_service_status="Running",
+            caddy_service_uptime="1h",
+            caddy_version="v2.8.4",
+        )
+
+        response = self._render_home(metrics=metrics, retention_days=90)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('value="30d"', response.text)
+        self.assertIn('value="90d"', response.text)
+        self.assertNotIn('value="180d"', response.text)
+        self.assertNotIn('value="1y"', response.text)
 
     def test_ssllabs_history_chart_uses_week_based_previous_comparison_labels(self) -> None:
         chart_script = Path("app/static/js/ssllabs-history-chart.js").read_text(encoding="utf-8")

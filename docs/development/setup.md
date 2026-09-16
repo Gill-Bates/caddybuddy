@@ -12,6 +12,7 @@ python3.13 -m venv .venv
 . .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e .
+python -m pip install pytest
 ```
 
 Start the application:

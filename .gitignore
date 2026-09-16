@@ -69,6 +69,7 @@ site/
 target/
 tempCodeRunnerFile.py
 Thumbs.db
+tools/ui-lint/tmp-*.mjs
 *.tmp
 tools/ui-lint/playwright-report/
 tools/ui-lint/test-results/

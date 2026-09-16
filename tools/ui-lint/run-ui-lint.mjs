@@ -16,6 +16,8 @@ import { chromium, firefox, webkit, devices } from 'playwright';
 import {
     FULL_MOTION_RESET_CSS,
     LOGIN_ERROR_SETTLE_MS,
+    LOGIN_FAILURE_ALERT_SELECTORS,
+    LOGIN_FAILURE_TEXT_PATTERN_SOURCES,
     LOGIN_LOCKOUT_RESET_MS,
     LOGIN_TEST_STAGGER_MS,
     SCREENSHOT_SETTLE_MS,
@@ -32,9 +34,17 @@ import {
     login,
     applyTheme,
     resetLayoutShiftMetric,
+    waitForLoginCaptchaMinAge,
 } from './lib/browser-utils.mjs';
 import { summarizeFindings, isExpectedStatusUnavailable } from './lib/findings.mjs';
-import { LOGIN_FAILURE_VIEWS, VIEWS } from './lib/views.mjs';
+import { createTotpCounterReserver, totpCode } from './lib/totp.mjs';
+import {
+    LOGIN_FAILURE_VIEWS,
+    TWO_FACTOR_CHALLENGE_VIEWS,
+    TWO_FACTOR_RECOVERY_VIEWS,
+    TWO_FACTOR_SETUP_VIEWS,
+    VIEWS,
+} from './lib/views.mjs';
 import {
     captureVisualSnapshot,
     compareVisualSnapshot,
@@ -49,6 +59,7 @@ const ERROR_PHASE = Object.freeze({
     LOGIN_PAGE_SETUP: 'login-page-setup',
     AUDIT_LOGIN_FAILURE: 'audit-login-failure',
     AUDIT_LOGIN_RATE_LIMIT: 'audit-login-rate-limit',
+    AUDIT_TWO_FACTOR: 'audit-two-factor',
 });
 
 const FINDING = Object.freeze({
@@ -57,6 +68,10 @@ const FINDING = Object.freeze({
     LOGIN_RATE_LIMIT_REDIRECTED_UI_FLOW: 'loginRateLimitRedirectedUiFlow',
 });
 const INCLUDE_ERROR_STACKS = process.env.UI_LINT_INCLUDE_ERROR_STACKS === '1';
+// Enrolls and afterwards disables two-factor authentication on the audit account.
+const TWO_FACTOR_FLOWS_ENABLED = process.env.UI_LINT_TWO_FACTOR_FLOWS === '1';
+const OTP_CHALLENGE_PATH = '/login/otp';
+const TWO_FACTOR_SETUP_PATH = '/settings/two-factor';
 
 function normalizeBaseUrl(rawValue) {
     let url;
@@ -168,6 +183,7 @@ async function loadCredentials() {
         cachedCredentials = Object.freeze({
             username: process.env.UI_LINT_USERNAME,
             password: process.env.UI_LINT_PASSWORD,
+            otpSecret: process.env.UI_LINT_OTP_SECRET || null,
         });
         return cachedCredentials;
     }
@@ -184,13 +200,19 @@ async function loadCredentials() {
         throw new Error(`Failed to read UI lint credentials file: ${resolvedPath}`, { cause: error });
     }
 
-    if (!parsed || typeof parsed.username !== 'string' || typeof parsed.password !== 'string') {
-        throw new Error('UI lint credentials file must contain JSON with string properties: username, password');
+    if (
+        !parsed
+        || typeof parsed.username !== 'string'
+        || typeof parsed.password !== 'string'
+        || (parsed.otpSecret !== undefined && typeof parsed.otpSecret !== 'string')
+    ) {
+        throw new Error('UI lint credentials file must contain JSON with string properties: username, password (optional: otpSecret)');
     }
 
     cachedCredentials = Object.freeze({
         username: parsed.username,
         password: parsed.password,
+        otpSecret: process.env.UI_LINT_OTP_SECRET || parsed.otpSecret || null,
     });
     return cachedCredentials;
 }
@@ -205,6 +227,9 @@ const credentialProvider = {
     },
     async getPassword() {
         return (await loadCredentials()).password;
+    },
+    async getOtpSecret() {
+        return (await loadCredentials()).otpSecret;
     },
 };
 
@@ -333,6 +358,7 @@ const SELECTORS = {
         'summary',
         '[tabindex]',
     ].join(', '),
+    loginFailureAlert: LOGIN_FAILURE_ALERT_SELECTORS,
 };
 
 if (!CREDENTIALS_FILE && (!process.env.UI_LINT_USERNAME || !process.env.UI_LINT_PASSWORD)) {
@@ -856,7 +882,12 @@ function isLoginRateLimitMessage(value) {
     return message.includes('too many') || message.includes('rate limit') || message.includes('locked');
 }
 
-function loginFailureProbeScript() {
+// Runs inside the page context via page.evaluate; must not reference Node
+// built-ins or outer-scope bindings. Selector/pattern lists are passed in as
+// arguments (sourced from LOGIN_FAILURE_ALERT_SELECTORS /
+// LOGIN_FAILURE_TEXT_PATTERN_SOURCES in lib/constants.mjs) so the Node-side
+// extractLoginFailureTextFromText() below cannot drift from this probe.
+function loginFailureProbeScript({ selectors, patternSources }) {
     const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
     const isVisible = (element) => {
         if (!element || !element.isConnected) return false;
@@ -867,21 +898,8 @@ function loginFailureProbeScript() {
         return rect.width > 0 && rect.height > 0;
     };
 
-    const candidates = [
-        '.app-toast-stack .toast[role="status"] .toast-body',
-        '.toast[role="status"] .toast-body',
-        '.app-toast-stack .toast[role="status"]',
-        '.toast[role="status"]',
-        '.app-flash-stack .alert[role="alert"]',
-        '.alert[role="alert"]',
-        '.alert-danger',
-        '.login-error',
-        '.error-message',
-        '[data-testid="login-error"]',
-    ];
-
     const extractLoginFailureText = (documentRoot = document) => {
-        for (const selector of candidates) {
+        for (const selector of selectors) {
             const matches = Array.from(documentRoot.querySelectorAll(selector));
             const visibleMatch = matches.find((element) => isVisible(element));
             if (visibleMatch) {
@@ -890,14 +908,8 @@ function loginFailureProbeScript() {
         }
 
         const bodyText = normalizeText(documentRoot.body?.textContent || '');
-        const patterns = [
-            /invalid credentials\.?/i,
-            /too many[^.]*attempts[^.]*\.?/i,
-            /rate limit[^.]*\.?/i,
-            /locked[^.]*\.?/i,
-        ];
-        for (const pattern of patterns) {
-            const match = bodyText.match(pattern);
+        for (const patternSource of patternSources) {
+            const match = bodyText.match(new RegExp(patternSource, 'i'));
             if (match) {
                 return normalizeText(match[0]);
             }
@@ -906,7 +918,7 @@ function loginFailureProbeScript() {
         return '';
     };
 
-    const alert = candidates
+    const alert = selectors
         .flatMap((selector) => Array.from(document.querySelectorAll(selector)))
         .find((element) => isVisible(element)) || null;
     const submitButton = document.querySelector('form[action$="/login"] button[type="submit"], form.auth-form button[type="submit"]');
@@ -925,15 +937,9 @@ function loginFailureProbeScript() {
 
 function extractLoginFailureTextFromText(rawText) {
     const normalizedText = String(rawText || '').replace(/\s+/g, ' ').trim();
-    const patterns = [
-        /invalid credentials\.?/i,
-        /too many[^.]*attempts[^.]*\.?/i,
-        /rate limit[^.]*\.?/i,
-        /locked[^.]*\.?/i,
-    ];
 
-    for (const pattern of patterns) {
-        const match = normalizedText.match(pattern);
+    for (const patternSource of LOGIN_FAILURE_TEXT_PATTERN_SOURCES) {
+        const match = normalizedText.match(new RegExp(patternSource, 'i'));
         if (match) {
             return String(match[0] || '').trim();
         }
@@ -1089,7 +1095,10 @@ async function waitForLoginFailureUi(page, responseText = '') {
     const fallbackErrorText = extractLoginFailureTextFromText(responseText);
 
     while (Date.now() < deadline) {
-        const loginFailure = await page.evaluate(loginFailureProbeScript);
+        const loginFailure = await page.evaluate(loginFailureProbeScript, {
+            selectors: LOGIN_FAILURE_ALERT_SELECTORS,
+            patternSources: LOGIN_FAILURE_TEXT_PATTERN_SOURCES,
+        });
         if (loginFailure.errorText.length > 0) {
             return loginFailure;
         }
@@ -1170,27 +1179,25 @@ async function auditView(page, view) {
 }
 
 async function auditLoginFailureView(page, view) {
+    let loginFormRenderedAt = 0;
     return auditPageFlow(page, view, {
-        load: () => page.goto(`${BASE_URL}${view.url}`, { waitUntil: 'domcontentloaded', timeout: 10000 }),
+        load: async () => {
+            const response = await page.goto(`${BASE_URL}${view.url}`, { waitUntil: 'domcontentloaded', timeout: 10000 });
+            loginFormRenderedAt = Date.now();
+            return response;
+        },
         afterLoad: () => applyTheme(page, { baseUrl: BASE_URL, theme: view.theme, label: view.name }),
         prepare: async () => {
             const invalidPassword = randomBytes(24).toString('hex');
-            await page.fill('#username', LOGIN_FAILURE_USERNAME);
-            await page.fill('#password', invalidPassword);
+            await page.locator('#username').fill(LOGIN_FAILURE_USERNAME);
+            await page.locator('#password').fill(invalidPassword);
+            await waitForLoginCaptchaMinAge(page, loginFormRenderedAt);
 
-            const navigationResponsePromise = page.waitForNavigation({
-                waitUntil: 'domcontentloaded',
-                timeout: 30000,
-                url: (url) => {
-                    try {
-                        return url.pathname === '/login';
-                    } catch {
-                        return false;
-                    }
-                },
-            }).catch(() => null);
-
-            const [loginResponse, redirectResponse, navigationResponse] = await Promise.all([
+            // _render_login_failure (app/routers/ui/auth.py) re-renders login.html
+            // inline with the failure status; it never redirects. A second waiter
+            // for a follow-up GET document response therefore never resolves and
+            // used to stall this flow for the full 30s timeout on every run.
+            const [loginResponse] = await Promise.all([
                 page.waitForResponse((response) => {
                     try {
                         return new URL(response.url()).pathname === '/login' && response.request().method() === 'POST';
@@ -1198,17 +1205,6 @@ async function auditLoginFailureView(page, view) {
                         return false;
                     }
                 }, { timeout: 30000 }),
-                page.waitForResponse((response) => {
-                    try {
-                        const url = new URL(response.url());
-                        return url.pathname === '/login'
-                            && response.request().method() === 'GET'
-                            && response.request().resourceType() === 'document';
-                    } catch {
-                        return false;
-                    }
-                }, { timeout: 30000 }).catch(() => null),
-                navigationResponsePromise,
                 page.locator('form[action="/login"] button[type="submit"]').first().click(),
             ]);
 
@@ -1218,7 +1214,7 @@ async function auditLoginFailureView(page, view) {
             return {
                 metricsPatch: { loginFailure },
                 resultFields: { loginResponseStatus: loginResponse.status() },
-                securityResponse: redirectResponse || navigationResponse || loginResponse,
+                securityResponse: loginResponse,
                 loginResponse,
             };
         },
@@ -1412,7 +1408,218 @@ async function writeSummary(results) {
     return summaryPath;
 }
 
-async function runAuthenticatedViews(pagePool, viewsOverride = null) {
+function urlPathname(url) {
+    try {
+        return new URL(url).pathname.replace(/\/$/, '') || '/';
+    } catch {
+        return '';
+    }
+}
+
+async function submitPasswordStep(page) {
+    await page.goto(`${BASE_URL}/login`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    const loginFormRenderedAt = Date.now();
+    await page.fill('#username', await credentialProvider.getUsername());
+    await page.fill('#password', await credentialProvider.getPassword());
+    await waitForLoginCaptchaMinAge(page, loginFormRenderedAt);
+    await Promise.all([
+        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }),
+        page.locator('form[action$="/login"] button[type="submit"]').first().click(),
+    ]);
+    if (urlPathname(page.url()) !== OTP_CHALLENGE_PATH) {
+        throw new Error(`Password step did not open the two-factor challenge (landed on ${urlPathname(page.url())}).`);
+    }
+}
+
+/**
+ * Audit the second-factor prompt without submitting a code, so no TOTP time
+ * step is consumed. A pending challenge is reused until it expires.
+ */
+async function auditTwoFactorChallengeView(page, view) {
+    return auditPageFlow(page, view, {
+        load: async () => {
+            await applyTheme(page, { baseUrl: BASE_URL, theme: view.theme, label: view.name });
+            let response = await page.goto(`${BASE_URL}${view.url}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            if (urlPathname(page.url()) !== OTP_CHALLENGE_PATH) {
+                await submitPasswordStep(page);
+                await applyTheme(page, { baseUrl: BASE_URL, theme: view.theme, label: view.name });
+                response = await page.goto(`${BASE_URL}${view.url}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            }
+            return response;
+        },
+    });
+}
+
+async function readTwoFactorState(page) {
+    await page.goto(`${BASE_URL}/settings`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    return page.evaluate(() => {
+        if (document.querySelector('form[action$="/settings/two-factor/disable"]')) return 'enabled';
+        if (document.querySelector('form[action$="/settings/two-factor/enable"]')) return 'disabled';
+        if (document.querySelector('a[href$="/settings/two-factor"]')) return 'pending';
+        return 'unknown';
+    });
+}
+
+async function postTwoFactorSettingsAction(page, actionPath) {
+    await page.goto(`${BASE_URL}/settings`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    const submission = await page.evaluate(async ({ url, currentPassword }) => {
+        const csrfInput = document.querySelector('input[name="csrf_token"]');
+        const csrfToken = csrfInput instanceof HTMLInputElement ? csrfInput.value : '';
+        if (!csrfToken) {
+            return { ok: false, error: 'Settings CSRF token missing.' };
+        }
+        const body = new URLSearchParams({ csrf_token: csrfToken, current_password: currentPassword });
+        const response = await fetch(url, {
+            method: 'POST',
+            body,
+            credentials: 'same-origin',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                'X-CSRF-Token': csrfToken,
+            },
+            redirect: 'follow',
+        });
+        return { ok: response.ok, status: response.status, finalUrl: response.url };
+    }, { url: `${BASE_URL}${actionPath}`, currentPassword: await credentialProvider.getPassword() });
+
+    if (submission?.error) {
+        throw new Error(submission.error);
+    }
+    if (!submission?.ok) {
+        throw new Error(`POST ${actionPath} failed with HTTP ${submission?.status ?? 'unknown'}.`);
+    }
+    return submission;
+}
+
+async function disableAuditTwoFactor(page) {
+    await postTwoFactorSettingsAction(page, `${TWO_FACTOR_SETUP_PATH}/disable`);
+    const state = await readTwoFactorState(page);
+    if (state !== 'disabled') {
+        throw new Error(`Two-factor authentication is still ${state} after disabling.`);
+    }
+}
+
+async function confirmAuditTwoFactor(page) {
+    await page.goto(`${BASE_URL}${TWO_FACTOR_SETUP_PATH}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    const secret = await page.inputValue('#otp-secret');
+    // Enrollment resets the replay counter, so a private reserver cannot collide with login().
+    const code = totpCode(secret, await createTotpCounterReserver()());
+    await page.fill('#otp-code', code);
+    const [response] = await Promise.all([
+        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }),
+        page.locator('form[action$="/settings/two-factor/confirm"] button[type="submit"]').first().click(),
+    ]);
+    if (!response || response.status() !== 200 || (await page.locator('ul[aria-label="Recovery codes"] li').count()) === 0) {
+        throw new Error(`Two-factor confirmation did not render recovery codes (HTTP ${response?.status() ?? 'unknown'}).`);
+    }
+    return response;
+}
+
+/**
+ * Two-factor pages depend on account state, so they run sequentially in one
+ * browser after all other authenticated audits:
+ * - the challenge view needs an account with two-factor authentication enabled;
+ * - setup and recovery views (UI_LINT_TWO_FACTOR_FLOWS=1) need it disabled and
+ *   restore that state afterwards.
+ */
+async function runTwoFactorAudits(browser, browserName) {
+    const prefixed = (views) => views.map((view) => ({ ...view, name: `${browserName}-${view.name}` }));
+    const poolOptions = {
+        browser,
+        buildContextOptions,
+        deviceContextOptions: DEVICE_CONTEXT_OPTIONS,
+        installAnalyzers,
+        installLayoutShiftObserver,
+        installUiLintInitScript,
+    };
+    const results = [];
+    const auditedViews = [];
+
+    if (await credentialProvider.getOtpSecret()) {
+        const challengeViews = prefixed(TWO_FACTOR_CHALLENGE_VIEWS);
+        const challengePool = createDevicePagePool(poolOptions);
+        try {
+            console.log(`[${browserName}] Running ${challengeViews.length} two-factor challenge views...`);
+            results.push(...await runAuthenticatedViews(challengePool, challengeViews, auditTwoFactorChallengeView));
+            auditedViews.push(...challengeViews);
+        } finally {
+            await challengePool.closeAll();
+        }
+    } else {
+        console.log(`[${browserName}] Skipping two-factor challenge views: the audit account has no OTP secret configured.`);
+    }
+
+    if (!TWO_FACTOR_FLOWS_ENABLED) {
+        console.log(`[${browserName}] Skipping two-factor setup and recovery views. Set UI_LINT_TWO_FACTOR_FLOWS=1 to enroll and disable two-factor authentication on the audit account.`);
+        return { results, auditedViews };
+    }
+
+    const enrollmentPool = createDevicePagePool(poolOptions);
+    try {
+        const page = await enrollmentPool.getPage('desktop');
+        await login(page, { baseUrl: BASE_URL, credentialProvider, motionResetCss: FULL_MOTION_RESET_CSS });
+        const initialState = await readTwoFactorState(page);
+        if (initialState !== 'disabled') {
+            console.warn(`[${browserName}] Skipping two-factor setup and recovery views: two-factor authentication on the audit account is ${initialState}, not disabled.`);
+            return { results, auditedViews };
+        }
+
+        let enrollmentStarted = false;
+        try {
+            enrollmentStarted = true;
+            const enrollment = await postTwoFactorSettingsAction(page, `${TWO_FACTOR_SETUP_PATH}/enable`);
+            if (urlPathname(enrollment.finalUrl) !== TWO_FACTOR_SETUP_PATH) {
+                throw new Error(`Two-factor enrollment did not open the setup page (landed on ${urlPathname(enrollment.finalUrl)}).`);
+            }
+
+            // Enrollment rotates the session fingerprint; reuse the refreshed cookie.
+            const setupViews = prefixed(TWO_FACTOR_SETUP_VIEWS);
+            const setupPool = createDevicePagePool({ ...poolOptions, storageState: await page.context().storageState() });
+            try {
+                console.log(`[${browserName}] Running ${setupViews.length} two-factor setup views...`);
+                results.push(...await runAuthenticatedViews(setupPool, setupViews));
+                auditedViews.push(...setupViews);
+            } finally {
+                await setupPool.closeAll();
+            }
+
+            const confirmationResponse = await confirmAuditTwoFactor(page);
+            const recoveryViews = prefixed(TWO_FACTOR_RECOVERY_VIEWS);
+            console.log(`[${browserName}] Running ${recoveryViews.length} two-factor recovery views...`);
+            for (const [index, view] of recoveryViews.entries()) {
+                // The codes exist only in this POST response; switch themes in place.
+                const result = await auditPageFlow(page, view, {
+                    load: async () => {
+                        await applyTheme(page, { baseUrl: BASE_URL, theme: view.theme, label: view.name });
+                        return index === 0 ? confirmationResponse : null;
+                    },
+                    finalize: () => ({ securityResponse: confirmationResponse }),
+                });
+                results.push(applySummary(result));
+                auditedViews.push(view);
+            }
+        } finally {
+            if (enrollmentStarted) {
+                try {
+                    await disableAuditTwoFactor(page);
+                    console.log(`[${browserName}] Disabled two-factor authentication on the audit account again.`);
+                } catch (error) {
+                    console.error(
+                        `[${browserName}] FAILED to disable two-factor authentication on the audit account: ${error instanceof Error ? error.message : String(error)}. `
+                        + 'The account may be locked. Stop CaddyBuddy and run: sqlite3 data/caddybuddy.db '
+                        + '"UPDATE users SET otp_enabled = 0, otp_secret = NULL, otp_recovery_codes = NULL, otp_last_verified_counter = NULL WHERE username = \'<audit user>\';"',
+                    );
+                    throw error;
+                }
+            }
+        }
+    } finally {
+        await enrollmentPool.closeAll();
+    }
+    return { results, auditedViews };
+}
+
+async function runAuthenticatedViews(pagePool, viewsOverride = null, auditFn = auditView) {
     const viewsToRun = viewsOverride || VIEWS;
     const groupedViews = groupViewsByDevice(viewsToRun);
     const settled = [];
@@ -1433,7 +1640,7 @@ async function runAuthenticatedViews(pagePool, viewsOverride = null) {
             for (const view of views) {
                 try {
                     const result = await withRetry(
-                        () => auditView(page, view),
+                        () => auditFn(page, view),
                         {
                             label: view.name,
                             onRetry: ({ attempt, error, remaining }) => {
@@ -1552,6 +1759,31 @@ async function main() {
     await assertBaseUrlReachable();
     await prepareOutputDirs();
 
+    // setGlobalRateLimitEnabled(settingsBrowserType, false) below leaves the
+    // target instance's rate limiting disabled until the matching restore
+    // runs. A SIGINT/SIGTERM (Ctrl+C, CI job cancellation/timeout) would skip
+    // straight past the `finally` block further down, so register a signal
+    // teardown that performs the same restore before the process exits.
+    let restoreDone = false;
+    const restoreRateLimitOnSignal = async (signal, exitCode) => {
+        if (restoreDone || originalRateLimitEnabled === null) {
+            process.exit(exitCode);
+            return;
+        }
+        restoreDone = true;
+        console.warn(`\nReceived ${signal}; restoring UI rate limiting before exit...`);
+        try {
+            await setGlobalRateLimitEnabled(settingsBrowserType, originalRateLimitEnabled);
+            console.log(`Restored UI rate limiting to ${originalRateLimitEnabled ? 'enabled' : 'disabled'}.`);
+        } catch (error) {
+            console.warn(`Failed to restore UI rate limiting: ${error instanceof Error ? error.message : String(error)}`);
+        } finally {
+            process.exit(exitCode);
+        }
+    };
+    process.once('SIGINT', () => { void restoreRateLimitOnSignal('SIGINT', 130); });
+    process.once('SIGTERM', () => { void restoreRateLimitOnSignal('SIGTERM', 143); });
+
     try {
         if (!allowSettingsMutation) {
             console.warn(
@@ -1668,6 +1900,33 @@ async function main() {
             }
         }
 
+        {
+            let browser;
+            try {
+                browser = await settingsBrowserType.launch({ headless: true });
+                const { results: twoFactorResults, auditedViews } = await runTwoFactorAudits(browser, settingsBrowserName);
+                browserResults.set(settingsBrowserName, [
+                    ...(browserResults.get(settingsBrowserName) || []),
+                    ...twoFactorResults,
+                ]);
+                for (const view of auditedViews) {
+                    baselineSnapshotNames.add(view.name);
+                }
+            } catch (error) {
+                logAuditError(`[${settingsBrowserName}] Two-factor audit failed`, error);
+                browserResults.set(settingsBrowserName, [
+                    ...(browserResults.get(settingsBrowserName) || []),
+                    buildErrorResult(
+                        { name: `${settingsBrowserName}-two-factor`, url: TWO_FACTOR_SETUP_PATH, theme: null },
+                        error,
+                        { device: 'desktop', phase: ERROR_PHASE.AUDIT_TWO_FACTOR },
+                    ),
+                ]);
+            } finally {
+                if (browser) await browser.close();
+            }
+        }
+
         console.log('All browser audits completed, collecting results...');
         const results = browserTypes.flatMap((browserName) => browserResults.get(browserName) || []);
         await runBaselineGc(VISUAL_REGRESSION, Array.from(baselineSnapshotNames));
@@ -1725,7 +1984,8 @@ async function main() {
 
         process.exitCode = (lowScoreResults.length || hasVisualRegressionFailures) ? 2 : (hasHardFindings ? 1 : 0);
     } finally {
-        if (originalRateLimitEnabled !== null) {
+        if (!restoreDone && originalRateLimitEnabled !== null) {
+            restoreDone = true;
             try {
                 await setGlobalRateLimitEnabled(settingsBrowserType, originalRateLimitEnabled);
                 console.log(`Restored UI rate limiting to ${originalRateLimitEnabled ? 'enabled' : 'disabled'}.`);

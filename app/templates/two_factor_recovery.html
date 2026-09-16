@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+
+{% set page_title = "Save recovery codes" %}
+
+{% block content %}
+<section class="app-page app-page--narrow">
+    <div class="panel-card settings-panel">
+        <div class="panel-card__header"><h1 class="h4 mb-0">Save your recovery codes</h1></div>
+        <div class="panel-card__body">
+            <div class="alert alert-warning" role="alert">Each code works once. Store them securely; this page is the only time they are shown.</div>
+            <ul class="list-group font-monospace mb-4" aria-label="Recovery codes" data-ui-lint-dynamic>{% for code in recovery_codes %}<li class="list-group-item">{{ code }}</li>{% endfor %}</ul>
+            <a class="btn btn-primary" href="{{ request.app.url_path_for('settings_page') }}">I have saved these codes</a>
+        </div>
+    </div>
+</section>
+{% endblock %}

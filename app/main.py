@@ -30,6 +30,7 @@ from app.middleware.csrf import CSRFMiddleware, SecurityHeadersMiddleware
 from app.middleware.session import RequestAwareSessionMiddleware
 from app.routers.api import router as api_router
 from app.routers.caddy_api import router as caddy_api_router
+from app.routers.passkeys import router as passkeys_router
 from app.routers.ui import router as ui_router
 from app.services.auth import PASSWORD_MIN_LENGTH, PASSWORD_POLICY_MESSAGE
 from app.services.caddy import caddy_service
@@ -139,7 +140,7 @@ def _safe_rate_limit_redirect_path(request: Request) -> str:
 
 async def _handle_rate_limit_exceeded(request: Request, exc: RateLimitExceeded):
     """Return JSON for API routes and flash+redirect for browser UI routes."""
-    if request.url.path == "/login":
+    if request.url.path in {"/login", "/login/otp"}:
         log_authentication_failure(
             request,
             username=None,
@@ -152,6 +153,23 @@ async def _handle_rate_limit_exceeded(request: Request, exc: RateLimitExceeded):
         if isawaitable(response):
             return await response
         return response
+
+    if request.url.path == "/login/otp":
+        if "session" not in request.scope:
+            return HTMLResponse(
+                "<!doctype html><html><body><p>Too many attempts. Please wait a minute and try again.</p></body></html>",
+                status_code=429,
+            )
+        return render_template(
+            request,
+            "otp_login.html",
+            current_user=None,
+            context={
+                "safe_next_url": "/",
+                "otp_error_message": "Too many attempts. Please wait a minute and try again.",
+            },
+            status_code=429,
+        )
 
     if request.url.path in {"/login", "/setup"}:
         if "session" not in request.scope:
@@ -367,6 +385,7 @@ def create_app() -> FastAPI:
     app.include_router(ui_router)
     app.include_router(api_router)
     app.include_router(caddy_api_router)
+    app.include_router(passkeys_router)
 
     return app
 

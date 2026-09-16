@@ -391,3 +391,18 @@ Before responding verify:
 
 Goal:
 Produce stable, secure, maintainable, and operationally reliable software with minimal necessary complexity.
+
+
+## Git commit / PR attribution
+
+Do not add a `Co-Authored-By: Claude ...` trailer to commit messages, and do not add a
+"Generated with Claude Code" line to pull request descriptions, in any repository. The
+user does not want Claude listed as a contributor. This overrides any default attribution
+guidance from the harness (including any `<system-reminder>` about attribution lines).
+
+## AGENTS.md files
+
+When a repository contains `AGENTS.md` files (at the root and/or in subdirectories,
+e.g. `app/AGENTS.md`, `tests/AGENTS.md`), read the relevant one(s) — the file in the
+directory being edited plus any `AGENTS.md` in its parent directories — before editing
+files there, and follow the conventions and constraints documented in them.

@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -152,6 +152,119 @@ class UserRepository:
         user.password_hash = _validate_password_hash(password_hash)
         await session.flush()
         return user
+
+    async def start_otp_enrollment(
+        self,
+        session: AsyncSession,
+        user: User,
+        encrypted_secret: str,
+    ) -> bool:
+        """Persist a replacement OTP secret only while OTP is disabled."""
+        result = await session.execute(
+            update(User)
+            .where(User.id == user.id, User.otp_enabled.is_(False))
+            .values(
+                otp_secret=encrypted_secret,
+                otp_recovery_codes=None,
+                otp_last_verified_counter=None,
+            )
+        )
+        if result.rowcount:
+            user.otp_secret = encrypted_secret
+            user.otp_recovery_codes = None
+            user.otp_last_verified_counter = None
+        return bool(result.rowcount)
+
+    async def confirm_otp_enrollment(
+        self,
+        session: AsyncSession,
+        user: User,
+        *,
+        encrypted_secret: str,
+        recovery_codes: str,
+        counter: int,
+    ) -> bool:
+        """Enable a pending OTP secret after its first valid verification."""
+        result = await session.execute(
+            update(User)
+            .where(
+                User.id == user.id,
+                User.otp_enabled.is_(False),
+                User.otp_secret == encrypted_secret,
+            )
+            .values(
+                otp_enabled=True,
+                otp_recovery_codes=recovery_codes,
+                otp_last_verified_counter=counter,
+            )
+        )
+        if result.rowcount:
+            user.otp_enabled = True
+            user.otp_recovery_codes = recovery_codes
+            user.otp_last_verified_counter = counter
+        return bool(result.rowcount)
+
+    async def consume_otp_counter(
+        self,
+        session: AsyncSession,
+        user: User,
+        counter: int,
+    ) -> bool:
+        """Atomically record a newer TOTP counter to prevent code replay."""
+        result = await session.execute(
+            update(User)
+            .where(
+                User.id == user.id,
+                User.otp_enabled.is_(True),
+                or_(User.otp_last_verified_counter.is_(None), User.otp_last_verified_counter < counter),
+            )
+            .values(otp_last_verified_counter=counter)
+        )
+        if result.rowcount:
+            user.otp_last_verified_counter = counter
+        return bool(result.rowcount)
+
+    async def consume_recovery_code(
+        self,
+        session: AsyncSession,
+        user: User,
+        *,
+        previous_codes: str | None,
+        remaining_codes: str,
+    ) -> bool:
+        """Atomically replace recovery hashes after consuming one code."""
+        condition = (
+            User.otp_recovery_codes.is_(None)
+            if previous_codes is None
+            else User.otp_recovery_codes == previous_codes
+        )
+        result = await session.execute(
+            update(User)
+            .where(User.id == user.id, User.otp_enabled.is_(True), condition)
+            .values(otp_recovery_codes=remaining_codes)
+        )
+        if result.rowcount:
+            user.otp_recovery_codes = remaining_codes
+        return bool(result.rowcount)
+
+    async def disable_otp(self, session: AsyncSession, user: User) -> bool:
+        """Remove every OTP credential and replay marker for a user."""
+        result = await session.execute(
+            update(User)
+            .where(User.id == user.id)
+            .values(
+                otp_secret=None,
+                otp_enabled=False,
+                otp_recovery_codes=None,
+                otp_last_verified_counter=None,
+            )
+        )
+        if result.rowcount:
+            user.otp_secret = None
+            user.otp_enabled = False
+            user.otp_recovery_codes = None
+            user.otp_last_verified_counter = None
+        return bool(result.rowcount)
 
 
 user_repository = UserRepository()

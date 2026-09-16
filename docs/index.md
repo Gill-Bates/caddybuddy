@@ -7,7 +7,8 @@ hide:
 
 <div class="hero" markdown>
 
-![CaddyBuddy](https://raw.githubusercontent.com/Gill-Bates/caddybuddy/main/app/static/img/caddybuddy_1c.svg)
+![CaddyBuddy](assets/caddybuddy-logo-light.svg#only-light)
+![CaddyBuddy](assets/caddybuddy-logo-dark.svg#only-dark)
 
 <p class="hero__tagline">
 Manage one Caddy installation through a focused web interface for sites, configuration, certificates, and SSL Labs assessments.
@@ -42,7 +43,7 @@ Manage one Caddy installation through a focused web interface for sites, configu
 
 -   :material-certificate: **Certificates**
 
-    See certificate state and remaining validity for configured domains, and trigger renewals when runtime control is available.
+    See certificate state and remaining validity for configured domains, and start applicable renewal actions; runtime control enables force renewal and restart repair.
 
     [Dashboard overview](features/dashboard.md)
 

@@ -487,22 +487,65 @@
             && el.matches('.btn-sm.btn--icon-only')
             && Boolean(el.closest('.sites-list-scroll'))
         );
-        const requiredTargetSize = (el) => (isDenseSitesTableTarget(el) ? denseTableMinSize : minSize);
+        const chipRemoveMinSize = numberConstant(constants.CHIP_REMOVE_CLICK_TARGET_MIN_SIZE_PX, minSize);
+        const requiredTargetSize = (el) => {
+            if (isDenseSitesTableTarget(el)) return denseTableMinSize;
+            if (el.matches('.tag-input__remove')) return chipRemoveMinSize;
+            return minSize;
+        };
+        // A transparent, absolutely positioned ::before/::after may enlarge the
+        // tappable area beyond the element box; measure whichever is larger.
+        const effectiveTargetSize = (el) => {
+            const rect = rectOf(el);
+            let width = rect.width;
+            let height = rect.height;
+            for (const pseudo of ['::before', '::after']) {
+                const pseudoStyle = window.getComputedStyle(el, pseudo);
+                if (!pseudoStyle || pseudoStyle.content === 'none' || pseudoStyle.content === 'normal') continue;
+                if (pseudoStyle.position !== 'absolute' || pseudoStyle.pointerEvents === 'none') continue;
+                width = Math.max(width, parseFloat(pseudoStyle.width) || 0);
+                height = Math.max(height, parseFloat(pseudoStyle.height) || 0);
+            }
+            return { width, height };
+        };
 
         const tooSmall = targets
             .filter(isVisible)
             .filter((el) => !isVisuallyHidden(el))
-            .map((el) => ({ el, rect: rectOf(el), minimum: requiredTargetSize(el) }))
-            .filter(({ rect, minimum }) => rect.width < minimum || rect.height < minimum)
+            .map((el) => ({ el, size: effectiveTargetSize(el), minimum: requiredTargetSize(el) }))
+            .filter(({ size, minimum }) => size.width < minimum || size.height < minimum)
             .slice(0, 20)
-            .map(({ el, rect, minimum }) => ({
+            .map(({ el, size, minimum }) => ({
                 tag: el.tagName,
                 className: el.className || '',
                 text: (el.textContent || el.getAttribute('aria-label') || '').trim().replace(/\s+/g, ' ').slice(0, 80),
-                width: roundTo(rect.width, 2),
-                height: roundTo(rect.height, 2),
+                width: roundTo(size.width, 2),
+                height: roundTo(size.height, 2),
                 minimum,
             }));
+
+        // iOS Safari zooms the page when a form field under 16px gains focus.
+        // Only meaningful on touch-first devices, where app.css lifts inputs to 1rem.
+        const inputZoomRisks = (() => {
+            if (!window.matchMedia('(hover: none) and (pointer: coarse)').matches) return [];
+            const minFontSize = numberConstant(constants.TOUCH_INPUT_MIN_FONT_SIZE_PX, 16);
+            const nonTextTypes = new Set(['hidden', 'checkbox', 'radio', 'range', 'color', 'file', 'button', 'submit', 'reset', 'image']);
+            return Array.from(document.querySelectorAll('input, select, textarea'))
+                .filter((el) => !(el instanceof HTMLInputElement) || !nonTextTypes.has((el.type || 'text').toLowerCase()))
+                .filter((el) => !el.disabled && !el.readOnly)
+                .filter(isVisible)
+                .filter((el) => !isVisuallyHidden(el))
+                .map((el) => ({ el, fontSize: parseFloat(styleOf(el)?.fontSize) || 0 }))
+                .filter(({ fontSize }) => fontSize > 0 && fontSize < minFontSize - 0.01)
+                .slice(0, 20)
+                .map(({ el, fontSize }) => ({
+                    tag: el.tagName,
+                    id: el.id || '',
+                    className: el.className || '',
+                    fontSize: roundTo(fontSize, 2),
+                    minimum: minFontSize,
+                }));
+        })();
 
         const collectCenteringIssues = (selector, issueType) => Array.from(document.querySelectorAll(selector))
             .filter(isVisible)
@@ -986,6 +1029,33 @@
             return issues;
         })();
 
+        const aboutValueFontSizeMismatches = (() => {
+            // The About page renders value cells in three separate tables
+            // (Application Details, Check for Updates, Dependencies); all
+            // must share one font size (--about-meta-value / .about-deps-table code).
+            const selector = '.about-meta-value, .about-deps-table code';
+            const values = Array.from(document.querySelectorAll(selector))
+                .filter((el) => isVisible(el) && !isVisuallyHidden(el));
+            if (values.length === 0) return null;
+
+            const expected = Number(constants.ABOUT_VALUE_FONT_SIZE_EXPECTED_PX ?? 14);
+            const tolerance = Number(constants.ABOUT_VALUE_FONT_SIZE_TOLERANCE_PX ?? 0.5);
+
+            return values
+                .map((el) => {
+                    const fontSize = parseFloat(styleOf(el).fontSize) || 0;
+                    if (Math.abs(fontSize - expected) <= tolerance) return null;
+                    return {
+                        className: el.className || '',
+                        text: (el.textContent || '').trim().slice(0, 40),
+                        fontSize: roundTo(fontSize, 2),
+                        expected,
+                    };
+                })
+                .filter(Boolean)
+                .slice(0, 20);
+        })();
+
         const viewportClippedInteractiveElements = interactiveTargets
             .filter(isVisible)
             .filter((el) => !isVisuallyHidden(el))
@@ -1018,6 +1088,7 @@
 
         return {
             clickTargetsTooSmall: tooSmall,
+            inputZoomRisks,
             buttonAlignmentIssues,
             badgeAlignmentIssues,
             ssllabsPrematureDesktopLayoutIssues,
@@ -1032,6 +1103,7 @@
             onboardingWizardStepAccent,
             onboardingWizardStepIndexPalette,
             badgeStyleMismatches,
+            aboutValueFontSizeMismatches,
             viewportClippedInteractiveElements,
         };
     }
@@ -1194,18 +1266,22 @@
         return rgb.r >= 140 && rgb.r > rgb.g + 20 && rgb.r > rgb.b + 20;
     }
 
-    function loginFailureAnalyzer() {
+    function loginFailureAnalyzer(loginFailureAlertSelectors = []) {
         const loginForm = document.querySelector('form[action="/login"]');
-        const banner = document.getElementById('login-error-banner')
+        // app/templates/login.html renders the failure alert as
+        // .alert.alert-danger.login-error[data-testid="login-error"] (no
+        // dedicated banner id) — match the same selector list the Node-side
+        // probe uses (lib/constants.mjs LOGIN_FAILURE_ALERT_SELECTORS) so both
+        // detection paths stay in sync with the template.
+        const banner = loginFailureAlertSelectors
+            .map((selector) => document.querySelector(selector))
+            .find(Boolean)
             || loginForm?.querySelector('.alert[role="alert"]');
-        const bannerTextEl = document.getElementById('login-error-banner-text')
-            || banner;
-        const submitBtn = document.getElementById('submit-btn')
-            || loginForm?.querySelector('button[type="submit"]');
+        const bannerTextEl = banner;
+        const submitBtn = loginForm?.querySelector('button[type="submit"]');
         const passwordInput = document.getElementById('password')
             || loginForm?.querySelector('input[type="password"]');
-        const loginCard = document.getElementById('login-card')
-            || loginForm?.closest('.login-card, .card');
+        const loginCard = loginForm?.closest('.auth-card');
 
         const bannerVisible = Boolean(
             banner
@@ -1236,7 +1312,7 @@
             submitButtonLabel: buttonLabel || 'missing',
             passwordBorderIsDangerLike,
             passwordInvalidClass,
-            cardAnimationActive: Boolean(loginCard?.classList.contains('login-card-shake')),
+            cardAnimationActive: Boolean(loginCard?.classList.contains('auth-card--shake')),
         };
     }
 
@@ -1287,7 +1363,10 @@
         const viewportPanels = Array.from(
             document.querySelectorAll('.ssllabs-panel, .caddyfile-editor-panel, .sites-form-panel, .sites-list-panel')
         ).filter((panel) => panel instanceof Element && isVisible(panel) && !isVisuallyHidden(panel));
-        const maximumGap = Number(constants.APP_PAGE_HEADER_CONTENT_GAP_MAX_PX ?? 56);
+        const desktopHeaderContentGapExpected = Number(constants.APP_PAGE_HEADER_CONTENT_GAP_EXPECTED_PX ?? 35.2);
+        const mobileHeaderContentGapExpected = Number(constants.APP_PAGE_HEADER_CONTENT_GAP_MOBILE_EXPECTED_PX ?? 14.4);
+        const headerContentGapTolerance = Number(constants.APP_PAGE_HEADER_CONTENT_GAP_TOLERANCE_PX ?? 2);
+        const headerContentAlignmentTolerance = Number(constants.APP_PAGE_HEADER_CONTENT_ALIGNMENT_TOLERANCE_PX ?? 2);
         const alignmentTolerance = Number(constants.MOBILE_TOGGLE_CONTENT_ALIGNMENT_TOLERANCE_PX ?? 2);
         const panelHeightTolerance = Number(constants.DESKTOP_PRIMARY_PANEL_HEIGHT_TOLERANCE_PX ?? 3);
         const viewportPanelFooterGapMaximum = Number(constants.DESKTOP_VIEWPORT_PANEL_FOOTER_GAP_MAX_PX ?? 36);
@@ -1325,8 +1404,16 @@
                 pageHeaderContentGap: {
                     present: false,
                     gapPx: null,
-                    maximum: maximumGap,
-                    passesMaximum: true,
+                    expected: desktopHeaderContentGapExpected,
+                    tolerance: headerContentGapTolerance,
+                    delta: null,
+                    passesTolerance: true,
+                },
+                pageHeaderContentAlignment: {
+                    present: false,
+                    offsetPx: null,
+                    tolerance: headerContentAlignmentTolerance,
+                    passesTolerance: true,
                 },
             };
         }
@@ -1339,20 +1426,59 @@
         const header = children.find((child) => child.matches('.app-page__header') && isVisible(child) && !isVisuallyHidden(child)) || null;
         const firstContentBlock = children.find((child) => child !== header && isVisible(child) && !isVisuallyHidden(child)) || null;
 
+        const headerContentGapExpected = isMobileViewport
+            ? mobileHeaderContentGapExpected
+            : desktopHeaderContentGapExpected;
         let pageHeaderContentGap = {
             present: false,
             gapPx: null,
-            maximum: maximumGap,
-            passesMaximum: true,
+            expected: headerContentGapExpected,
+            tolerance: headerContentGapTolerance,
+            delta: null,
+            passesTolerance: true,
+        };
+        let pageHeaderContentAlignment = {
+            present: false,
+            offsetPx: null,
+            tolerance: headerContentAlignmentTolerance,
+            passesTolerance: true,
         };
 
         if (header && firstContentBlock) {
-            const gapPx = Math.max(0, rectOf(firstContentBlock).top - rectOf(header).bottom);
+            // A Bootstrap row starts above its columns to balance their gutter.
+            // Measure the first visible surface instead of that structural wrapper
+            // so every page is compared to the Dashboard's actual first tile.
+            const surfaceCandidates = Array.from(
+                firstContentBlock.querySelectorAll(
+                    '.metric-card, .panel-card, .cb-onboarding-wizard, .settings-tabs, .tab-content, .ssllabs-panel'
+                )
+            )
+                .filter((element) => isVisible(element) && !isVisuallyHidden(element));
+            if (firstContentBlock.matches('.metric-card, .panel-card, .cb-onboarding-wizard, .settings-tabs, .tab-content, .ssllabs-panel')) {
+                surfaceCandidates.unshift(firstContentBlock);
+            }
+            const firstContentSurface = surfaceCandidates.reduce((topmost, candidate) =>
+                !topmost || rectOf(candidate).top < rectOf(topmost).top ? candidate : topmost
+                , null);
+            const contentSurface = firstContentSurface || firstContentBlock;
+            const headerRect = rectOf(header);
+            const contentSurfaceRect = rectOf(contentSurface);
+            const gapPx = Math.max(0, contentSurfaceRect.top - headerRect.bottom);
+            const delta = Math.abs(gapPx - headerContentGapExpected);
             pageHeaderContentGap = {
                 present: true,
                 gapPx: roundTo(gapPx, 2),
-                maximum: maximumGap,
-                passesMaximum: gapPx <= maximumGap,
+                expected: headerContentGapExpected,
+                tolerance: headerContentGapTolerance,
+                delta: roundTo(delta, 2),
+                passesTolerance: delta <= headerContentGapTolerance,
+            };
+            const offsetPx = contentSurfaceRect.left - headerRect.left;
+            pageHeaderContentAlignment = {
+                present: true,
+                offsetPx: roundTo(offsetPx, 2),
+                tolerance: headerContentAlignmentTolerance,
+                passesTolerance: Math.abs(offsetPx) <= headerContentAlignmentTolerance,
             };
         }
 
@@ -1436,6 +1562,7 @@
             desktopPrimaryPanelHeightAlignment,
             desktopViewportPanelFooterGap,
             pageHeaderContentGap,
+            pageHeaderContentAlignment,
         };
     }
 
@@ -1807,7 +1934,10 @@
         }
 
         const rows = Array.from(table.querySelectorAll('tbody tr'))
-            .filter((row) => row instanceof Element && isVisible(row) && !isVisuallyHidden(row));
+            .filter((row) => row instanceof Element && isVisible(row) && !isVisuallyHidden(row))
+            // Placeholder rows (the "no sites configured" empty state) span every
+            // column and are intentionally roomy: they carry no row density.
+            .filter((row) => !row.querySelector('td[colspan], th[colspan]'));
         if (!rows.length) {
             return { sitesTableDensity: { ...fallback, present: true } };
         }
@@ -1986,7 +2116,11 @@
         let mobileCardEdgeAlignment = cardEdgeAlignmentFallback;
         const header = document.querySelector('.app-page__header');
         const edgeAlignmentScope = document.querySelector('.app-page--sites, .ssllabs-page');
-        const panelCard = edgeAlignmentScope?.querySelector('.panel-card');
+        // Skip informational callouts (e.g. .ssllabs-callout): they intentionally
+        // keep their card padding at mobile widths, unlike the primary content
+        // panel below them (.ssllabs-panel / .sites-list-panel), which is
+        // flattened flush with the page header.
+        const panelCard = edgeAlignmentScope?.querySelector('.panel-card:not(.ssllabs-callout)');
         if (
             header instanceof Element
             && isVisible(header)
@@ -2025,6 +2159,33 @@
         };
     }
 
+    // The page gradient lives on <html>; any opaque body background (e.g. the
+    // Bootstrap reboot's --bs-body-bg) silently covers it.
+    function pageBackdropAnalyzer() {
+        const htmlStyle = styleOf(document.documentElement);
+        const bodyStyle = document.body ? styleOf(document.body) : null;
+        const htmlBackgroundImage = htmlStyle?.backgroundImage || 'none';
+        const bodyBackgroundColor = bodyStyle?.backgroundColor || '';
+        const bodyBackgroundImage = bodyStyle?.backgroundImage || 'none';
+        const bodyAlpha = (() => {
+            const match = bodyBackgroundColor.match(/rgba?\(([^)]+)\)/);
+            if (!match) return bodyBackgroundColor === 'transparent' ? 0 : 1;
+            const parts = match[1].split(/[\s,/]+/).filter(Boolean);
+            return parts.length >= 4 ? Number(parts[3]) : 1;
+        })();
+        const hasRootGradient = htmlBackgroundImage !== 'none';
+        const bodyCoversRoot = bodyAlpha > 0 || bodyBackgroundImage !== 'none';
+        return {
+            pageBackdrop: {
+                present: Boolean(bodyStyle),
+                htmlHasGradient: hasRootGradient,
+                bodyBackgroundColor,
+                bodyHasImage: bodyBackgroundImage !== 'none',
+                passesBackdrop: hasRootGradient && !bodyCoversRoot,
+            },
+        };
+    }
+
     function runAll({ scope, constants = {}, selectors = {} } = {}) {
         resetRunCache();
 
@@ -2037,6 +2198,7 @@
         const sidebarFooterGap = mobileSidebarFooterAnalyzer(constants);
         const sidebarNavSpacing = sidebarNavAnalyzer(constants);
         const pageShell = pageShellAnalyzer(constants);
+        const pageBackdrop = pageBackdropAnalyzer();
         const primaryPanelPadding = primaryPanelPaddingAnalyzer(constants);
         const pageStructure = pageStructureAnalyzer();
         const sitesFormControlHeights = sitesFormControlHeightAnalyzer(constants, scope);
@@ -2066,6 +2228,7 @@
             ...sidebarFooterGap,
             ...sidebarNavSpacing,
             ...pageShell,
+            ...pageBackdrop,
             ...primaryPanelPadding,
             ...pageStructure,
             ...sitesFormControlHeights,
@@ -2082,7 +2245,7 @@
             state,
             components,
             tokens,
-            loginFailure: scope === 'login' ? loginFailureAnalyzer() : null,
+            loginFailure: scope === 'login' ? loginFailureAnalyzer(selectors.loginFailureAlert || []) : null,
         };
     }
 

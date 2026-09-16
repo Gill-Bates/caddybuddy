@@ -110,7 +110,7 @@ class UISslLabsTests(unittest.TestCase):
             result_json={
                 "endpoints": [
                     {"ipAddress": "203.0.113.10", "grade": "A+", "statusMessage": "Ready"},
-                    {"ipAddress": "2001:db8::10", "grade": "A", "statusMessage": "Ready"},
+                    {"ipAddress": "2001:db8::10", "grade": "A+", "statusMessage": "Ready"},
                 ]
             },
         )
@@ -138,7 +138,11 @@ class UISslLabsTests(unittest.TestCase):
         self.assertIn('data-ssllabs-visible-label', response.text)
         self.assertIn('aria-live="polite"', response.text)
         self.assertIn("Domains found", response.text)
-        self.assertIn("Scheduler", response.text)
+        self.assertIn("Schedule", response.text)
+        self.assertIn("Actions", response.text)
+        self.assertIn('data-ssllabs-filter-preset="all"', response.text)
+        self.assertIn('data-ssllabs-filter-preset="issues"', response.text)
+        self.assertIn('data-ssllabs-filter-preset="not-scanned"', response.text)
         self.assertIn('class="app-page ssllabs-page"', response.text)
         self.assertIn('class="ssllabs-scrollbox"', response.text)
         self.assertIn('data-ssllabs-site-row', response.text)
@@ -154,7 +158,6 @@ class UISslLabsTests(unittest.TestCase):
         self.assertIn("A+", response.text)
         self.assertIn("Weekly", response.text)
         self.assertIn("Monthly", response.text)
-        self.assertNotIn(">Monthly<", response.text)
         self.assertIn('>Report</a>', response.text)
         self.assertIn('>Report</button>', response.text)
         self.assertIn('>Scan</button>', response.text)
@@ -169,56 +172,60 @@ class UISslLabsTests(unittest.TestCase):
         self.assertIn("Start SSL Labs checks here", response.text)
         self.assertIn('class="table align-middle mb-0 ssllabs-table"', response.text)
         self.assertIn('class="ssllabs-table__site-col"', response.text)
-        self.assertIn('class="ssllabs-table__domains-col"', response.text)
+        self.assertIn('class="ssllabs-table__result-col"', response.text)
+        self.assertIn('class="ssllabs-table__scheduler-col"', response.text)
+        self.assertIn('class="ssllabs-table__actions-col"', response.text)
         self.assertIn('class="table-responsive ssllabs-table-wrap"', response.text)
         self.assertIn('data-label="Site"', response.text)
-        self.assertIn('data-label="Domains"', response.text)
-        self.assertIn('class="ssllabs-domain-list"', response.text)
+        self.assertIn('data-label="Domain / Result"', response.text)
+        self.assertIn('data-label="Schedule"', response.text)
+        self.assertIn('data-label="Actions"', response.text)
         self.assertIn('<div class="ssllabs-domain-card"', response.text)
         self.assertNotIn('<details class="ssllabs-domain-card"', response.text)
-        self.assertIn('class="ssllabs-domain-card__summary"', response.text)
+        self.assertNotIn('class="ssllabs-domain-card__summary"', response.text)
         self.assertNotIn('class="ssllabs-domain-card__actions"', response.text)
         self.assertIn('class="ssllabs-domain-card__quick-actions"', response.text)
-        self.assertRegex(
-            response.text,
-            r'<div class="ssllabs-domain-card__summary">[\s\S]*class="ssllabs-domain-card__inline-scheduler"[\s\S]*class="ssllabs-domain-card__quick-actions"',
-        )
+        self.assertIn('class="ssllabs-site-cell"', response.text)
         self.assertNotIn('class="cell-actions ssllabs-actions"', response.text)
         self.assertIn("data-require-csrf", response.text)
         self.assertIn("data-loading-submit-button", response.text)
         self.assertNotIn(">Save</button>", response.text)
         self.assertIn("data-ssllabs-autosave", response.text)
-        self.assertIn('class="badge bg-success ssllabs-result__grade ssllabs-result__grade--compact"', response.text)
-        self.assertIn('class="status-pill status-pill--online ssllabs-result__status-badge ssllabs-result__status-badge--compact"', response.text)
+        self.assertIn('class="badge bg-success ssllabs-result__grade"', response.text)
+        self.assertNotIn('ssllabs-result__status-badge--compact', response.text)
+        self.assertNotIn('>Ready</span>', response.text)
         self.assertIn('data-ui-lint-ignore-click-target', response.text)
         self.assertIn('data-ui-lint-dynamic', response.text)
         self.assertIn('class="ssllabs-result__endpoints"', response.text)
         self.assertIn("IPv4", response.text)
         self.assertIn("IPv6", response.text)
-        self.assertIn("Not scanned yet", response.text)
+        self.assertIn('class="ssllabs-endpoint-chip__check"', response.text)
+        self.assertNotIn('ssllabs-endpoint-chip__grade', response.text)
+        self.assertIn('ssllabs-result__status-badge--not-scanned">Not scanned</span>', response.text)
+        self.assertIn('ssllabs-scan-action js-confirm', response.text)
 
-    def test_ssllabs_mobile_scheduler_form_stretches_full_width(self) -> None:
+    def test_ssllabs_mobile_layout_uses_result_schedule_and_actions_grid(self) -> None:
         css_path = Path(__file__).resolve().parents[1] / "app/static/css/app.css"
         css = css_path.read_text(encoding="utf-8")
 
         self.assertIn(
-            ".ssllabs-domain-card__inline-scheduler {\n        align-items: stretch;\n        width: 100%;",
-            css,
-        )
-        self.assertNotIn(
-            ".ssllabs-domain-card__actions {\n    display: grid;\n    grid-template-columns: minmax(0, 1fr);",
+            ".ssllabs-table tr[data-ssllabs-site-row] {\n        display: grid;\n        grid-template-columns: minmax(0, 1fr) auto;",
             css,
         )
         self.assertIn(
-            ".ssllabs-domain-card .ssllabs-schedule-form {\n        display: flex;\n        width: 100%;\n        min-width: 0;",
+            '.ssllabs-table td[data-label="Domain / Result"] {\n        grid-column: 1 / -1;',
             css,
         )
         self.assertIn(
-            ".ssllabs-domain-card .ssllabs-schedule-form .form-select {\n        width: 100%;\n        min-width: 0;\n        flex: 1 1 auto;",
+            '.ssllabs-table td[data-label="Schedule"] {\n        grid-column: 1;',
+            css,
+        )
+        self.assertIn(
+            '.ssllabs-table td[data-label="Actions"] {\n        grid-column: 2;',
             css,
         )
         self.assertNotIn(
-            ".ssllabs-domain-card .ssllabs-schedule-form {\n        display: grid;\n        grid-template-columns: minmax(0, 1fr) auto;",
+            '.ssllabs-table td[data-label="Domains"]::before',
             css,
         )
 
@@ -350,7 +357,7 @@ class UISslLabsTests(unittest.TestCase):
             csrf_token = self._extract_csrf_token(page.text)
             response = client.post(
                 "/ssl-labs/1/schedule",
-                data={"csrf_token": csrf_token, "schedule_frequency": "monthly"},
+                data={"csrf_token": csrf_token, "schedule_frequency": "on"},
                 follow_redirects=False,
             )
 
@@ -393,7 +400,7 @@ class UISslLabsTests(unittest.TestCase):
             csrf_token = self._extract_csrf_token(page.text)
             response = client.post(
                 "/ssl-labs/1/schedule",
-                data={"csrf_token": csrf_token, "schedule_frequency": "monthly"},
+                data={"csrf_token": csrf_token, "schedule_frequency": "on"},
                 follow_redirects=True,
             )
 

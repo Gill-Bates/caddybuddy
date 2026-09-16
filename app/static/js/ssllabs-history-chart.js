@@ -223,20 +223,20 @@
             _rank: rank,
         })),
         ...(showRate ? [
-        {
-            type: "line",
-            label: "A+ %",
-            data: aPlusRate,
-            yAxisID: "rate",
-            borderColor: "#0ea5e9",
-            backgroundColor: "#0ea5e9",
-            borderWidth: 2,
-            pointRadius: 3,
-            pointHoverRadius: 5,
-            tension: 0,
-            spanGaps: true,
-            order: 1,
-        },
+            {
+                type: "line",
+                label: "A+ %",
+                data: aPlusRate,
+                yAxisID: "rate",
+                borderColor: "#0ea5e9",
+                backgroundColor: "#0ea5e9",
+                borderWidth: 2,
+                pointRadius: 3,
+                pointHoverRadius: 5,
+                tension: 0,
+                spanGaps: true,
+                order: 1,
+            },
         ] : []),
     ];
 
@@ -709,7 +709,7 @@
 
         const refresh = async () => {
             setLoading(true);
-            const range = rangeSelect?.value || "30d";
+            const range = rangeSelect?.value || "90d";
             let payload;
             try {
                 payload = await fetchJson(`${baseUrl}?range_key=${encodeURIComponent(range)}`);

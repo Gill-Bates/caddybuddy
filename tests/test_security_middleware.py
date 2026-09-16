@@ -10,7 +10,7 @@ import os
 import re
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from app.config.settings import get_settings
 
@@ -310,6 +310,27 @@ class CSRFMiddlewareTests(_SecurityTestEnvMixin, unittest.TestCase):
             response = client.get("/", headers={"X-Forwarded-Proto": "https"})
 
         self.assertNotIn("strict-transport-security", response.headers)
+
+
+class UserSessionFingerprintTests(unittest.IsolatedAsyncioTestCase):
+    async def test_session_for_otp_user_survives_reinitialization_and_rotates_on_otp_change(self) -> None:
+        from app.dependencies import web
+
+        user = SimpleNamespace(
+            id=7,
+            is_active=True,
+            password_hash="new-hash",
+            otp_secret="encrypted-secret",
+            otp_enabled=True,
+        )
+        request = SimpleNamespace(session={})
+
+        with patch.object(web.user_repository, "get_by_id", new=AsyncMock(return_value=user)):
+            web.initialize_user_session(request, user)
+            self.assertIs(await web.get_session_user(request, SimpleNamespace()), user)
+
+            user.otp_enabled = False
+            self.assertIsNone(await web.get_session_user(request, SimpleNamespace()))
 
 
 if __name__ == "__main__":

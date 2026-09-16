@@ -30,3 +30,41 @@ def test_toast_markup_uses_the_shared_shadow_style() -> None:
     assert "shadow-sm" not in app_core
     assert "toast toast-slide" in flashes
     assert "toast toast-slide" in app_core
+
+def test_toast_stack_is_anchored_to_the_bottom_of_the_viewport() -> None:
+    """Top-right toasts covered .app-page__header (status pill, action buttons)
+    and the fixed .mobile-topbar, so the stack is bottom-anchored instead."""
+    css = Path("app/static/css/app.css").read_text(encoding="utf-8")
+    start = css.index(".app-toast-stack {")
+    stack_css = css[start : css.index("}", start)]
+
+    assert "bottom: max(1rem, env(safe-area-inset-bottom)) !important;" in stack_css
+    assert "top:" not in stack_css
+    assert "z-index: var(--cb-z-toast);" in stack_css
+    assert "--cb-z-toast: 1095;" in css
+
+    flashes = Path("app/templates/partials/flashes.html").read_text(encoding="utf-8")
+    app_core = Path("app/static/js/app-core.js").read_text(encoding="utf-8")
+    container_classes = "toast-container app-toast-stack position-fixed bottom-0 end-0 p-3"
+
+    assert container_classes in flashes
+    assert container_classes in app_core
+    assert "top-0 end-0" not in flashes
+
+
+def test_toast_close_button_meets_the_pointer_target_size() -> None:
+    css = Path("app/static/css/app.css").read_text(encoding="utf-8")
+    start = css.index(".app-toast-stack .btn-close {")
+    close_css = css[start : css.index("}", start)]
+
+    assert "width: 2.75rem;" in close_css
+    assert "height: 2.75rem;" in close_css
+
+
+def test_toast_auto_dismiss_countdown_pauses_on_hover_and_focus() -> None:
+    app_core = Path("app/static/js/app-core.js").read_text(encoding="utf-8")
+
+    assert "autohide: false" in app_core
+    assert 'for (const eventName of ["mouseenter", "focusin"]) {' in app_core
+    assert 'for (const eventName of ["mouseleave", "focusout"]) {' in app_core
+    assert "TOAST_RESUME_GRACE_MS" in app_core

@@ -26,9 +26,44 @@ export const COMPONENT_LAYOUT_SHIFT_THRESHOLD_PX = 2;
 export const COMPONENT_LAYOUT_SHIFT_SETTLE_MS = 800;
 export const CLICK_TARGET_MIN_SIZE_PX = 44;
 export const DENSE_TABLE_CLICK_TARGET_MIN_SIZE_PX = 32;
+// Inline chip remove buttons (.tag-input__remove) keep a 20px glyph with a
+// pseudo-element hit area. 32px clears WCAG 2.2 AA (24px) without the hit area
+// spilling into neighbouring chips, which a full 44px would do.
+export const CHIP_REMOVE_CLICK_TARGET_MIN_SIZE_PX = 32;
+// iOS Safari auto-zooms into focused form fields rendered below 16px.
+export const TOUCH_INPUT_MIN_FONT_SIZE_PX = 16;
 export const LOGIN_ERROR_SETTLE_MS = 120;
+// Above app/utils/hidden_captcha.py DEFAULT_MIN_AGE_SECONDS (1.0): faster auth
+// form submissions are rejected as bots with the same 403 as bad credentials.
+export const LOGIN_CAPTCHA_MIN_AGE_MS = 1200;
 export const LOGIN_LOCKOUT_RESET_MS = 16000;
 export const LOGIN_TEST_STAGGER_MS = 13000;
+// Single source of truth for login-failure detection, consumed both in the
+// Node context (extractLoginFailureTextFromText, matching the raw POST /login
+// response body) and in the page context (loginFailureProbeScript, injected
+// via page.evaluate). Keep these in sync with the alert markup in
+// app/templates/login.html and the failure copy in app/routers/ui/auth.py.
+export const LOGIN_FAILURE_ALERT_SELECTORS = Object.freeze([
+  '.app-toast-stack .toast[role="status"] .toast-body',
+  '.toast[role="status"] .toast-body',
+  '.app-toast-stack .toast[role="status"]',
+  '.toast[role="status"]',
+  '.app-flash-stack .alert[role="alert"]',
+  '.alert[role="alert"]',
+  '.alert-danger',
+  '.login-error',
+  '.error-message',
+  '[data-testid="login-error"]',
+]);
+// RegExp source strings (not RegExp instances, so they survive page.evaluate
+// argument serialization and JSON round-trips) used as a text fallback when
+// no selector above matches.
+export const LOGIN_FAILURE_TEXT_PATTERN_SOURCES = Object.freeze([
+  'invalid credentials\\.?',
+  'too many[^.]*attempts[^.]*\\.?',
+  'rate limit[^.]*\\.?',
+  'locked[^.]*\\.?',
+]);
 export const LOGS_DELETE_HAIRLINE_TOLERANCE_PX = 2;
 export const BADGE_FONT_SIZE_TOLERANCE_PX = 0.5;
 export const BADGE_FONT_WEIGHT_TOLERANCE = 50;
@@ -43,6 +78,11 @@ export const PILL_PADDING_INLINE_EXPECTED_PX = 7.2; // 0.45rem @ 16px root
 export const PILL_MIN_HEIGHT_TOLERANCE_PX = 1;
 export const MONOSPACE_RADIUS_TOLERANCE_PX = 1;
 export const MONOSPACE_PADDING_TOLERANCE_PX = 1;
+// About page value typography (Application Details / Check for Updates meta
+// tables and the Dependencies table) must render at a single shared size.
+// Reference: .about-deps-table code (Dependencies panel).
+export const ABOUT_VALUE_FONT_SIZE_EXPECTED_PX = 14; // 0.875rem @ 16px root
+export const ABOUT_VALUE_FONT_SIZE_TOLERANCE_PX = 0.5;
 export const TOP_BAR_HEIGHT_EXPECTED_PX = 68;
 export const TOP_BAR_HEIGHT_TOLERANCE_PX = 2;
 export const MODAL_BACKDROP_BLUR_EXPECTED_PX = 8;
@@ -91,7 +131,12 @@ export const DASHBOARD_HEADER_HEIGHT_TOLERANCE_PX = 2;
 export const CARD_HEADER_TOOLBAR_WRAP_TOLERANCE_PX = 2;
 export const DASHBOARD_MAIN_GRID_DESKTOP_COLUMNS = 3;
 export const DASHBOARD_MAIN_GRID_TABLET_COLUMNS = 2;
-export const APP_PAGE_HEADER_CONTENT_GAP_MAX_PX = 56;
+// Derived from the Dashboard reference: 1rem page stack gap plus 1.2rem
+// header margin. Keep first content surfaces aligned across all app pages.
+export const APP_PAGE_HEADER_CONTENT_GAP_EXPECTED_PX = 35.2;
+export const APP_PAGE_HEADER_CONTENT_GAP_MOBILE_EXPECTED_PX = 14.4;
+export const APP_PAGE_HEADER_CONTENT_GAP_TOLERANCE_PX = 2;
+export const APP_PAGE_HEADER_CONTENT_ALIGNMENT_TOLERANCE_PX = 2;
 export const PRIMARY_PANEL_PADDING_VARIANCE_MAX_PX = 2;
 export const APP_MAIN_PADDING_TOP_PX = 32;
 export const APP_MAIN_PADDING_INLINE_PX = 24;
@@ -185,8 +230,12 @@ export const UI_EVAL_CONSTANTS = Object.freeze({
   PILL_MIN_HEIGHT_TOLERANCE_PX,
   BADGE_FONT_SIZE_TOLERANCE_PX,
   BADGE_PADDING_TOLERANCE_PX,
+  ABOUT_VALUE_FONT_SIZE_EXPECTED_PX,
+  ABOUT_VALUE_FONT_SIZE_TOLERANCE_PX,
   CLICK_TARGET_MIN_SIZE_PX,
   DENSE_TABLE_CLICK_TARGET_MIN_SIZE_PX,
+  CHIP_REMOVE_CLICK_TARGET_MIN_SIZE_PX,
+  TOUCH_INPUT_MIN_FONT_SIZE_PX,
   CONSOLE_LIGHT_BG_MIN_LUMA,
   CONSOLE_IP_MAX_LINES,
   CONSOLE_IP_HEIGHT_SLACK_PX,
@@ -197,7 +246,10 @@ export const UI_EVAL_CONSTANTS = Object.freeze({
   CARD_HEADER_TOOLBAR_WRAP_TOLERANCE_PX,
   DASHBOARD_MAIN_GRID_DESKTOP_COLUMNS,
   DASHBOARD_MAIN_GRID_TABLET_COLUMNS,
-  APP_PAGE_HEADER_CONTENT_GAP_MAX_PX,
+  APP_PAGE_HEADER_CONTENT_GAP_EXPECTED_PX,
+  APP_PAGE_HEADER_CONTENT_GAP_MOBILE_EXPECTED_PX,
+  APP_PAGE_HEADER_CONTENT_GAP_TOLERANCE_PX,
+  APP_PAGE_HEADER_CONTENT_ALIGNMENT_TOLERANCE_PX,
   PRIMARY_PANEL_PADDING_VARIANCE_MAX_PX,
   APP_MAIN_PADDING_TOP_PX,
   APP_MAIN_PADDING_INLINE_PX,

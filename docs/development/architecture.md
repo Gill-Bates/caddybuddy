@@ -18,8 +18,9 @@ CaddyBuddy is a server-rendered FastAPI application backed by SQLAlchemy and SQL
 1. Site and runtime settings are stored in SQLite.
 2. CaddyBuddy assembles the baseline, snippets, and enabled site definitions.
 3. The candidate Caddyfile is validated.
-4. The configuration is loaded through the private Caddy Admin API.
-5. The managed Caddyfile and runtime state are reconciled.
+4. The managed Caddyfile is persisted before the configuration is loaded through the private Caddy Admin API.
+5. If loading fails, CaddyBuddy attempts to restore the previous managed Caddyfile.
+6. The managed Caddyfile and runtime state are reconciled.
 
 ## Live updates
 

@@ -264,10 +264,10 @@ async def set_ssllabs_email(session: AsyncSession, email: str) -> None:
 
 
 # Allowed retention windows (days) for the SSL Labs rank-history table, exposed to the
-# Settings slider. Ordered ascending; 0 means unlimited (pruning disabled); the largest
-# finite value is the default.
+# Settings slider. Ordered ascending; 0 means unlimited (pruning disabled) and is the
+# factory default so no history is discarded until an operator opts into pruning.
 SSLLABS_RETENTION_DAY_VALUES: tuple[int, ...] = (0, 7, 14, 30, 90, 180, 365)
-SSLLABS_RETENTION_DEFAULT_DAYS = 365
+SSLLABS_RETENTION_DEFAULT_DAYS = 0
 
 
 async def get_ssllabs_history_retention_days(session: AsyncSession) -> int:

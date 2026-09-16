@@ -101,6 +101,16 @@ class UISitesTests(unittest.TestCase):
             "Desktop Sites page must widen the form column and narrow the table when a site is being edited.",
         )
 
+    def test_sites_stacked_columns_drop_the_grid_gutter_padding(self) -> None:
+        css_path = Path(__file__).resolve().parents[1] / "app/static/css/app.css"
+        css = css_path.read_text(encoding="utf-8")
+
+        self.assertIn(
+            ".app-page--sites>.app-grid>.sites-form-column,\n    .app-page--sites>.app-grid>.sites-list-column {\n        padding-inline: 0;\n    }",
+            css,
+            "Below xl the Sites columns stack, so the gutter padding must not inset the panels from the page header.",
+        )
+
     def test_sites_page_renders_config_textarea_and_status_toggle(self) -> None:
         app = self._build_app()
         current_user = SimpleNamespace(username="admin", role="admin")
@@ -515,13 +525,14 @@ class UISitesTests(unittest.TestCase):
             caddy_directives="reverse_proxy backend:8080",
         )
         certificate_info = {
-            "example.com": SimpleNamespace(
+            "example.com": CertificateInfo(
                 exists=False,
                 valid=False,
                 issued_at=None,
                 expires_at=None,
                 days_remaining=None,
                 error_message="TLS handshake failed: the remote server aborted the connection with an internal TLS error.",
+                status="error",
             )
         }
 

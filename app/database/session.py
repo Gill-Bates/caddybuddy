@@ -237,6 +237,8 @@ def _apply_known_table_migrations(sync_connection, existing_tables: set[str]) ->
         "caddyfile_snapshots",
         "caddy_config_versions",
         "caddy_sync_events",
+        "passkeys",
+        "passkey_challenges",
         "ssllabs_targets",
         "ssllabs_scans",
         "ssllabs_rank_history",
@@ -271,7 +273,7 @@ def _apply_known_schema_migrations(
         table_sql_row = result.first()
         table_sql = table_sql_row[0] if table_sql_row is not None else ""
         if isinstance(table_sql, str) and not _app_settings_allows_current_keys(table_sql):
-            logger.info("Applying known SQLite schema migration: app_settings allowed keys")
+            logger.debug("Applying known SQLite schema migration: app_settings allowed keys")
             backup_table_name = _sqlite_backup_table_name("app_settings")
             sync_connection.exec_driver_sql(f'DROP TABLE IF EXISTS "{backup_table_name}"')
             sync_connection.exec_driver_sql(
@@ -306,19 +308,19 @@ def _apply_known_schema_migrations(
             log_message="Repairing empty upstream_url values in caddy_sites",
         ) or migrated
     if site_columns is not None and "caddy_directives" not in site_columns:
-        logger.info("Applying known SQLite schema migration: caddy_sites.caddy_directives")
+        logger.debug("Applying known SQLite schema migration: caddy_sites.caddy_directives")
         sync_connection.exec_driver_sql(
             "ALTER TABLE caddy_sites ADD COLUMN caddy_directives TEXT"
         )
         migrated = True
     if site_columns is not None and "enabled" not in site_columns:
-        logger.info("Applying known SQLite schema migration: caddy_sites.enabled")
+        logger.debug("Applying known SQLite schema migration: caddy_sites.enabled")
         sync_connection.exec_driver_sql(
             "ALTER TABLE caddy_sites ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1"
         )
         migrated = True
     if site_columns is not None and "site_name" not in site_columns:
-        logger.info("Applying known SQLite schema migration: caddy_sites.site_name")
+        logger.debug("Applying known SQLite schema migration: caddy_sites.site_name")
         sync_connection.exec_driver_sql(
             "ALTER TABLE caddy_sites ADD COLUMN site_name TEXT NOT NULL DEFAULT ''"
         )
@@ -348,6 +350,19 @@ def _apply_known_schema_migrations(
             f"AND schedule_frequency NOT IN ({_sql_string_list(SSLLABS_SCHEDULE_FREQUENCIES)})",
             log_message="Disabling unsupported SSL Labs schedule frequencies",
         ) or migrated
+
+    user_columns = existing_columns.get("users")
+    if user_columns is not None:
+        for column, definition in (
+            ("otp_secret", "TEXT"),
+            ("otp_enabled", "INTEGER NOT NULL DEFAULT 0"),
+            ("otp_recovery_codes", "TEXT"),
+            ("otp_last_verified_counter", "INTEGER"),
+        ):
+            if column not in user_columns:
+                logger.debug("Applying known SQLite schema migration: users.%s", column)
+                sync_connection.exec_driver_sql(f"ALTER TABLE users ADD COLUMN {column} {definition}")
+                migrated = True
 
     existing_installation_tables = (
         "app_settings",

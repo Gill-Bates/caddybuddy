@@ -6,6 +6,7 @@
 
 import asyncio
 import os
+import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -21,7 +22,6 @@ _ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}
 for key, value in _ENV_OVERRIDES.items():
     os.environ[key] = value
 
-from app.config.settings import get_settings
 from app.models.entities import Site
 from app.services.caddy import CaddyServiceError
 from app.services.certificates import (
@@ -44,21 +44,21 @@ class RenewalServiceTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.session = AsyncMock()
         self.service = CertificateRenewalService(self.session)
-        self.settings = get_settings()
 
     def test_renewal_file_lock_concurrency(self) -> None:
-        lock_dir = self.settings.data_dir / "locks"
-        scope = "concurrency-test.com"
-        
-        # While the first lock is held, acquiring the same scope again must fail.
-        # The managers are entered left to right, so the second acquisition happens
-        # inside both the first lock and the assertRaises block.
-        with (
-            renewal_file_lock(lock_dir, scope),
-            self.assertRaises(RuntimeError),
-            renewal_file_lock(lock_dir, scope),
-        ):
-            pass
+        with tempfile.TemporaryDirectory() as temp_dir:
+            lock_dir = Path(temp_dir) / "locks"
+            scope = "concurrency-test.com"
+
+            # While the first lock is held, acquiring the same scope again must fail.
+            # The managers are entered left to right, so the second acquisition happens
+            # inside both the first lock and the assertRaises block.
+            with (
+                renewal_file_lock(lock_dir, scope),
+                self.assertRaises(RuntimeError),
+                renewal_file_lock(lock_dir, scope),
+            ):
+                pass
 
     async def test_verify_renewal_success_private_domain(self) -> None:
         mock_cert = ParsedCertificate(

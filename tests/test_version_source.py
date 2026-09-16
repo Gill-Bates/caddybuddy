@@ -35,9 +35,8 @@ class VersionSourceTests(unittest.TestCase):
         self.assertRegex(version, r"^\d+\.\d+(\.\d+)?(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$")
 
     def test_the_replaced_files_are_gone(self) -> None:
-        # constraints.txt is generated per release by the Docker workflow and
-        # handed to both architecture builds; a committed copy would pin the
-        # images to a stale resolution.
+        # A committed constraints file would pin the image to a stale
+        # resolution; releases deliberately install current dependencies.
         for stale in ("VERSION", "requirements.txt", "constraints.txt"):
             with self.subTest(stale=stale):
                 self.assertFalse(
@@ -52,10 +51,8 @@ class VersionSourceTests(unittest.TestCase):
         self.assertIn("mkdocs-material", names)
 
     def test_runtime_dependencies_carry_no_version_pin(self) -> None:
-        # A release installs the newest resolvable set. The two architectures
-        # still agree because the release workflow resolves that set once and
-        # constrains both builds to it - a pin here would be a second, stale
-        # opinion the images never follow.
+        # A release installs the newest compatible dependency set for each
+        # target platform. Pins here would make releases stale.
         for requirement in _pyproject()["project"]["dependencies"]:
             with self.subTest(dependency=requirement):
                 self.assertNotIn("==", requirement)

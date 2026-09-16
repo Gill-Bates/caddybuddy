@@ -31,3 +31,5 @@ curl http://127.0.0.1:8000/api/v1/build-info
 ```
 
 This endpoint reports the application version and build metadata and can be used to confirm a deployment upgrade.
+
+For the full set of JSON endpoints, including authenticated ones, see the [API Reference](api-reference.md).

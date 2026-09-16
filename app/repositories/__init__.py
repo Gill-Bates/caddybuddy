@@ -7,14 +7,17 @@
 """Repository package."""
 
 from app.repositories.app_settings import app_settings_repository
+from app.repositories.passkeys import DuplicatePasskeyError, passkey_repository
 from app.repositories.sites import DuplicateSiteError, site_repository
 from app.repositories.ssllabs import ssllabs_repository
 from app.repositories.users import DuplicateUserError, user_repository
 
 __all__ = [
+    "DuplicatePasskeyError",
     "DuplicateSiteError",
     "DuplicateUserError",
     "app_settings_repository",
+    "passkey_repository",
     "site_repository",
     "ssllabs_repository",
     "user_repository",

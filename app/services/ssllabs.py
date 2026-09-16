@@ -44,9 +44,11 @@ SSLLABS_HISTORY_RANGES: dict[str, int] = {
     "90d": 90,
     "180d": 180,
     "1y": 365,
-    "2y": 730,
 }
-SSLLABS_HISTORY_DEFAULT_RANGE = "30d"
+SSLLABS_HISTORY_DEFAULT_RANGE = "90d"
+# Monthly schedules drift up to 31 days + 2 days jitter; the slack covers delayed scans.
+# Bounded so hosts whose target was deleted are not carried forward indefinitely.
+_HISTORY_SEED_LOOKBACK = timedelta(days=40)
 
 _INITIAL_POLL_SECONDS = 5
 _RUNNING_POLL_SECONDS = 10
@@ -968,6 +970,18 @@ def resolve_history_range(range_key: str | None) -> tuple[str, int]:
     return key, SSLLABS_HISTORY_RANGES[key]
 
 
+def available_history_ranges(retention_days: int) -> dict[str, str]:
+    """Return ``{range_key: label}`` for presets covered by retention (0 = unlimited).
+
+    The default range is always kept so the dashboard selector never ends up empty.
+    """
+    return {
+        key: f"{days // 365} y" if days % 365 == 0 else f"{days} d"
+        for key, days in SSLLABS_HISTORY_RANGES.items()
+        if retention_days <= 0 or days <= retention_days or key == SSLLABS_HISTORY_DEFAULT_RANGE
+    }
+
+
 async def build_rank_history(
     session: AsyncSession,
     *,
@@ -978,10 +992,12 @@ async def build_rank_history(
 
     Samples are bucketed to the Monday of their UTC week; when a host has multiple
     samples in the same week the latest one wins, giving a clean weekly-resolution series.
+    Samples from a lookback before the window are included so the client can forward-fill
+    hosts scanned less often than weekly (e.g. monthly schedules) into the first weeks.
     """
     key, days = resolve_history_range(range_key)
     reference = now or datetime.now(UTC)
-    since = reference - timedelta(days=days)
+    since = reference - timedelta(days=days) - _HISTORY_SEED_LOOKBACK
 
     entries = await ssllabs_repository.list_rank_history_since(session, since=since)
 

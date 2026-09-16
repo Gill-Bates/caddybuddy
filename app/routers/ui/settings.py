@@ -12,6 +12,7 @@ import logging
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.background import BackgroundTask
 
 from app.config.limiter import limiter, update_rate_limit_enabled
 from app.config.settings import get_settings
@@ -31,6 +32,11 @@ from app.services.auth import (
     auth_service,
 )
 from app.services.caddy_onboarding import reset_onboarding_state
+from app.services.passkeys import (
+    MAX_PASSKEYS_PER_USER,
+    parse_transports,
+    passkey_service,
+)
 from app.services.runtime_settings import (
     SSLLABS_RETENTION_DAY_VALUES,
     get_caddy_config,
@@ -48,6 +54,7 @@ from app.services.ssllabs import (
     register_email_with_ssllabs,
     ssllabs_service,
 )
+from app.utils.otp import provisioning_qr_data_url
 from app.utils.ssllabs import mask_email
 
 from ._common import require_admin, require_onboarding_completed, validated_csrf_form
@@ -68,12 +75,16 @@ def _settings_response(
     success: bool,
     message: str,
     status_code: int = 200,
+    background: BackgroundTask | None = None,
 ) -> Response:
     if _expects_json_response(request):
-        return JSONResponse({"success": success, "message": message}, status_code=status_code)
+        response: Response = JSONResponse({"success": success, "message": message}, status_code=status_code)
+    else:
+        push_flash(request, "success" if success else "danger", message)
+        response = redirect_to("/settings")
 
-    push_flash(request, "success" if success else "danger", message)
-    return redirect_to("/settings")
+    response.background = background
+    return response
 
 
 @router.post("/settings/onboarding/restart", response_class=HTMLResponse)
@@ -116,6 +127,16 @@ async def settings_page(
     ssllabs_email = await get_ssllabs_email(session)
     masked_email = mask_email(ssllabs_email) if ssllabs_email else None
     ssllabs_retention_days = await get_ssllabs_history_retention_days(session)
+    passkeys = [
+        {
+            "id": passkey.id,
+            "device_name": passkey.device_name,
+            "transports": parse_transports(passkey.transports),
+            "created_at": passkey.created_at,
+            "last_used_at": passkey.last_used_at,
+        }
+        for passkey in await passkey_service.list_for_user(session, current_user)
+    ]
 
     ssllabs_is_registered: bool | None = None
     if ssllabs_email:
@@ -142,9 +163,150 @@ async def settings_page(
         "password_policy_min_length": PASSWORD_MIN_LENGTH,
         "password_policy_max_length": PASSWORD_MAX_LENGTH,
         "password_policy_message": PASSWORD_POLICY_MESSAGE,
+        "otp_enabled": bool(getattr(current_user, "otp_enabled", False)),
+        "otp_setup_pending": bool(getattr(current_user, "otp_secret", None)) and not bool(
+            getattr(current_user, "otp_enabled", False)
+        ),
+        "passkeys": passkeys,
+        "passkey_limit": MAX_PASSKEYS_PER_USER,
     }
 
     return render_template(request, "settings.html", current_user=current_user, context=context)
+
+
+def _two_factor_setup_response(
+    request: Request,
+    current_user,
+    *,
+    error_message: str | None = None,
+    status_code: int = 200,
+) -> Response:
+    secret = auth_service.pending_otp_secret(current_user)
+    if secret is None:
+        return redirect_to("/settings")
+    provisioning_uri = auth_service.provisioning_uri(secret, current_user.username)
+    response = render_template(
+        request,
+        "two_factor_setup.html",
+        current_user=current_user,
+        context={
+            "otp_secret": secret,
+            "otp_provisioning_uri": provisioning_uri,
+            "otp_qr_data_url": provisioning_qr_data_url(provisioning_uri),
+            "otp_error_message": error_message,
+        },
+        status_code=status_code,
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@router.post("/settings/two-factor/enable", response_class=HTMLResponse)
+@limiter.limit("5/minute")
+async def begin_two_factor_setup(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+):
+    current_user = await require_admin(request, session)
+    if current_user is None:
+        return redirect_to("/login")
+    form = await validated_csrf_form(request)
+    if not await auth_service.verify_password(str(form.get("current_password", "")), current_user.password_hash):
+        return _settings_response(request, success=False, message="Current password is incorrect.", status_code=400)
+    if await auth_service.begin_otp_enrollment(session, current_user) is None:
+        return _settings_response(request, success=False, message="Two-factor authentication is already enabled.", status_code=400)
+    await session.commit()
+    initialize_user_session(request, current_user)
+    return redirect_to("/settings/two-factor")
+
+
+@router.get("/settings/two-factor", response_class=HTMLResponse)
+async def two_factor_setup_page(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+):
+    current_user = await require_admin(request, session)
+    if current_user is None:
+        return redirect_to("/login")
+    return _two_factor_setup_response(request, current_user)
+
+
+@router.post("/settings/two-factor/confirm", response_class=HTMLResponse)
+@limiter.limit("5/minute")
+async def confirm_two_factor_setup(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+):
+    current_user = await require_admin(request, session)
+    if current_user is None:
+        return redirect_to("/login")
+    form = await validated_csrf_form(request)
+    recovery_codes = await auth_service.confirm_otp_enrollment(session, current_user, str(form.get("code", "")))
+    if recovery_codes is None:
+        return _two_factor_setup_response(
+            request,
+            current_user,
+            error_message="Invalid authentication code. Try the current code from your authenticator app.",
+            status_code=403,
+        )
+    await session.commit()
+    initialize_user_session(request, current_user)
+    response = render_template(
+        request,
+        "two_factor_recovery.html",
+        current_user=current_user,
+        context={"recovery_codes": recovery_codes},
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@router.post("/settings/two-factor/disable", response_class=HTMLResponse)
+@limiter.limit("5/minute")
+async def disable_two_factor(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+):
+    current_user = await require_admin(request, session)
+    if current_user is None:
+        return redirect_to("/login")
+    form = await validated_csrf_form(request)
+    if not await auth_service.verify_password(str(form.get("current_password", "")), current_user.password_hash):
+        return _settings_response(request, success=False, message="Current password is incorrect.", status_code=400)
+    if not await auth_service.disable_otp(session, current_user):
+        return _settings_response(request, success=False, message="Could not disable two-factor authentication.", status_code=400)
+    await session.commit()
+    initialize_user_session(request, current_user)
+    return _settings_response(request, success=True, message="Two-factor authentication disabled.")
+
+
+@router.post("/settings/passkeys/{passkey_id}/delete", response_class=HTMLResponse)
+@limiter.limit("10/minute")
+async def delete_passkey(
+    request: Request,
+    passkey_id: int,
+    session: AsyncSession = Depends(get_db_session),
+):
+    """Remove one of the current user's passkeys.
+
+    Deleting the last passkey is allowed: password sign-in (plus any configured
+    second factor) always remains available, so this cannot lock the account out.
+    """
+    current_user = await require_admin(request, session)
+    if current_user is None:
+        if _expects_json_response(request):
+            return JSONResponse({"success": False, "message": "Authentication required."}, status_code=401)
+        return redirect_to("/login")
+
+    form = await validated_csrf_form(request)
+    if not await auth_service.verify_password(str(form.get("current_password", "")), current_user.password_hash):
+        return _settings_response(request, success=False, message="Current password is incorrect.", status_code=400)
+    if not await passkey_service.delete_for_user(session, current_user, passkey_id):
+        await session.rollback()
+        return _settings_response(request, success=False, message="Passkey not found.", status_code=404)
+
+    await session.commit()
+    return _settings_response(request, success=True, message="Passkey removed.")
 
 
 @router.post("/settings/caddy", response_class=HTMLResponse)
@@ -175,8 +337,17 @@ async def update_caddy_settings(
         return _settings_response(request, success=False, message=str(exc), status_code=400)
 
     await session.commit()
-    update_rate_limit_enabled(rate_limit_enabled)
-    return _settings_response(request, success=True, message="Settings updated.")
+    # Deferred to a background task: slowapi's limiter decorator reads
+    # `limiter.enabled` again after this handler returns (to decide whether to
+    # inject rate-limit headers). Toggling the shared flag synchronously here
+    # would flip that second read mid-flight and crash with UnboundLocalError
+    # when this request itself was let through while disabled.
+    return _settings_response(
+        request,
+        success=True,
+        message="Settings updated.",
+        background=BackgroundTask(update_rate_limit_enabled, rate_limit_enabled),
+    )
 
 
 @router.post("/settings/ssllabs", response_class=HTMLResponse)
@@ -299,7 +470,7 @@ async def change_password(
     await user_repository.update_password(session, current_user, new_hash)
     await session.commit()
 
-    initialize_user_session(request, current_user.id, new_hash)
+    initialize_user_session(request, current_user)
     return _settings_response(request, success=True, message="Password changed successfully.")
 
 

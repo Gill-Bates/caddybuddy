@@ -27,7 +27,7 @@ The repository includes a Compose example for the published multi-architecture i
 3. Ensure the paths used by the Compose example exist:
 
     ```bash
-    mkdir -p data
+    mkdir -p docker/data
     sudo test -f /etc/caddy/Caddyfile
     ```
 
@@ -38,6 +38,8 @@ The repository includes a Compose example for the published multi-architecture i
     ```
 
     The example file defaults `CADDYBUDDY_VERSION` to an old pinned tag when unset, so set it explicitly to pull the current image.
+
+    Generate `CB_SECRET_KEY` once and save it securely for future starts. Reuse it with the existing `docker/data` directory: by default it also protects password hashes and TOTP secrets, so changing it can prevent existing users from signing in.
 
 5. Open `http://127.0.0.1:8000`.
 

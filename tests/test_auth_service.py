@@ -12,7 +12,7 @@ import unittest
 from datetime import UTC, datetime
 from hashlib import sha256
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 
 import bcrypt
 from pydantic import SecretStr
@@ -52,10 +52,14 @@ class AuthServiceTests(unittest.IsolatedAsyncioTestCase):
             os.environ[key] = value
         get_settings.cache_clear()
         auth_module._password_pepper_bytes.cache_clear()
+        auth_module._otp_fernet.cache_clear()
+        auth_module._recovery_code_key.cache_clear()
 
     def tearDown(self) -> None:
         get_settings.cache_clear()
         auth_module._password_pepper_bytes.cache_clear()
+        auth_module._otp_fernet.cache_clear()
+        auth_module._recovery_code_key.cache_clear()
 
     async def test_verify_password_returns_false_for_invalid_bcrypt_hash(self) -> None:
         verified = await AuthService.verify_password("Password123!", "not-a-bcrypt-hash")
@@ -140,6 +144,45 @@ class AuthServiceTests(unittest.IsolatedAsyncioTestCase):
         called_when = update_last_login.await_args.args[2]
         self.assertIsInstance(called_when, datetime)
         self.assertEqual(called_when.tzinfo, UTC)
+
+    async def test_authenticate_defers_last_login_until_second_factor_succeeds(self) -> None:
+        session = SimpleNamespace()
+        password = "Password123!"
+        password_hash = await AuthService.hash_password(password)
+        stored_user = SimpleNamespace(is_active=True, password_hash=password_hash)
+
+        with (
+            patch.object(auth_module.user_repository, "get_by_username", new=AsyncMock(return_value=stored_user)),
+            patch.object(auth_module.user_repository, "update_last_login", new=AsyncMock()) as update_last_login,
+        ):
+            user = await auth_module.auth_service.authenticate(
+                session,
+                "admin",
+                password,
+                update_last_login=False,
+            )
+
+        self.assertIs(user, stored_user)
+        update_last_login.assert_not_awaited()
+
+    async def test_otp_factor_consumes_totp_counter_to_prevent_replay(self) -> None:
+        secret = auth_module.generate_totp_secret()
+        encrypted_secret = AuthService._encrypt_otp_secret(secret)
+        counter = 1_234_567
+        user = SimpleNamespace(
+            otp_enabled=True,
+            otp_secret=encrypted_secret,
+            otp_recovery_codes=None,
+        )
+
+        with (
+            patch.object(auth_module, "verify_totp", return_value=counter),
+            patch.object(auth_module.user_repository, "consume_otp_counter", new=AsyncMock(return_value=True)) as consume,
+        ):
+            method = await auth_module.auth_service.verify_otp_factor(SimpleNamespace(), user, "123456")
+
+        self.assertEqual(method, "totp")
+        consume.assert_awaited_once_with(ANY, user, counter)
 
     async def test_hmac_digest_uses_password_pepper_when_configured(self) -> None:
         with patch.object(

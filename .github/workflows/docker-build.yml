@@ -184,61 +184,6 @@ jobs:
               print("is_newest=true")
           PY
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.13'
-
-      # pyproject.toml pins none of the application's dependencies, so
-      # "newest" is decided once per release rather than twice by two
-      # runners reaching their pip layer minutes apart. This resolves the
-      # full transitive set for both target platforms and hands it to every
-      # architecture build as a pip constraints file.
-      - name: Resolve runtime dependency versions
-        run: |
-          set -euo pipefail
-          python -m pip install --upgrade pip uv
-
-          python -c 'import tomllib; print("\n".join(tomllib.load(open("pyproject.toml", "rb"))["project"]["dependencies"]))' \
-            > runtime-requirements.txt
-          cat runtime-requirements.txt
-
-          for platform in x86_64-manylinux_2_28 aarch64-manylinux_2_28; do
-            uv pip compile \
-              --quiet --no-header \
-              --python-version 3.13 \
-              --python-platform "$platform" \
-              runtime-requirements.txt \
-              -o "constraints-${platform}.txt"
-          done
-
-          if ! diff -u \
-            constraints-x86_64-manylinux_2_28.txt \
-            constraints-aarch64-manylinux_2_28.txt; then
-            echo "ERROR: linux/amd64 and linux/arm64 do not resolve to one set of versions."
-            echo "A dependency is missing a wheel for one of them - the images could only"
-            echo "be published with different versions, so this release stops here."
-            exit 1
-          fi
-
-          mv constraints-x86_64-manylinux_2_28.txt constraints.txt
-          rm -f constraints-aarch64-manylinux_2_28.txt runtime-requirements.txt
-          resolved_count="$(grep -cE '^[^#[:space:]]' constraints.txt || true)"
-          if (( resolved_count == 0 )); then
-            echo "ERROR: the resolution produced no versions at all"
-            exit 1
-          fi
-          echo "Both platforms resolve to the same ${resolved_count} versions:"
-          cat constraints.txt
-
-      - name: Upload resolved constraints
-        uses: actions/upload-artifact@v7
-        with:
-          name: constraints
-          path: constraints.txt
-          retention-days: 14
-          if-no-files-found: error
-
   build:
     name: Build ${{ matrix.arch }} image
     needs: meta
@@ -290,16 +235,6 @@ jobs:
           BUILD_DATE=${{ needs.meta.outputs.build_date }}
           EOF
 
-      # The dependency versions the meta job resolved once, dropped into the
-      # build context so docker/Dockerfile picks them up via its
-      # `COPY pyproject.toml constraints*.txt ./`. Both architectures get
-      # this same file, which is what makes their venvs identical even
-      # though pyproject.toml pins nothing.
-      - name: Download resolved constraints
-        uses: actions/download-artifact@v7
-        with:
-          name: constraints
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
         with:
@@ -319,6 +254,7 @@ jobs:
           set -euo pipefail
           docker buildx build \
             --pull \
+            --no-cache \
             --platform "${{ matrix.platform }}" \
             --target runtime \
             --load \

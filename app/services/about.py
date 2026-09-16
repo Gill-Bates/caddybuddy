@@ -36,7 +36,7 @@ GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 _KEY_PACKAGES = (
     "aiosqlite", "bcrypt", "cryptography", "fastapi", "httpx", "itsdangerous",
     "jinja2", "markdown", "nh3", "pydantic", "pydantic-settings",
-    "python-multipart", "slowapi", "sqlalchemy", "uvicorn",
+    "python-multipart", "qrcode", "slowapi", "sqlalchemy", "uvicorn",
 )
 
 # Allowed HTML tags/attrs for sanitized changelog rendering.

@@ -146,15 +146,16 @@ def _session_timestamp(value: object) -> float | None:
     return parsed
 
 
-def _user_session_fingerprint(password_hash: str) -> str:
-    """Derive a short HMAC fingerprint from the user's password hash.
+def user_session_fingerprint(user: User) -> str:
+    """Derive a short HMAC fingerprint from a user's authentication state.
 
     This binds each browser session to a specific database record.  After a DB
     reset the admin is recreated with a fresh bcrypt salt, so the fingerprint
     changes and any old session cookies are automatically rejected.
     """
     master_secret = settings.secret_key.get_secret_value().encode("utf-8")
-    digest = hmac.new(master_secret, password_hash.encode("utf-8"), sha256).hexdigest()
+    authentication_state = "\0".join((user.password_hash, user.otp_secret or "", str(bool(user.otp_enabled))))
+    digest = hmac.new(master_secret, authentication_state.encode("utf-8"), sha256).hexdigest()
     return digest[:16]
 
 
@@ -163,16 +164,20 @@ async def get_session_user(request: Request, session: AsyncSession) -> User | No
     Return the authenticated user from session, or None if missing or expired.
 
     Session expiration rules:
-    - Inactivity timeout: Session expires after 60 min of no activity.
-    - Absolute timeout: Session expires after 24h regardless of activity.
-    - Each request extends the inactivity window by 60 min.
-    - Fingerprint mismatch: Session is rejected when the user's password hash
-      no longer matches (e.g. after a database reset or password change).
+    - Inactivity timeout: Session expires after the configured inactivity
+      window (60 minutes by default) with no activity.
+    - Absolute timeout: Session expires after the configured absolute window
+      (24 hours by default), regardless of activity.
+    - Each request extends the configured inactivity window.
+    - Fingerprint mismatch: Session is rejected when the user's password or
+      OTP authentication state changes (for example, after a database reset,
+      password change, or two-factor change).
 
     Note: timeouts are enforced from timestamps stored inside the signed cookie.
     There is no server-side session store, so a captured cookie is replayable
-    within its embedded absolute-timeout window. Revocation is only possible
-    via password change (fingerprint rotation) or SECRET_KEY rotation.
+    within its embedded absolute-timeout window. Revocation is possible via a
+    password or OTP-state change (fingerprint rotation), account deactivation
+    or deletion, or application-secret rotation.
     """
     user_id = request.session.get("user_id")
     if not user_id:
@@ -196,12 +201,12 @@ async def get_session_user(request: Request, session: AsyncSession) -> User | No
         request.session.clear()
         return None
 
-    # Check absolute timeout (24h since login)
+    # Check the configured absolute timeout from login.
     if (now - created_at) > settings.session_absolute_timeout_seconds:
         request.session.clear()
         return None
 
-    # Check inactivity timeout (60 min since last request)
+    # Check the configured inactivity timeout from the last request.
     if (now - last_activity) > settings.session_inactivity_timeout_seconds:
         request.session.clear()
         return None
@@ -217,10 +222,10 @@ async def get_session_user(request: Request, session: AsyncSession) -> User | No
         request.session.clear()
         return None
 
-    # Reject sessions whose fingerprint does not match the current password hash.
-    # This catches DB resets (bcrypt salt changes) and password changes.
+    # Reject sessions whose fingerprint no longer matches the authentication state.
+    # This catches DB resets, password changes, and OTP enrollment changes.
     stored_fingerprint = request.session.get("user_fingerprint")
-    expected_fingerprint = _user_session_fingerprint(user.password_hash)
+    expected_fingerprint = user_session_fingerprint(user)
     if stored_fingerprint != expected_fingerprint:
         request.session.clear()
         return None
@@ -240,7 +245,7 @@ def ensure_csrf_token(request: Request) -> str:
 
 
 def ensure_csp_nonce(request: Request) -> str:
-    """Return the per-request CSP nonce used for inline style authorization."""
+    """Return the per-request CSP nonce used for inline style and script authorization."""
     nonce = getattr(request.state, "csp_nonce", None)
     if not nonce:
         nonce = secrets.token_urlsafe(16)
@@ -312,21 +317,36 @@ def optional_url_path_for(request: Request, route_name: str, **path_params: obje
         return None
 
 
-def initialize_user_session(request: Request, user_id: int, password_hash: str) -> None:
+def initialize_pending_otp_session(request: Request, user: User, *, next_path: str) -> None:
+    """Replace the session with a pending, fingerprinted second-factor challenge.
+
+    No authenticated session exists until the second factor is verified. Callers
+    must pass an already-validated ``next_path``.
+    """
+    request.session.clear()
+    request.session.update({
+        "otp_pending_user_id": user.id,
+        "otp_pending_created_at": time.time(),
+        "otp_pending_next": next_path,
+        "otp_pending_fingerprint": user_session_fingerprint(user),
+    })
+
+
+def initialize_user_session(request: Request, user: User) -> None:
     """Initialize a fresh authenticated user session.
 
-    The ``password_hash`` is used to derive a fingerprint stored in the cookie.
-    On each subsequent request the fingerprint is re-verified against the
-    database, so sessions are automatically invalidated after a DB reset or
-    password change.
+    The user's password hash and OTP state derive a fingerprint stored in the
+    cookie. On each subsequent request the fingerprint is re-verified against
+    the database, so sessions are automatically invalidated after a DB reset,
+    password change, or two-factor change.
     """
     now = time.time()
     request.session.clear()
     request.session.update({
-        "user_id": user_id,
+        "user_id": user.id,
         "session_created_at": now,
         "session_last_activity": now,
-        "user_fingerprint": _user_session_fingerprint(password_hash),
+        "user_fingerprint": user_session_fingerprint(user),
     })
 
 

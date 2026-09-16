@@ -36,6 +36,69 @@ test('summarizeFindings keeps generic click target failures hard and sites densi
     assert.ok(result.findings.includes('sitesTableRowsTooTall=1/72/64'));
 });
 
+test('summarizeFindings treats About page value font-size drift as a hard finding', () => {
+    const result = summarizeFindings({
+        name: 'desktop-about-light',
+        metrics: {
+            aboutValueFontSizeMismatches: [
+                { className: 'about-meta-value', text: '1.5.1', fontSize: 13.12, expected: 14 },
+            ],
+        },
+        diff: { ratio: 0, sizeMismatch: false },
+        network: {},
+    });
+
+    assert.ok(result.hardFindings.includes('aboutValueFontSizeMismatches=1'));
+    assert.ok(result.findings.includes('aboutValueFontSizeMismatches=1'));
+});
+
+test('summarizeFindings reports iOS input zoom risks as hard findings and serializes details', () => {
+    const risk = { tag: 'INPUT', id: 'sites-search', className: 'sites-search__input', fontSize: 13.12, minimum: 16 };
+    const result = summarizeFindings({
+        name: 'mobile-sites-light',
+        metrics: { inputZoomRisks: [risk] },
+        diff: { ratio: 0, sizeMismatch: false },
+        network: {},
+    });
+
+    assert.ok(result.hardFindings.includes('inputZoomRisks=1'));
+    assert.ok(result.findings.includes('inputZoomRisks=1'));
+
+    const output = serializeResultForOutput({
+        ...result,
+        metrics: { horizontalOverflow: { offenders: [] }, spacing: {}, layoutShift: { value: 0 }, inputZoomRisks: [risk] },
+    }, { summaryPath: '/tmp/ui-lint-summary.json', visualRegressionEnabled: false });
+
+    assert.equal(output.inputZoomRisks, 1);
+    assert.deepEqual(output.inputZoomRiskDetails, [risk]);
+});
+
+test('summarizeFindings flags a body background that hides the root page gradient', () => {
+    const summarize = (pageBackdrop) => summarizeFindings({
+        name: 'desktop-dashboard-light',
+        metrics: { pageBackdrop },
+        diff: { ratio: 0, sizeMismatch: false },
+        network: {},
+    });
+
+    const hidden = summarize({ present: true, htmlHasGradient: true, bodyBackgroundColor: 'rgb(255, 255, 255)', bodyHasImage: false, passesBackdrop: false });
+    assert.ok(hidden.hardFindings.includes('pageBackdropHidden=1/rgb(255, 255, 255)'));
+
+    const visible = summarize({ present: true, htmlHasGradient: true, bodyBackgroundColor: 'rgba(0, 0, 0, 0)', bodyHasImage: false, passesBackdrop: true });
+    assert.ok(!visible.findings.some((finding) => finding.startsWith('pageBackdropHidden')));
+});
+
+test('summarizeFindings stays quiet without input zoom risks', () => {
+    const result = summarizeFindings({
+        name: 'desktop-sites-light',
+        metrics: { inputZoomRisks: [] },
+        diff: { ratio: 0, sizeMismatch: false },
+        network: {},
+    });
+
+    assert.ok(!result.findings.some((finding) => finding.startsWith('inputZoomRisks')));
+});
+
 test('summarizeFindings treats scheduler drift and oversized dashboard heros as warnings', () => {
     const result = summarizeFindings({
         name: 'desktop-dashboard',
@@ -114,6 +177,44 @@ test('summarizeFindings treats misaligned desktop settings columns as a hard fin
 
     assert.ok(result.hardFindings.includes('desktopPrimaryPanelHeightAlignment=48/3'));
     assert.ok(result.findings.includes('desktopPrimaryPanelHeightAlignment=48/3'));
+});
+
+test('summarizeFindings treats page header content gaps that drift from the Dashboard as hard findings', () => {
+    const result = summarizeFindings({
+        name: 'desktop-sites',
+        metrics: {
+            pageHeaderContentGap: {
+                present: true,
+                gapPx: 20,
+                expected: 35.2,
+                tolerance: 2,
+                delta: 15.2,
+                passesTolerance: false,
+            },
+        },
+        diff: { ratio: 0, sizeMismatch: false },
+        network: {},
+    });
+
+    assert.ok(result.hardFindings.includes('pageHeaderContentGap=20/35.2/2'));
+});
+
+test('summarizeFindings treats page header content offsets as hard findings', () => {
+    const result = summarizeFindings({
+        name: 'desktop-ssllabs',
+        metrics: {
+            pageHeaderContentAlignment: {
+                present: true,
+                offsetPx: 12,
+                tolerance: 2,
+                passesTolerance: false,
+            },
+        },
+        diff: { ratio: 0, sizeMismatch: false },
+        network: {},
+    });
+
+    assert.ok(result.hardFindings.includes('pageHeaderContentAlignment=12/2'));
 });
 
 test('summarizeFindings warns when the SSL Labs history loading shell contract is missing', () => {
@@ -343,20 +444,35 @@ test('summarizeFindings warns when inactive onboarding step points keep the acti
     assert.ok(result.warnings.includes('onboardingWizardStepIndexPalette=1/2'));
 });
 
+const CSP_STYLE_VIOLATION_TEXT = "Refused to apply a stylesheet because its hash, its nonce, or 'unsafe-inline' does not appear in the style-src directive of the Content Security Policy.";
+
 test('summarizeFindings keeps CSP inline-style violations as hard console findings', () => {
+    const result = summarizeFindings({
+        name: 'chromium-desktop-sites-light',
+        metrics: {},
+        diff: { ratio: 0, sizeMismatch: false },
+        network: {
+            consoleEntries: [{ type: 'error', text: CSP_STYLE_VIOLATION_TEXT }],
+        },
+    });
+
+    assert.ok(result.hardFindings.includes('console=1'));
+});
+
+// Playwright's WebKit screenshot path injects an unnonced stylesheet into every
+// captured page, so on WebKit this violation is produced by the harness itself.
+// Chromium and Firefox views keep asserting the contract (test above).
+test('summarizeFindings ignores the WebKit screenshot stylesheet CSP violation', () => {
     const result = summarizeFindings({
         name: 'webkit-desktop-sites-light',
         metrics: {},
         diff: { ratio: 0, sizeMismatch: false },
         network: {
-            consoleEntries: [{
-                type: 'error',
-                text: "Refused to apply a stylesheet because its hash, its nonce, or 'unsafe-inline' does not appear in the style-src directive of the Content Security Policy.",
-            }],
+            consoleEntries: [{ type: 'error', text: CSP_STYLE_VIOLATION_TEXT }],
         },
     });
 
-    assert.ok(result.hardFindings.includes('console=1'));
+    assert.ok(!result.findings.some((finding) => finding.startsWith('console=')));
 });
 
 test('summarizeFindings treats missing focus indicators as hard failures', () => {
@@ -629,6 +745,45 @@ test('serializeResultForOutput exposes desktop settings column alignment summary
 
     assert.equal(output.desktopPrimaryPanelHeightAlignmentDelta, 48);
     assert.equal(output.desktopPrimaryPanelHeightAlignmentPass, 0);
+});
+
+test('serializeResultForOutput exposes the page header content gap contract', () => {
+    const output = serializeResultForOutput({
+        name: 'desktop-sites',
+        url: '/sites',
+        findings: [],
+        hardFindings: [],
+        warnings: [],
+        diff: { ratio: 0, sizeMismatch: false },
+        metrics: {
+            horizontalOverflow: { offenders: [] },
+            spacing: {},
+            layoutShift: { value: 0 },
+            pageHeaderContentGap: {
+                present: true,
+                gapPx: 35.2,
+                expected: 35.2,
+                delta: 0,
+                passesTolerance: true,
+            },
+            pageHeaderContentAlignment: {
+                present: true,
+                offsetPx: 0,
+                passesTolerance: true,
+            },
+        },
+        network: {},
+    }, {
+        summaryPath: '/tmp/ui-lint-summary.json',
+        visualRegressionEnabled: false,
+    });
+
+    assert.equal(output.pageHeaderContentGapPx, 35.2);
+    assert.equal(output.pageHeaderContentGapExpectedPx, 35.2);
+    assert.equal(output.pageHeaderContentGapDeltaPx, 0);
+    assert.equal(output.pageHeaderContentGapPass, 1);
+    assert.equal(output.pageHeaderContentAlignmentOffsetPx, 0);
+    assert.equal(output.pageHeaderContentAlignmentPass, 1);
 });
 
 test('serializeResultForOutput tolerates missing network payloads', () => {

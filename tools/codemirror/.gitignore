@@ -1,5 +1,6 @@
 *
 !caddybuddy-codemirror.mjs
+!AGENTS.md
 !.gitignore
 !package.json
 !package-lock.json

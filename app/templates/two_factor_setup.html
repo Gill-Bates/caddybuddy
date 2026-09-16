@@ -1,0 +1,34 @@
+{% extends 'base.html' %}
+
+{% set page_title = "Set up two-factor authentication" %}
+
+{% block content %}
+<section class="app-page app-page--narrow">
+    <div class="panel-card settings-panel">
+        <div class="panel-card__header"><h1 class="h4 mb-0">Set up two-factor authentication</h1></div>
+        <div class="panel-card__body">
+            {% if otp_error_message %}<div class="alert alert-danger" role="alert">{{ otp_error_message }}</div>{% endif %}
+            <p>In your authenticator app, add a time-based one-time password account for CaddyBuddy.</p>
+            <div class="text-center mb-3">
+                <img src="{{ otp_qr_data_url }}" class="img-fluid border rounded p-2 bg-white" data-ui-lint-dynamic alt="QR code for CaddyBuddy two-factor authentication setup">
+            </div>
+            <div class="mb-3">
+                <label class="form-label" for="otp-secret">Secret key</label>
+                <input id="otp-secret" class="form-control font-monospace" value="{{ otp_secret }}" readonly data-ui-lint-dynamic>
+                <div class="form-text">Enter this secret manually if your app cannot open a provisioning URI.</div>
+            </div>
+            <div class="mb-4">
+                <label class="form-label" for="otp-uri">Provisioning URI</label>
+                <input id="otp-uri" class="form-control font-monospace" value="{{ otp_provisioning_uri }}" readonly data-ui-lint-dynamic>
+            </div>
+            <form action="{{ request.app.url_path_for('confirm_two_factor_setup') }}" method="post" data-loading-submit-form>
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <label class="form-label" for="otp-code">Confirm with the current code</label>
+                <input id="otp-code" name="code" class="form-control font-monospace" autocomplete="one-time-code" inputmode="numeric" maxlength="6" required autofocus>
+                <div class="form-text mb-3">Only the current six-digit TOTP code is accepted.</div>
+                <button type="submit" class="btn btn-primary" data-loading-submit-button data-loading-label="Activating..."><span class="spinner-border spinner-border-sm me-2 d-none" role="status" data-loading-submit-spinner></span><span data-loading-submit-label>Activate two-factor authentication</span></button>
+            </form>
+        </div>
+    </div>
+</section>
+{% endblock %}

@@ -244,7 +244,7 @@ class SslLabsRepository:
         rank: int,
         recorded_at: datetime,
     ) -> SslLabsRankHistory:
-        """Append one daily SSL Labs grade sample to the history table.
+        """Append one SSL Labs grade sample to the history table.
 
         Staged in the caller's transaction; the caller owns the commit.
         """

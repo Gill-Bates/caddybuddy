@@ -282,6 +282,8 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
                     "caddyfile_snapshots",
                     "caddy_config_versions",
                     "caddy_sync_events",
+                    "passkeys",
+                    "passkey_challenges",
                 },
             )
 
@@ -307,6 +309,8 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
                     "caddyfile_snapshots",
                     "caddy_config_versions",
                     "caddy_sync_events",
+                    "passkeys",
+                    "passkey_challenges",
                 },
             )
 
@@ -315,6 +319,33 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
         create_targets.assert_called_once_with(fake_connection, checkfirst=True)
         create_scans.assert_called_once_with(fake_connection, checkfirst=True)
         create_history.assert_called_once_with(fake_connection, checkfirst=True)
+
+    def test_apply_known_table_migrations_creates_missing_passkey_tables(self) -> None:
+        fake_connection = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+
+        with (
+            patch.object(session_module.Base.metadata.tables["passkeys"], "create") as create_passkeys,
+            patch.object(session_module.Base.metadata.tables["passkey_challenges"], "create") as create_challenges,
+        ):
+            migrated = session_module._apply_known_table_migrations(
+                fake_connection,
+                {
+                    "users",
+                    "app_settings",
+                    "caddy_sites",
+                    "caddybuddy_state",
+                    "caddyfile_snapshots",
+                    "caddy_config_versions",
+                    "caddy_sync_events",
+                    "ssllabs_targets",
+                    "ssllabs_scans",
+                    "ssllabs_rank_history",
+                },
+            )
+
+        self.assertTrue(migrated)
+        create_passkeys.assert_called_once_with(fake_connection, checkfirst=True)
+        create_challenges.assert_called_once_with(fake_connection, checkfirst=True)
 
     def test_apply_known_schema_migrations_adds_caddy_sites_columns(self) -> None:
         executed_sql: list[str] = []
@@ -342,6 +373,28 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
                 "ALTER TABLE caddy_sites ADD COLUMN site_name TEXT NOT NULL DEFAULT ''",
                 "UPDATE caddy_sites SET site_name = trim(CASE WHEN instr(domain, ',') > 0 THEN substr(domain, 1, instr(domain, ',') - 1) ELSE domain END) WHERE site_name IS NULL OR site_name = ''",
                 "UPDATE caddy_sites SET enabled = 0 WHERE upstream_url = 'http://placeholder.invalid'",
+            ],
+        )
+
+    def test_apply_known_schema_migrations_adds_otp_user_columns(self) -> None:
+        executed_sql: list[str] = []
+
+        class FakeConnection:
+            dialect = SimpleNamespace(name="sqlite")
+
+            def exec_driver_sql(self, statement: str) -> None:
+                executed_sql.append(statement)
+
+        migrated = session_module._apply_known_schema_migrations(FakeConnection(), {"users": {"id"}})
+
+        self.assertTrue(migrated)
+        self.assertEqual(
+            executed_sql,
+            [
+                "ALTER TABLE users ADD COLUMN otp_secret TEXT",
+                "ALTER TABLE users ADD COLUMN otp_enabled INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE users ADD COLUMN otp_recovery_codes TEXT",
+                "ALTER TABLE users ADD COLUMN otp_last_verified_counter INTEGER",
             ],
         )
 

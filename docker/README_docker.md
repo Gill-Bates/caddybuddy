@@ -13,7 +13,7 @@
 
 CaddyBuddy is a lightweight web UI for managing a single Caddy installation.
 
-It provides a dashboard, site management, a Caddyfile editor, certificate monitoring and renewal, SSL Labs assessments with weekly or monthly scheduling, onboarding, and secure defaults in one compact container image.
+It provides a dashboard, site management, a Caddyfile editor, certificate monitoring and renewal, SSL Labs assessments with weekly or monthly scheduling, onboarding, and secure defaults in one compact container image. Authentication combines CSRF protection, invisible anti-bot checks, rate limiting, optional passkey (WebAuthn) sign-in, and optional TOTP two-factor authentication.
 
 ## Screenshots
 
@@ -40,11 +40,13 @@ Supported platforms:
 
 ## Quick Start
 
-Generate a strong session secret:
+Generate a strong application secret:
 
 ```bash
 export CB_SECRET_KEY="$(head -c 32 /dev/urandom | base64)"
 ```
+
+Generate this secret once and save it securely for future starts. Reuse the same value with the existing data directory: by default it also protects password hashes and TOTP secrets, so changing it can prevent existing users from signing in.
 
 Then start CaddyBuddy with the example Compose file from the repository:
 

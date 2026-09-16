@@ -17,6 +17,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -49,6 +50,13 @@ _SYNC_EVENT_STATUSES = (
     "onboarding_failed",
 )
 _USER_ROLES = ("user", "admin")
+_BASE64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$", re.ASCII)
+_CONTROL_CHARACTERS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+_MAX_CREDENTIAL_ID_LENGTH = 512
+_MAX_CHALLENGE_LENGTH = 512
+_MAX_DEVICE_NAME_LENGTH = 100
+
+PASSKEY_CEREMONIES = ("registration", "authentication")
 
 
 def _sql_string_list(values: tuple[str, ...]) -> str:
@@ -83,6 +91,53 @@ def _normalize_email(value: str | None) -> str | None:
         return None
     if _SIMPLE_EMAIL_RE.fullmatch(normalized) is None:
         raise ValueError("invalid email address")
+    return normalized
+
+
+def _normalize_base64url(value: str, *, field: str, max_length: int) -> str:
+    """Validate an unpadded base64url token used as a WebAuthn identifier."""
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{field} cannot be empty")
+    if len(normalized) > max_length:
+        raise ValueError(f"{field} is too long")
+    if _BASE64URL_RE.fullmatch(normalized) is None:
+        raise ValueError(f"{field} must be unpadded base64url")
+    return normalized
+
+
+def _normalize_credential_id(value: str) -> str:
+    return _normalize_base64url(
+        value,
+        field="credential_id",
+        max_length=_MAX_CREDENTIAL_ID_LENGTH,
+    )
+
+
+def _normalize_challenge(value: str) -> str:
+    return _normalize_base64url(
+        value,
+        field="challenge",
+        max_length=_MAX_CHALLENGE_LENGTH,
+    )
+
+
+def _normalize_ceremony(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized not in PASSKEY_CEREMONIES:
+        raise ValueError(f"Invalid passkey ceremony: {value!r}")
+    return normalized
+
+
+def _normalize_device_name(value: str | None) -> str | None:
+    """Return a trimmed, control-character-free device label, or None."""
+    if value is None:
+        return None
+    normalized = _CONTROL_CHARACTERS_RE.sub("", value).strip()
+    if not normalized:
+        return None
+    if len(normalized) > _MAX_DEVICE_NAME_LENGTH:
+        raise ValueError(f"device_name must not exceed {_MAX_DEVICE_NAME_LENGTH} characters")
     return normalized
 
 
@@ -167,6 +222,10 @@ class User(TimestampMixin, Base):
     role: Mapped[str] = mapped_column(String(20), nullable=False, default="user")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     last_login: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    otp_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
+    otp_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    otp_recovery_codes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    otp_last_verified_counter: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     @property
     def is_admin(self) -> bool:
@@ -186,6 +245,83 @@ class User(TimestampMixin, Base):
     @validates("email")
     def _validate_email(self, _key: str, value: str | None) -> str | None:
         return _normalize_email(value)
+
+
+class Passkey(Base):
+    """A registered WebAuthn credential (passkey) belonging to a user."""
+
+    __tablename__ = "passkeys"
+    __table_args__ = (
+        CheckConstraint("sign_count >= 0", name="ck_passkeys_sign_count_non_negative"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    credential_id: Mapped[str] = mapped_column(
+        String(_MAX_CREDENTIAL_ID_LENGTH),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    public_key: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    sign_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    device_name: Mapped[str | None] = mapped_column(String(_MAX_DEVICE_NAME_LENGTH), nullable=True)
+    transports: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+    @validates("credential_id")
+    def _validate_credential_id(self, _key: str, value: str) -> str:
+        return _normalize_credential_id(value)
+
+    @validates("device_name")
+    def _validate_device_name(self, _key: str, value: str | None) -> str | None:
+        return _normalize_device_name(value)
+
+    @validates("sign_count")
+    def _validate_sign_count(self, _key: str, value: int) -> int:
+        if value < 0:
+            raise ValueError("sign_count must be non-negative")
+        return value
+
+
+class PasskeyChallenge(Base):
+    """Short-lived WebAuthn ceremony challenge.
+
+    Challenges are stored instead of held in memory so a ceremony survives a
+    worker switch, and so consuming one is a single atomic delete that cannot be
+    replayed.
+    """
+
+    __tablename__ = "passkey_challenges"
+    __table_args__ = (
+        CheckConstraint(
+            f"ceremony IN ({_sql_string_list(PASSKEY_CEREMONIES)})",
+            name="ck_passkey_challenges_ceremony",
+        ),
+    )
+
+    challenge: Mapped[str] = mapped_column(String(_MAX_CHALLENGE_LENGTH), primary_key=True)
+    ceremony: Mapped[str] = mapped_column(String(16), nullable=False)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, nullable=False)
+
+    @validates("challenge")
+    def _validate_challenge(self, _key: str, value: str) -> str:
+        return _normalize_challenge(value)
+
+    @validates("ceremony")
+    def _validate_ceremony(self, _key: str, value: str) -> str:
+        return _normalize_ceremony(value)
 
 
 class CaddyBuddyState(Base):
@@ -392,7 +528,7 @@ class SslLabsScan(Base):
 
 
 class SslLabsRankHistory(Base):
-    """Append-only daily SSL Labs grade history for the dashboard distribution chart.
+    """Append-only SSL Labs grade history for the dashboard distribution chart.
 
     Intentionally has no foreign key so history survives target/site deletion; the
     retention setting prunes old rows instead.

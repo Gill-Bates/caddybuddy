@@ -6,7 +6,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { disableMotion, login } from './browser-utils.mjs';
+import { captureStablePair, disableMotion, login, waitForStableFullPageHeight } from './browser-utils.mjs';
+import { LOGIN_CAPTCHA_MIN_AGE_MS } from './constants.mjs';
 
 
 class MockLocator {
@@ -41,7 +42,7 @@ class MockLocator {
 
     async waitFor() {
         if (this.kind === 'error') {
-            return new Promise(() => {});
+            return new Promise(() => { });
         }
         return undefined;
     }
@@ -71,6 +72,7 @@ class MockPage {
         this.fillCalls = [];
         this.emulateMediaCalls = 0;
         this.waitForSelectorCalls = 0;
+        this.timeoutWaits = [];
         this.csrfToken = 'csrf-token-value';
         this.loginResponseMode = 'csrf-retry';
     }
@@ -81,7 +83,7 @@ class MockPage {
         this.bodyText = '';
     }
 
-    async waitForLoadState() {}
+    async waitForLoadState() { }
 
     async emulateMedia() {
         this.emulateMediaCalls += 1;
@@ -108,6 +110,10 @@ class MockPage {
         this.waitForSelectorCalls += 1;
     }
 
+    async waitForTimeout(ms) {
+        this.timeoutWaits.push({ ms, submitCountBefore: this.submitCount });
+    }
+
     async evaluate(callback, args) {
         const source = typeof callback === 'function' ? callback.toString() : String(callback);
         if (args && typeof args === 'object' && 'styleId' in args && 'css' in args) {
@@ -117,6 +123,10 @@ class MockPage {
         }
         if (source.includes('new URLSearchParams') && source.includes('X-CSRF-Token')) {
             this.submitCount += 1;
+            if (this.loginResponseMode === 'otp-required') {
+                this.currentUrl = `${this.baseUrl}/login/otp`;
+                return { ok: true, status: 200, finalUrl: `${this.baseUrl}/login/otp`, bodyText: '' };
+            }
             if (this.loginResponseMode === 'sensitive-failure') {
                 this.bodyText = 'See https://example.test/callback?token=abc123&password=secret';
                 this.currentUrl = `${this.baseUrl}/login?token=abc123`;
@@ -245,4 +255,109 @@ test('login redacts sensitive URLs and secrets from failure messages', async () 
             return true;
         },
     );
+});
+
+test('login waits for the anti-bot minimum form age before every submission', async () => {
+    const page = new MockPage('http://example.test');
+
+    await login(page, {
+        baseUrl: 'http://example.test',
+        credentialProvider: { getUsername: async () => 'admin', getPassword: async () => 'secret' },
+        motionResetCss: 'html { animation: none; }',
+    });
+
+    assert.deepEqual(page.timeoutWaits.map((wait) => wait.submitCountBefore), [0, 1]);
+    for (const { ms } of page.timeoutWaits) {
+        assert.ok(ms > 0 && ms <= LOGIN_CAPTCHA_MIN_AGE_MS);
+    }
+});
+
+test('login explains how to supply the OTP secret when the account requires two-factor authentication', async () => {
+    const page = new MockPage('http://example.test');
+    page.loginResponseMode = 'otp-required';
+
+    await assert.rejects(
+        () => login(page, {
+            baseUrl: 'http://example.test',
+            credentialProvider: { getUsername: async () => 'admin', getPassword: async () => 'secret' },
+            motionResetCss: 'html { animation: none; }',
+            reserveTotpCounter: async () => assert.fail('no code may be generated without a secret'),
+        }),
+        /UI_LINT_OTP_SECRET/,
+    );
+    assert.equal(page.submitCount, 1);
+});
+
+class HeightPage {
+    constructor(heights) {
+        this.heights = [...heights];
+        this.waits = 0;
+        this.reads = 0;
+    }
+
+    async waitForTimeout() {
+        this.waits += 1;
+    }
+
+    async evaluate() {
+        this.reads += 1;
+        return this.heights.length > 1 ? this.heights.shift() : this.heights[0];
+    }
+}
+
+test('waitForStableFullPageHeight settles once the full-page height repeats', async () => {
+    const page = new HeightPage([2472, 2463, 2463, 2463]);
+
+    const height = await waitForStableFullPageHeight(page, { settleMs: 5 });
+
+    assert.equal(height, 2463);
+    assert.equal(page.waits, 2);
+});
+
+test('waitForStableFullPageHeight gives up after the attempt budget', async () => {
+    const page = new HeightPage([10, 20, 30, 40, 50, 60, 70]);
+
+    const height = await waitForStableFullPageHeight(page, { settleMs: 5, attempts: 3 });
+
+    assert.equal(height, 40);
+    assert.equal(page.waits, 3);
+});
+
+class ScreenshotSequencePage extends HeightPage {
+    constructor(heights) {
+        super(heights);
+        this.screenshotCalls = [];
+    }
+
+    async emulateMedia() { }
+
+    async waitForLoadState() { }
+
+    async screenshot(options) {
+        this.screenshotCalls.push(options);
+    }
+}
+
+test('captureStablePair takes a throwaway screenshot before the compared pair', async () => {
+    // Regression guard for the Chromium touch-emulation quirk where the first
+    // full-page screenshot on a mobile/tablet device flips the hover/pointer
+    // media query match, changing page height mid-pair. captureStablePair
+    // must absorb that flip with an extra capture before shotA/shotB.
+    const page = new ScreenshotSequencePage([1000, 1000, 1000, 1000, 1000, 1000]);
+
+    const { shotA, shotB } = await captureStablePair(page, {
+        motionResetCss: 'html { animation: none; }',
+        name: 'drift-test',
+        screenshotDir: '/tmp',
+        screenshotSettleMs: 5,
+    });
+
+    assert.equal(page.screenshotCalls.length, 3);
+    assert.equal(page.screenshotCalls[0].path, undefined, 'first capture is a throwaway, not written to a named path');
+    assert.equal(page.screenshotCalls[1].path, shotA);
+    assert.equal(page.screenshotCalls[2].path, shotB);
+    for (const call of page.screenshotCalls) {
+        assert.equal(call.fullPage, true);
+        assert.equal(call.animations, 'disabled');
+    }
 });

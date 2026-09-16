@@ -21,7 +21,7 @@ Only concrete public hostnames are accepted. Local names, private addresses, URL
 
 ## Rank history
 
-Assessment grades are sampled for the dashboard history. Rank-history retention is set in **Settings** using a slider with steps at 7, 14, 30, 90, 180, and 365 days, plus an unlimited option that disables pruning.
+Assessment grades are sampled for the dashboard history. Rank-history retention is set in **Settings** using a slider with steps at 7, 14, 30, 90, 180, and 365 days, plus an unlimited option that disables pruning. Unlimited is the factory default; older samples are kept until an operator opts into a finite retention window.
 
 ## External-service considerations
 

@@ -1,3 +1,20 @@
+## [1.6.0] - 2026-09-16
+
+- `New` Added passkey (WebAuthn) sign-in as an alternative to a password: enroll and manage up to 10 passkeys per account in Settings, and sign in with them directly from the login page.
+- `New` Added optional TOTP two-factor authentication for admin accounts: QR-code assisted setup in Settings, one-time recovery codes, and a dedicated sign-in step for the second factor.
+- `New` Onboarding now warns when a host-mode Caddy Admin API binds to a non-loopback address that may be unavailable during boot, with guidance for reliable systemd startup.
+- `New` The SSL Labs history retention factory default is now unlimited, and the dashboard's SSL Labs time-range selector now defaults to 90 days.
+- `New` Release images are now built without a layer cache and install a freshly resolved dependency set, so every release ships current Python packages.
+- `Fix` A Caddyfile mounted as a single file into the container (for example `/etc/caddy/Caddyfile:/app/Caddyfile`) is now written reliably. Startup sync no longer fails with "Permission denied" because the application directory itself is not writable.
+- `Fix` The About page now renders the changelog inside the Docker image instead of reporting "Changelog not found".
+- `Fix` The container health check now connects directly to the local health endpoint, so proxy environment variables can no longer influence it.
+- `Fix` Toast notifications now appear at the bottom of the viewport instead of the top, with the newest toast at the bottom of the stack; auto-dismiss now pauses while a toast is hovered or focused.
+- `Fix` The dashboard's SSL Labs rank history chart now only offers time ranges covered by the configured retention window, and hosts on a monthly scan schedule no longer show gaps in the earliest weeks of a range.
+- `Security` Added invisible anti-bot checks to the sign-in and first-run account setup forms, combining a honeypot with a signed, time-bound form token; rejected submissions are logged in the same structured format used for other failed login attempts.
+
+<details markdown="1">
+<summary>Previous versions...</summary>
+
 ## [1.5.1] - 2026-09-14
 
 - `New` Added CSRF protection to the onboarding wizard's form submissions.
@@ -26,10 +43,6 @@
 - `Security` Docker certificate-storage ACL repair now grants read access only to `.crt` certificate files, excluding private keys and ACME account metadata; the storage path is also canonicalized before validation to prevent unsafe paths (e.g. containing `..`) from being accepted.
 - `Security` Failed login attempts are now logged in a structured, parseable format (client IP, reason, status code) suitable for external banning tools such as fail2ban.
 - `Security` The example Docker Compose file no longer trusts all proxy IPs by default; `FORWARDED_ALLOW_IPS` now defaults to `127.0.0.1` unless explicitly overridden.
-
-
-<details markdown="1">
-<summary>Previous versions...</summary>
 
 ## [1.4] - 2026-06-15
 

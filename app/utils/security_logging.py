@@ -16,7 +16,9 @@ from typing import Literal
 from fastapi import Request
 
 AuthenticationFailureReason = Literal[
+    "anti_bot_rejected",
     "invalid_credentials",
+    "invalid_otp",
     "password_too_long",
     "rate_limited",
     "username_too_long",

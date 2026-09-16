@@ -38,6 +38,9 @@ _MIN_SECRET_LENGTH = 32
 _MIN_ADMIN_PASSWORD_LENGTH = 8
 _SIMPLE_EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 _SESSION_COOKIE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
+_PASSKEY_RP_ID_PATTERN = re.compile(
+    r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"
+)
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 _BASE_DIR = Path(__file__).resolve().parents[2]
@@ -141,6 +144,24 @@ class Settings(BaseSettings):
             "CADDYBUDDY_SESSION_SAMESITE",
             "SESSION_SAMESITE",
             "session_cookie_samesite",
+        ),
+    )
+    public_origin: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "CB_PUBLIC_ORIGIN",
+            "CADDYBUDDY_PUBLIC_ORIGIN",
+            "PUBLIC_ORIGIN",
+            "public_origin",
+        ),
+    )
+    passkey_rp_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "CB_PASSKEY_RP_ID",
+            "CADDYBUDDY_PASSKEY_RP_ID",
+            "PASSKEY_RP_ID",
+            "passkey_rp_id",
         ),
     )
     session_cookie_name: str = "caddybuddy_session"
@@ -371,6 +392,67 @@ class Settings(BaseSettings):
             raise ValueError(
                 "session_cookie_name may contain only letters, numbers, dots, underscores, and hyphens."
             )
+        return normalized
+
+    @field_validator("public_origin", mode="before")
+    @classmethod
+    def _normalize_public_origin(cls, value: object) -> object:
+        """Normalize the externally reachable origin to scheme://host[:port]."""
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return value
+
+        normalized = value.strip()
+        if not normalized:
+            return None
+
+        parsed = urlsplit(normalized)
+        scheme = parsed.scheme.lower()
+        if scheme not in {"http", "https"}:
+            raise ValueError("public_origin must use http or https.")
+        if parsed.username or parsed.password:
+            raise ValueError("public_origin must not include username or password.")
+        if parsed.query or parsed.fragment:
+            raise ValueError("public_origin must not include query or fragment.")
+        if parsed.path not in {"", "/"}:
+            raise ValueError("public_origin must not include a path.")
+
+        host = parsed.hostname
+        if not host:
+            raise ValueError("public_origin must include a host.")
+        host = host.rstrip(".").lower()
+        if scheme == "http" and host not in _LOOPBACK_HOSTS:
+            raise ValueError("public_origin must use https unless it targets localhost.")
+
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError("public_origin has an invalid port.") from exc
+        if (scheme == "https" and port == 443) or (scheme == "http" and port == 80):
+            port = None
+
+        if ":" in host:
+            host = f"[{host}]"
+        netloc = host if port is None else f"{host}:{port}"
+        return urlunsplit((scheme, netloc, "", "", ""))
+
+    @field_validator("passkey_rp_id", mode="before")
+    @classmethod
+    def _normalize_passkey_rp_id(cls, value: object) -> object:
+        """Validate the WebAuthn Relying Party ID as a bare, lowercase hostname."""
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return value
+
+        normalized = value.strip().rstrip(".").lower()
+        if not normalized:
+            return None
+        if "://" in normalized or "/" in normalized or ":" in normalized:
+            raise ValueError("passkey_rp_id must be a bare hostname without scheme, port, or path.")
+        if _PASSKEY_RP_ID_PATTERN.fullmatch(normalized) is None:
+            raise ValueError("passkey_rp_id must be a valid hostname.")
         return normalized
 
     @field_validator("caddy_api_url", "caddy_admin_url", mode="before")

@@ -429,6 +429,23 @@ example.com {
 
         self.assertEqual(caddyfile_path.read_text(encoding="utf-8"), original)
 
+    def test_write_caddyfile_sync_writes_in_place_when_parent_directory_is_not_writable(self) -> None:
+        """Single-file bind mount into a read-only directory: no sibling temp file is possible."""
+        caddyfile_path = self.temp_path / "Caddyfile"
+        caddyfile_path.write_text("example.com {}\n", encoding="utf-8")
+        real_open = Path.open
+
+        def fake_open(self: Path, *args: object, **kwargs: object):
+            if self.name == ".Caddyfile.caddybuddy.tmp":
+                raise PermissionError(errno.EACCES, "Permission denied")
+            return real_open(self, *args, **kwargs)  # type: ignore[arg-type]
+
+        with patch.object(caddyfile_manager.Path, "open", new=fake_open):
+            caddyfile_manager._write_caddyfile_sync(caddyfile_path, "managed\ncontent\n")
+
+        self.assertEqual(caddyfile_path.read_text(encoding="utf-8"), "managed\ncontent\n")
+        self.assertFalse((self.temp_path / ".Caddyfile.caddybuddy.tmp").exists())
+
     async def test_operation_guard_times_out_when_file_lock_cannot_be_acquired(self) -> None:
         lock_path = self.temp_path / "data" / ".caddybuddy.caddy.lock"
 
