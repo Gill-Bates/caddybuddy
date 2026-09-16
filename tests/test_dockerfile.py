@@ -64,15 +64,30 @@ def test_runtime_image_ships_the_changelog_the_about_page_renders() -> None:
     )
 
 
-def test_runtime_venv_is_checked_and_stripped_in_the_builder() -> None:
+def test_runtime_venv_is_checked_in_the_builder_and_pip_is_stripped_from_both_interpreters() -> None:
+    """pip must be gone from the final image entirely, not just the copied venv.
+
+    pip vendors its own dependencies (e.g. setuptools, msgpack) under pip/_vendor
+    with a CycloneDX manifest that vulnerability scanners read as an installed-
+    package inventory, reporting the vendored versions as application
+    dependencies. The runtime stage starts fresh from `base`, so its own
+    /usr/local interpreter still carries pip even after the builder's /opt/venv
+    copy has had it removed - both must be stripped.
+    """
     dockerfile = Path("docker/Dockerfile").read_text(encoding="utf-8")
 
     runtime_stage = dockerfile.split("FROM base AS runtime", maxsplit=1)[1]
 
     assert "python -m pip check" in dockerfile
-    assert "python -m pip uninstall -y --root-user-action=ignore pip" in dockerfile
     assert dockerfile.index("python -m pip check") < dockerfile.index("FROM base AS runtime")
-    assert "pip uninstall" not in runtime_stage
+    assert "/opt/venv/bin/python -m pip uninstall -y --root-user-action=ignore pip" not in dockerfile, (
+        "the builder venv's pip is removed via 'python -m pip uninstall' while /opt/venv is still on PATH"
+    )
+    assert dockerfile.count("pip uninstall -y --root-user-action=ignore pip") == 2, (
+        "expected exactly one pip removal in the builder stage (for /opt/venv) and "
+        "one in the runtime stage (for the base image's /usr/local interpreter)"
+    )
+    assert "/usr/local/bin/python3 -m pip uninstall -y --root-user-action=ignore pip" in runtime_stage
 
 
 def test_runtime_healthcheck_requires_a_direct_success_response() -> None:

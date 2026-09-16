@@ -75,6 +75,15 @@ WORKDIR /app
 # removed in the builder, so it does not add a redundant runtime layer.
 COPY --from=builder /opt/venv /opt/venv
 
+# Nothing installs packages at runtime, and pip ships its dependencies
+# vendored under pip/_vendor with a CycloneDX manifest (bom.cdx.json) that
+# scanners read as an installed-package inventory - reporting the vendored
+# versions (setuptools, msgpack) as if the application depended on them.
+# The runtime stage starts fresh from `base` (python:3.13-slim), so its own
+# /usr/local interpreter still carries pip even though the builder's copy
+# was removed from /opt/venv above; both must be stripped.
+RUN /usr/local/bin/python3 -m pip uninstall -y --root-user-action=ignore pip
+
 # Application code stays root-owned and world-readable, never writable by
 # the app user it runs as - only /app/data (below) needs to be. A process
 # that can write into its own import path can plant a module there for the

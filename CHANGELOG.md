@@ -11,6 +11,7 @@
 - `Fix` Toast notifications now appear at the bottom of the viewport instead of the top, with the newest toast at the bottom of the stack; auto-dismiss now pauses while a toast is hovered or focused.
 - `Fix` The dashboard's SSL Labs rank history chart now only offers time ranges covered by the configured retention window, and hosts on a monthly scan schedule no longer show gaps in the earliest weeks of a range.
 - `Security` Added invisible anti-bot checks to the sign-in and first-run account setup forms, combining a honeypot with a signed, time-bound form token; rejected submissions are logged in the same structured format used for other failed login attempts.
+- `Security` The Docker image build no longer leaves `pip` installed in the base Python interpreter, closing a gap where pip's vendored dependencies (setuptools, msgpack) reappeared as reported vulnerabilities.
 
 <details markdown="1">
 <summary>Previous versions...</summary>
