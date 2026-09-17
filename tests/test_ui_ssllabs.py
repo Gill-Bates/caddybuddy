@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 
 from app.dependencies.web import redirect_to
 from app.routers.ui.ssllabs import router as ssllabs_router
+from app.services.ssllabs import SslLabsScheduleUpdateResult
 from tests.ui_test_app import build_ui_test_app, extract_csrf_token
 
 
@@ -284,81 +285,22 @@ class UISslLabsTests(unittest.TestCase):
         self.assertRegex(response.text, r'name="mode"[^>]*value="fresh"[^>]*disabled')
         self.assertNotIn("Open last report", response.text)
 
-    def test_schedule_enable_triggers_auto_queue_for_stale_scan_without_crashing(self) -> None:
-        app = self._build_app()
-        current_user = SimpleNamespace(username="admin", role="admin")
-        target = SimpleNamespace(
-            id=1,
-            host="example.com",
-            schedule_frequency=None,
-            next_scheduled_at=None,
-        )
-        site = SimpleNamespace(id=1, site_name="Marketing", domain="example.com", enabled=True)
-        latest_scan = SimpleNamespace(
-            completed_at=datetime.now(UTC) - timedelta(days=10),
-            started_at=datetime.now(UTC) - timedelta(days=10, hours=1),
-            next_poll_at=None,
-            status="ready",
-        )
-
-        with (
-            patch("app.routers.ui.ssllabs.require_user", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.ssllabs.require_admin", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.ssllabs.ssllabs_service.update_schedule", new=AsyncMock()),
-            patch(
-                "app.routers.ui.ssllabs.ssllabs_repository.get_latest_scan_for_target",
-                new=AsyncMock(return_value=latest_scan),
-            ),
-            patch(
-                "app.routers.ui.ssllabs.ssllabs_service.request_scan",
-                new=AsyncMock(return_value=SimpleNamespace(created=True, host="example.com")),
-            ) as request_scan,
-            patch(
-                "app.routers.ui.ssllabs.ssllabs_repository.list_targets_with_latest_scans",
-                new=AsyncMock(return_value=[(target, site, latest_scan)]),
-            ),
-            TestClient(app) as client,
-        ):
-            page = client.get("/ssl-labs")
-            csrf_token = extract_csrf_token(page.text)
-            response = client.post(
-                "/ssl-labs/1/schedule",
-                data={"csrf_token": csrf_token, "schedule_frequency": "on"},
-                follow_redirects=False,
-            )
-
-        self.assertEqual(response.status_code, 303)
-        self.assertEqual(response.headers["location"], "/ssl-labs")
-        request_scan.assert_awaited_once_with(target_id=1, force_new=False)
-
-    def test_schedule_enable_shows_warning_when_auto_queue_fails(self) -> None:
+    def _post_schedule_enable(self, update_result: SslLabsScheduleUpdateResult):
         app = self._build_app()
         current_user = SimpleNamespace(username="admin", role="admin")
         target = SimpleNamespace(id=1, host="example.com", schedule_frequency=None, next_scheduled_at=None)
         site = SimpleNamespace(id=1, site_name="Marketing", domain="example.com", enabled=True)
-        latest_scan = SimpleNamespace(
-            completed_at=datetime.now(UTC) - timedelta(days=10),
-            started_at=datetime.now(UTC) - timedelta(days=10, hours=1),
-            next_poll_at=None,
-            status="ready",
-        )
 
         with (
             patch("app.routers.ui.ssllabs.require_user", new=AsyncMock(return_value=current_user)),
             patch("app.routers.ui.ssllabs.require_admin", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.ssllabs.ssllabs_service.update_schedule", new=AsyncMock()),
             patch(
-                "app.routers.ui.ssllabs.ssllabs_repository.get_latest_scan_for_target",
-                new=AsyncMock(return_value=latest_scan),
-            ),
-            patch(
-                "app.routers.ui.ssllabs.ssllabs_service.request_scan",
-                new=AsyncMock(side_effect=ValueError("queue failed")),
-            ),
-            patch("app.routers.ui.ssllabs.logger.warning") as log_warning,
+                "app.routers.ui.ssllabs.ssllabs_service.update_schedule",
+                new=AsyncMock(return_value=update_result),
+            ) as update_schedule,
             patch(
                 "app.routers.ui.ssllabs.ssllabs_repository.list_targets_with_latest_scans",
-                new=AsyncMock(return_value=[(target, site, latest_scan)]),
+                new=AsyncMock(return_value=[(target, site, None)]),
             ),
             TestClient(app) as client,
         ):
@@ -370,9 +312,21 @@ class UISslLabsTests(unittest.TestCase):
                 follow_redirects=True,
             )
 
+        update_schedule.assert_awaited_once_with(target_id=1, frequency="weekly")
+        return response
+
+    def test_schedule_enable_flashes_auto_queued_scan(self) -> None:
+        response = self._post_schedule_enable(SslLabsScheduleUpdateResult(auto_scan_queued=True))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Scan automatically queued.", response.text)
+
+    def test_schedule_enable_shows_warning_when_auto_queue_fails(self) -> None:
+        response = self._post_schedule_enable(SslLabsScheduleUpdateResult(auto_scan_failed=True))
+
         self.assertEqual(response.status_code, 200)
         self.assertIn("Schedule was enabled, but the initial scan could not be queued.", response.text)
-        log_warning.assert_called_once()
+        self.assertNotIn("Scan automatically queued.", response.text)
 
     def test_scan_rejects_invalid_mode(self) -> None:
         app = self._build_app()

@@ -25,6 +25,7 @@ from app.utils.admin_targets import (
     is_allowed_admin_ip,
     validate_admin_host,
 )
+from app.utils.caddyfile import caddy_syntax_text
 
 _DNS_RESOLUTION_TIMEOUT = 5.0
 _MAX_CADDYFILE_BYTES = 512 * 1024
@@ -172,7 +173,14 @@ class CaddyAdminClient:
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
-            self._client = httpx.AsyncClient(timeout=self._timeout, limits=self._LIMITS, trust_env=False)
+            # Redirects stay disabled explicitly: following one would reach a host that
+            # never passed the admin-target validation of the configured URL.
+            self._client = httpx.AsyncClient(
+                timeout=self._timeout,
+                limits=self._LIMITS,
+                trust_env=False,
+                follow_redirects=False,
+            )
         return self._client
 
     async def _bounded_request(
@@ -360,9 +368,6 @@ class CaddyAdminClient:
 
 
 class CaddyService:
-    def __init__(self) -> None:
-        self._client: httpx.AsyncClient | None = None
-
     @staticmethod
     def _caddy_scope_name(scope_type: Literal["domain", "wildcard"], scope_name: str) -> str:
         """Return the on-disk storage name Caddy uses for a scope.
@@ -617,12 +622,6 @@ class CaddyService:
         async with CaddyAdminClient(base_url, timeout) as client:
             return await client.adapt_caddyfile(caddyfile)
 
-    async def aclose(self) -> None:
-        if self._client is None:
-            return
-        await self._client.aclose()
-        self._client = None
-
     async def validate_caddyfile(self, caddyfile: str, *, admin_url: str | None = None) -> tuple[bool, str]:
         """Validate a Caddyfile without deploying.
 
@@ -708,14 +707,14 @@ class CaddyService:
                 lines.append("")
                 continue
 
-            if stripped.startswith("}"):
+            syntax = caddy_syntax_text(stripped)
+            if syntax.startswith("}"):
+                # Outdent this line itself; the brace is consumed so it is not counted twice.
                 indent = max(0, indent - 1)
+                syntax = syntax[1:]
 
             lines.append(("\t" * indent) + stripped)
-
-            opens = stripped.count("{")
-            closes = stripped.count("}")
-            indent = max(0, indent + opens - closes)
+            indent = max(0, indent + syntax.count("{") - syntax.count("}"))
 
         return "\n".join(lines).strip() + ("\n" if lines else "")
 

@@ -179,6 +179,18 @@ def _strip_caddy_comment(line: str) -> str:
     return "".join(result).rstrip()
 
 
+_QUOTED_TOKEN_RE = re.compile(r'"(?:\\.|[^"\\])*"')
+
+
+def caddy_syntax_text(line: str) -> str:
+    """Return ``line`` without its comment and with quoted strings emptied.
+
+    Braces left in the result are Caddyfile block syntax, not text inside a
+    comment or a quoted token.
+    """
+    return _QUOTED_TOKEN_RE.sub('""', _strip_caddy_comment(line)).strip()
+
+
 def _strip_caddy_comments(raw_value: str) -> str:
     return "\n".join(_strip_caddy_comment(line) for line in raw_value.splitlines())
 

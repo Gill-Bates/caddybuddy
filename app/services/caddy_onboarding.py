@@ -47,6 +47,8 @@ _DEFAULT_CADDYFILE_PATH = Path("/opt/caddybuddy/Caddyfile")
 
 # Modes whose running Caddy can have its disabled Admin API enabled in place.
 _ADMIN_API_ASSIST_MODES: frozenset[str] = frozenset({"host", "existing_config"})
+# Modes that deploy the bundled starter Caddyfile.
+_DEFAULT_CONFIG_MODES: frozenset[str] = frozenset({"unconfigured", "default_config"})
 # Poll budget while waiting for the Admin API to come up after a restart.
 _ADMIN_API_ENABLE_POLL_ATTEMPTS = 10
 _ADMIN_API_ENABLE_POLL_SECONDS = 1.5
@@ -179,8 +181,7 @@ class OnboardingWizardState:
             return cls()
         if not isinstance(payload, dict):
             return cls()
-        allowed = {field_name for field_name in cls.__dataclass_fields__}
-        return cls(**{key: value for key, value in payload.items() if key in allowed})
+        return cls(**{key: value for key, value in payload.items() if key in cls.__dataclass_fields__})
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False, separators=(",", ":"))
@@ -290,10 +291,6 @@ def detect_runtime_location() -> str:
     return "host"
 
 
-def _default_config_modes() -> set[str]:
-    return {"unconfigured", "default_config"}
-
-
 def _requires_writable_caddyfile(mode: str | None) -> bool:
     return mode in {"host", "existing_config", "unconfigured", "default_config"}
 
@@ -366,7 +363,7 @@ async def start_onboarding(
     normalized_runtime_location = (
         normalize_runtime_location(runtime_location)
         if runtime_location and runtime_location.strip()
-        else detect_runtime_location()
+        else await asyncio.to_thread(detect_runtime_location)
     )
 
     state = await lock_onboarding_state(session)
@@ -405,11 +402,12 @@ async def save_onboarding_location(
     state.mode = None
     state.status = "not_started"
     state.pending_location = normalized
-    runtime_location = (
-        "container" if normalized == "docker"
-        else detect_runtime_location() if normalized == "missing"
-        else "host"
-    )
+    if normalized == "docker":
+        runtime_location = "container"
+    elif normalized == "missing":
+        runtime_location = await asyncio.to_thread(detect_runtime_location)
+    else:
+        runtime_location = "host"
     state.runtime_location = runtime_location
     state.caddyfile_path = suggest_caddyfile_path(
         runtime_location,
@@ -539,7 +537,7 @@ def _atomic_write_text(
         if owner is not None:
             try:
                 os.chown(temp_path, owner[0], owner[1])
-            except (PermissionError, OSError):
+            except OSError:
                 logger.warning(
                     "Could not set ownership of %s to uid=%s gid=%s; "
                     "file ownership may drift from the expected owner.",
@@ -553,6 +551,17 @@ def _atomic_write_text(
         with suppress(OSError):
             temp_path.unlink(missing_ok=True)
         raise
+
+    # The replace already succeeded; a failing directory fsync only weakens the
+    # durability guarantee and must not turn a completed write into an error.
+    try:
+        dir_fd = os.open(target_path.parent, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except OSError:
+        logger.warning("Could not fsync Caddyfile directory after replace: %s", target_path.parent)
 
 
 def _enable_admin_in_caddyfile_sync(path_value: str, admin_endpoint: str) -> str:
@@ -844,7 +853,7 @@ async def run_onboarding_preflight(
             "admin_api_url",
         )
 
-    allow_target_create = state.mode in _default_config_modes()
+    allow_target_create = state.mode in _DEFAULT_CONFIG_MODES
     caddyfile_readable, caddyfile_writable, caddyfile_error = await asyncio.to_thread(
         _inspect_caddyfile_path,
         normalized_caddyfile_path,
@@ -874,9 +883,9 @@ async def run_onboarding_preflight(
         else:
             add_error(caddyfile_error, "caddyfile_path")
 
-    if state.mode in _default_config_modes() and not default_config_exists:
+    if state.mode in _DEFAULT_CONFIG_MODES and not default_config_exists:
         add_error("Default config /opt/caddybuddy/Caddyfile does not exist.", "caddyfile_path")
-    elif state.mode in _default_config_modes():
+    elif state.mode in _DEFAULT_CONFIG_MODES:
         try:
             await asyncio.to_thread(_read_default_config_sync)
         except ValueError as exc:
@@ -917,7 +926,7 @@ async def run_onboarding_preflight(
     # Offer the step-2 "Enable Admin API" assist only when an unreachable Admin API is the *sole*
     # blocker, the Caddyfile can be safely rewritten, and a restart-capable supervisor exists. This
     # flag is UI-only; enable_admin_api_and_reprobe recomputes every condition before acting.
-    admin_api_only_blocker = bool(errors) and set(field_errors) <= {"admin_api_url"}
+    admin_api_only_blocker = bool(errors) and field_errors.keys() <= {"admin_api_url"}
     replaceable = False
     if admin_api_only_blocker and not reachable and admin_url_valid and caddyfile_writable:
         replaceable, _replace_error = await asyncio.to_thread(
@@ -1110,7 +1119,7 @@ async def execute_onboarding(
     prepared_default_config = False
 
     # Prepare file system changes before the DB savepoint so each has its own rollback path.
-    if state.mode in _default_config_modes():
+    if state.mode in _DEFAULT_CONFIG_MODES:
         try:
             backup_path = await asyncio.to_thread(
                 _prepare_default_config_sync,

@@ -454,7 +454,6 @@ class LifespanTests(unittest.IsolatedAsyncioTestCase):
             patch.object(main_module.ssllabs_service, "startup", new=AsyncMock()),
             patch.object(main_module.ssllabs_service, "shutdown", new=AsyncMock()),
             patch.object(main_module.event_bus, "shutdown", new=AsyncMock()),
-            patch.object(main_module.caddy_service, "aclose", new=AsyncMock()),
         ):
             application = FastAPI()
             async with main_module.lifespan(application):

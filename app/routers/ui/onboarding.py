@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -57,7 +59,7 @@ async def onboarding_page(
 
     caddy_config = await get_caddy_config(session)
     ssllabs_email = await get_ssllabs_email(session)
-    default_runtime_location = state.runtime_location or detect_runtime_location()
+    default_runtime_location = state.runtime_location or await asyncio.to_thread(detect_runtime_location)
     settings = get_settings()
     suggested_caddyfile_path = (
         state.caddyfile_path

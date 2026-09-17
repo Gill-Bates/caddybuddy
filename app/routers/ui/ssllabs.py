@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Path, Request
@@ -16,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.limiter import limiter
 from app.database.session import get_db_session
 from app.dependencies.web import push_flash, redirect_to, render_template
+from app.models.entities import SslLabsScan
 from app.repositories.ssllabs import active_scan_cutoff, ssllabs_repository
 from app.services.ssllabs import (
     SslLabsServiceError,
@@ -26,7 +26,6 @@ from app.utils.ssllabs import (
     grade_badge_class,
     is_ssllabs_scan_active,
     is_ssllabs_scan_failed,
-    next_schedule_time,
     parse_ssllabs_schedule_control,
     status_badge_class,
     validate_ssllabs_host,
@@ -40,7 +39,6 @@ from ._common import (
 )
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
 
 
 def _as_utc(value: datetime | None) -> datetime | None:
@@ -51,15 +49,15 @@ def _as_utc(value: datetime | None) -> datetime | None:
     return value.astimezone(UTC)
 
 
-def _normalize_filter_grade(latest_scan, endpoints: list[dict[str, object]]) -> str:
+def _normalize_filter_grade(latest_scan: SslLabsScan | None, endpoints: list[dict[str, object]]) -> str:
     if latest_scan is None:
         return "not-scanned"
 
-    scan_status = str(getattr(latest_scan, "status", "") or "").strip().lower()
-    if getattr(latest_scan, "error_message", None) or is_ssllabs_scan_failed(scan_status):
+    scan_status = (latest_scan.status or "").strip().lower()
+    if latest_scan.error_message or is_ssllabs_scan_failed(scan_status):
         return "failed"
 
-    scan_grade = str(getattr(latest_scan, "grade", "") or "").strip().lower()
+    scan_grade = (latest_scan.grade or "").strip().lower()
     if scan_grade:
         return scan_grade
 
@@ -94,10 +92,7 @@ async def ssllabs_page(
     stale_cutoff = active_scan_cutoff(now)
     target_rows = sorted(
         await ssllabs_repository.list_targets_with_latest_scans(session),
-        key=lambda row: (
-            str(getattr(row[1], "site_name", getattr(row[1], "domain", ""))).casefold(),
-            str(getattr(row[0], "host", "")).casefold(),
-        ),
+        key=lambda row: (row[1].site_name.casefold(), row[0].host.casefold()),
     )
     for target, site, latest_scan in target_rows:
         host_error: str | None = None
@@ -113,8 +108,12 @@ async def ssllabs_page(
 
         # Extract endpoint details for IPv4/IPv6 breakdown
         endpoints = []
+        scan_status: str | None = None
+        scan_grade: str | None = None
         if latest_scan is not None:
-            endpoints = extract_endpoint_details(getattr(latest_scan, "result_json", None))
+            endpoints = extract_endpoint_details(latest_scan.result_json)
+            scan_status = latest_scan.status
+            scan_grade = latest_scan.grade
 
         site_row = site_rows_by_id.get(site.id)
         if site_row is None:
@@ -123,9 +122,7 @@ async def ssllabs_page(
             site_rows.append(site_row)
 
         scan_report_available = bool(
-            latest_scan is not None
-            and getattr(latest_scan, "grade", None)
-            and getattr(latest_scan, "completed_at", None) is not None
+            latest_scan is not None and scan_grade and latest_scan.completed_at is not None
         )
         site_row["domains"].append(
             {
@@ -134,11 +131,8 @@ async def ssllabs_page(
                 "scan": latest_scan,
                 "host_error": host_error,
                 "filter_grade": _normalize_filter_grade(latest_scan, endpoints),
-                "badge_class": status_badge_class(
-                    getattr(latest_scan, "status", None),
-                    getattr(latest_scan, "grade", None),
-                ),
-                "grade_badge_class": grade_badge_class(getattr(latest_scan, "grade", None)),
+                "badge_class": status_badge_class(scan_status, scan_grade),
+                "grade_badge_class": grade_badge_class(scan_grade),
                 "endpoints": endpoints,
                 "scan_active": scan_active,
                 "scan_report_available": scan_report_available,
@@ -213,7 +207,7 @@ async def update_ssllabs_schedule(
     form = await validated_csrf_form(request)
     try:
         frequency = parse_ssllabs_schedule_control(str(form.get("schedule_frequency", "")))
-        await ssllabs_service.update_schedule(target_id=target_id, frequency=frequency)
+        result = await ssllabs_service.update_schedule(target_id=target_id, frequency=frequency)
     except (SslLabsServiceError, ValueError) as exc:
         push_flash(request, "danger", str(exc))
         return redirect_to("/ssl-labs")
@@ -222,22 +216,8 @@ async def update_ssllabs_schedule(
         push_flash(request, "success", "SSL Labs schedule disabled.")
     else:
         push_flash(request, "success", f"SSL Labs schedule enabled ({frequency}).")
-        latest_scan = await ssllabs_repository.get_latest_scan_for_target(session, target_id)
-        _completed = _as_utc(getattr(latest_scan, "completed_at", None))
-        scan_stale = (
-            latest_scan is None
-            or _completed is None
-            or next_schedule_time(frequency, _completed) <= datetime.now(UTC)
-        )
-        if scan_stale:
-            try:
-                await ssllabs_service.request_scan(target_id=target_id, force_new=False)
-                push_flash(request, "info", "Scan automatically queued.")
-            except (SslLabsServiceError, ValueError) as exc:
-                logger.warning("Could not queue initial SSL Labs scan for target %s: %s", target_id, exc)
-                push_flash(
-                    request,
-                    "warning",
-                    "Schedule was enabled, but the initial scan could not be queued.",
-                )
+        if result.auto_scan_queued:
+            push_flash(request, "info", "Scan automatically queued.")
+        elif result.auto_scan_failed:
+            push_flash(request, "warning", "Schedule was enabled, but the initial scan could not be queued.")
     return redirect_to("/ssl-labs")

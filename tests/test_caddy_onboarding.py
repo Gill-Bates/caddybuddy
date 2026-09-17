@@ -31,6 +31,7 @@ from app.config.settings import get_settings
 from app.models.base import Base
 from app.services.caddy_onboarding import (
     OnboardingWizardState,
+    _atomic_write_text,
     _enable_admin_in_caddyfile_sync,
     _prepare_default_config_sync,
     _render_default_config,
@@ -1298,6 +1299,44 @@ class CaddyOnboardingServiceTests(unittest.IsolatedAsyncioTestCase):
         template = "email {{ ACME_EMAIL }}\n"
         with self.assertRaises(ValueError):
             _render_default_config(template, acme_email="", admin_api_url="http://localhost:2019")
+
+    def test_atomic_write_fsyncs_parent_directory_after_replace(self) -> None:
+        target = Path(self._temp_dir.name) / "Caddyfile"
+        target.write_text("old\n", encoding="utf-8")
+        real_fsync = os.fsync
+        fsynced_directories: list[bool] = []
+
+        def recording_fsync(fd: int) -> None:
+            fsynced_directories.append(Path(f"/proc/self/fd/{fd}").is_dir())
+            real_fsync(fd)
+
+        with patch("app.services.caddy_onboarding.os.fsync", side_effect=recording_fsync):
+            _atomic_write_text(target, "new\n", mode=0o640)
+
+        self.assertEqual(target.read_text(encoding="utf-8"), "new\n")
+        self.assertEqual(target.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(fsynced_directories, [False, True])
+
+    def test_atomic_write_tolerates_directory_fsync_failure(self) -> None:
+        target = Path(self._temp_dir.name) / "Caddyfile"
+        real_fsync = os.fsync
+
+        def failing_directory_fsync(fd: int) -> None:
+            if Path(f"/proc/self/fd/{fd}").is_dir():
+                raise OSError("fsync not supported")
+            real_fsync(fd)
+
+        with (
+            patch("app.services.caddy_onboarding.os.fsync", side_effect=failing_directory_fsync),
+            self.assertLogs("app.services.caddy_onboarding", level="WARNING"),
+        ):
+            _atomic_write_text(target, "new\n")
+
+        self.assertEqual(target.read_text(encoding="utf-8"), "new\n")
+        self.assertEqual(
+            [path.name for path in Path(self._temp_dir.name).iterdir() if "caddybuddy-" in path.name],
+            [],
+        )
 
     def test_bundled_default_caddyfile_uses_central_runtime_log(self) -> None:
         bundled = (Path(__file__).resolve().parents[1] / "Caddyfile").read_text(encoding="utf-8")

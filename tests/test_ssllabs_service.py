@@ -31,7 +31,9 @@ from app.services.ssllabs import (
     SslLabsClientSettings,
     SslLabsEmailNotRegisteredError,
     SslLabsRetryableError,
+    SslLabsScheduleUpdateResult,
     SslLabsService,
+    SslLabsServiceError,
     available_history_ranges,
     build_rank_history,
     check_email_registration_status,
@@ -641,6 +643,92 @@ class SslLabsServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(scan)
         self.assertEqual(scan.status, "queued")
+
+    async def _create_schedule_target(self, *, completed_at: datetime | None) -> int:
+        async with self.session_factory() as session:
+            site = Site(site_name="Example", domain="example.com", upstream_url="https://backend.example.com")
+            session.add(site)
+            await session.flush()
+            target = SslLabsTarget(site_id=site.id, host="example.com")
+            session.add(target)
+            await session.flush()
+            if completed_at is not None:
+                session.add(
+                    SslLabsScan(
+                        target_id=target.id,
+                        site_id=site.id,
+                        host=target.host,
+                        status="ready",
+                        grade="A+",
+                        started_at=completed_at - timedelta(minutes=5),
+                        completed_at=completed_at,
+                    )
+                )
+            await session.commit()
+            return target.id
+
+    async def _update_schedule(self, target_id: int, frequency, request_scan: AsyncMock):
+        with (
+            patch("app.services.ssllabs.get_session_factory", return_value=self.session_factory),
+            patch.object(self.service, "request_scan", new=request_scan),
+        ):
+            return await self.service.update_schedule(target_id=target_id, frequency=frequency)
+
+    async def test_update_schedule_queues_scan_when_enabling_without_scan(self) -> None:
+        target_id = await self._create_schedule_target(completed_at=None)
+        request_scan = AsyncMock()
+
+        result = await self._update_schedule(target_id, "weekly", request_scan)
+
+        self.assertEqual(result, SslLabsScheduleUpdateResult(auto_scan_queued=True))
+        request_scan.assert_awaited_once_with(target_id=target_id, force_new=False)
+        async with self.session_factory() as session:
+            target = await session.get(SslLabsTarget, target_id)
+        self.assertEqual(target.schedule_frequency, "weekly")
+        self.assertIsNotNone(target.next_scheduled_at)
+
+    async def test_update_schedule_queues_scan_when_latest_scan_is_stale(self) -> None:
+        target_id = await self._create_schedule_target(completed_at=datetime.now(UTC) - timedelta(days=10))
+        request_scan = AsyncMock()
+
+        result = await self._update_schedule(target_id, "weekly", request_scan)
+
+        self.assertTrue(result.auto_scan_queued)
+        request_scan.assert_awaited_once_with(target_id=target_id, force_new=False)
+
+    async def test_update_schedule_skips_scan_when_latest_scan_is_fresh(self) -> None:
+        target_id = await self._create_schedule_target(completed_at=datetime.now(UTC) - timedelta(hours=1))
+        request_scan = AsyncMock()
+
+        result = await self._update_schedule(target_id, "weekly", request_scan)
+
+        self.assertEqual(result, SslLabsScheduleUpdateResult())
+        request_scan.assert_not_awaited()
+
+    async def test_update_schedule_reports_failed_auto_scan_but_keeps_schedule(self) -> None:
+        target_id = await self._create_schedule_target(completed_at=None)
+        request_scan = AsyncMock(side_effect=SslLabsServiceError("queue failed"))
+
+        with self.assertLogs("app.services.ssllabs", level="WARNING"):
+            result = await self._update_schedule(target_id, "weekly", request_scan)
+
+        self.assertEqual(result, SslLabsScheduleUpdateResult(auto_scan_failed=True))
+        async with self.session_factory() as session:
+            target = await session.get(SslLabsTarget, target_id)
+        self.assertEqual(target.schedule_frequency, "weekly")
+
+    async def test_update_schedule_disable_never_queues_scan(self) -> None:
+        target_id = await self._create_schedule_target(completed_at=None)
+        request_scan = AsyncMock()
+
+        result = await self._update_schedule(target_id, None, request_scan)
+
+        self.assertEqual(result, SslLabsScheduleUpdateResult())
+        request_scan.assert_not_awaited()
+        async with self.session_factory() as session:
+            target = await session.get(SslLabsTarget, target_id)
+        self.assertIsNone(target.schedule_frequency)
+        self.assertIsNone(target.next_scheduled_at)
 
     async def _all_rank_history(self) -> list[SslLabsRankHistory]:
         async with self.session_factory() as session:

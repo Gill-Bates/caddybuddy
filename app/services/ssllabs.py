@@ -79,6 +79,12 @@ class SslLabsScanRequestResult:
     status: SslLabsScanStatus
 
 
+@dataclass(slots=True, frozen=True)
+class SslLabsScheduleUpdateResult:
+    auto_scan_queued: bool = False
+    auto_scan_failed: bool = False
+
+
 class SslLabsClientError(RuntimeError):
     pass
 
@@ -496,18 +502,34 @@ class SslLabsService:
         *,
         target_id: int,
         frequency: SslLabsScheduleFrequency | None,
-    ) -> None:
+    ) -> SslLabsScheduleUpdateResult:
+        """Persist the target schedule and queue a scan when enabling it on a stale result."""
         session_factory = get_session_factory()
         async with session_factory() as session:
             row = await ssllabs_repository.get_target_with_site(session, target_id)
             if row is None:
                 raise SslLabsServiceError("SSL Labs target not found.")
             target, _site = row
+            latest_scan = None
             if frequency is not None:
                 validate_ssllabs_host(target.host)
+                latest_scan = await ssllabs_repository.get_latest_scan_for_target(session, target_id)
             target.schedule_frequency = frequency
             target.next_scheduled_at = _next_scheduled_at_for_target(target, datetime.now(UTC))
             await session.commit()
+
+        if frequency is None:
+            return SslLabsScheduleUpdateResult()
+        completed_at = latest_scan.completed_at if latest_scan is not None else None
+        if completed_at is not None and next_schedule_time(frequency, _as_utc(completed_at)) > datetime.now(UTC):
+            return SslLabsScheduleUpdateResult()
+
+        try:
+            await self.request_scan(target_id=target_id, force_new=False)
+        except (SslLabsServiceError, ValueError) as exc:
+            logger.warning("Could not queue initial SSL Labs scan for target %s: %s", target_id, exc)
+            return SslLabsScheduleUpdateResult(auto_scan_failed=True)
+        return SslLabsScheduleUpdateResult(auto_scan_queued=True)
 
     async def request_scan(
         self,

@@ -262,6 +262,30 @@ class CaddyServiceTests(unittest.IsolatedAsyncioTestCase):
             "}\n",
         )
 
+    async def test_format_caddyfile_keeps_indent_after_a_nested_block_closes(self) -> None:
+        service = CaddyService()
+
+        formatted = await service.format_caddyfile(
+            "example.com {\nhandle /api/* {\nreverse_proxy api:80\n} # api\nfile_server\n}\n"
+        )
+
+        self.assertEqual(
+            formatted,
+            "example.com {\n\thandle /api/* {\n\t\treverse_proxy api:80\n\t} # api\n\tfile_server\n}\n",
+        )
+
+    async def test_format_caddyfile_ignores_braces_in_comments_and_quoted_strings(self) -> None:
+        service = CaddyService()
+
+        formatted = await service.format_caddyfile(
+            'example.com {\n# TODO {\nrespond "use {" 200\nlog\n}\nnext.example.com {\nrespond "ok"\n}\n'
+        )
+
+        self.assertEqual(
+            formatted,
+            'example.com {\n\t# TODO {\n\trespond "use {" 200\n\tlog\n}\nnext.example.com {\n\trespond "ok"\n}\n',
+        )
+
     async def test_format_site_directives_removes_dummy_site_wrapper(self) -> None:
         service = CaddyService()
 
@@ -270,6 +294,13 @@ class CaddyServiceTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(formatted, "handle /api/* {\n\treverse_proxy app:8000\n}")
+
+    async def test_admin_client_does_not_follow_redirects(self) -> None:
+        client = CaddyAdminClient("http://localhost:2019", 1.0)
+        try:
+            self.assertFalse(client._get_client().follow_redirects)
+        finally:
+            await client.aclose()
 
     async def test_admin_client_adapt_caddyfile_rejects_non_object_json(self) -> None:
         client = CaddyAdminClient("http://localhost:2019", 1.0)

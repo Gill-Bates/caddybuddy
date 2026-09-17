@@ -33,7 +33,6 @@ from app.routers.caddy_api import router as caddy_api_router
 from app.routers.passkeys import router as passkeys_router
 from app.routers.ui import router as ui_router
 from app.services.auth import PASSWORD_MIN_LENGTH, PASSWORD_POLICY_MESSAGE
-from app.services.caddy import caddy_service
 from app.services.caddyfile_manager import (
     get_caddy_runtime_status,
     onboard_caddy,
@@ -342,7 +341,6 @@ async def lifespan(application: FastAPI):
             application.state.caddy_reconcile_task = None
         await ssllabs_service.shutdown()
         await event_bus.shutdown()
-        await caddy_service.aclose()
         await dispose_engine()
 
 

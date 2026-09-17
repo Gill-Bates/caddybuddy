@@ -588,7 +588,7 @@ async def init_database() -> None:
         await _execute_database_init(database_path=None)
         return
 
-    _ensure_sqlite_database_directory(database_path)
+    await asyncio.to_thread(_ensure_sqlite_database_directory, database_path)
     lock_path = _sqlite_init_lock_path(database_path)
     logger.debug("Acquiring SQLite init lock: %s", lock_path)
     with lock_path.open("a+b") as lock_file:
