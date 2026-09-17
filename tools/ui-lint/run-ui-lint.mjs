@@ -234,19 +234,26 @@ const credentialProvider = {
     },
 };
 
-async function withAuthenticatedPage(browserType, action) {
+// Pass a saved storageState to skip the login: after auditLoginRateLimit has
+// flooded POST /login ("5/minute;20/hour" per IP), a fresh login gets HTTP 429.
+async function withAuthenticatedPage(browserType, action, { storageState = null } = {}) {
     const browser = await browserType.launch({ headless: true });
     try {
-        const context = await browser.newContext(buildContextOptions(DEVICE_CONTEXT_OPTIONS.get('desktop')));
+        const context = await browser.newContext({
+            ...buildContextOptions(DEVICE_CONTEXT_OPTIONS.get('desktop')),
+            ...(storageState ? { storageState } : {}),
+        });
         try {
             const page = await context.newPage();
             await page.emulateMedia({ reducedMotion: 'reduce' });
-            await login(page, {
-                baseUrl: BASE_URL,
-                credentialProvider,
-                motionResetCss: FULL_MOTION_RESET_CSS,
-            });
-            return await action(page);
+            if (!storageState) {
+                await login(page, {
+                    baseUrl: BASE_URL,
+                    credentialProvider,
+                    motionResetCss: FULL_MOTION_RESET_CSS,
+                });
+            }
+            return await action(page, context);
         } finally {
             await context.close();
         }
@@ -285,12 +292,17 @@ async function readGlobalSettings(page) {
     });
 }
 
-async function setGlobalRateLimitEnabled(browserType, enabled) {
-    return withAuthenticatedPage(browserType, async (page) => {
+/**
+ * Returns the previous setting and the admin session used, so a later call can
+ * reuse it via `storageState` instead of logging in again.
+ */
+async function setGlobalRateLimitEnabled(browserType, enabled, { storageState = null } = {}) {
+    return withAuthenticatedPage(browserType, async (page, context) => {
         const settings = await readGlobalSettings(page);
         const previous = Boolean(settings.rateLimitEnabled);
+        const session = await context.storageState();
         if (previous === enabled) {
-            return previous;
+            return { previous, storageState: session };
         }
 
         const response = await page.evaluate(async (payload) => {
@@ -332,30 +344,8 @@ async function setGlobalRateLimitEnabled(browserType, enabled) {
             throw new Error(`Failed to update rate limit setting (${response.status}): ${response.message || 'unknown error'}`);
         }
 
-        return previous;
-    });
-}
-
-// auditLoginRateLimit floods POST /login ("5/minute;20/hour" per IP), so the
-// restore login can hit HTTP 429. Waiting clears the per-minute window only;
-// if the hourly budget is exhausted, the retries still fail.
-async function setGlobalRateLimitEnabledWithRetry(browserType, enabled, { attempts = 6, delayMs = 20000 } = {}) {
-    for (let attempt = 1; attempt <= attempts; attempt += 1) {
-        try {
-            return await setGlobalRateLimitEnabled(browserType, enabled);
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            const isLoginRateLimited = /HTTP 429/.test(message);
-            if (!isLoginRateLimited || attempt === attempts) {
-                throw error;
-            }
-            console.warn(
-                `Restore login was rate limited (attempt ${attempt}/${attempts}); waiting ${Math.round(delayMs / 1000)}s `
-                + 'for the login rate limit window opened by the dedicated rate-limit audit to clear...',
-            );
-            await delay(delayMs);
-        }
-    }
+        return { previous, storageState: await context.storageState() };
+    }, { storageState });
 }
 
 // Centralized selector registry (reduces duplication & fragility)
@@ -1794,6 +1784,7 @@ async function main() {
     const settingsBrowserType = playwrightBrowsers[settingsBrowserName];
     const allowSettingsMutation = process.env.CI === 'true' || process.env.UI_LINT_ALLOW_SETTINGS_MUTATION === '1';
     let originalRateLimitEnabled = null;
+    let adminSession = null;
     let canMutateRateLimit = false;
 
     console.log(
@@ -1822,7 +1813,7 @@ async function main() {
         restoreDone = true;
         console.warn(`\nReceived ${signal}; restoring UI rate limiting before exit...`);
         try {
-            await setGlobalRateLimitEnabledWithRetry(settingsBrowserType, originalRateLimitEnabled);
+            await setGlobalRateLimitEnabled(settingsBrowserType, originalRateLimitEnabled, { storageState: adminSession });
             console.log(`Restored UI rate limiting to ${originalRateLimitEnabled ? 'enabled' : 'disabled'}.`);
         } catch (error) {
             console.warn(`Failed to restore UI rate limiting: ${error instanceof Error ? error.message : String(error)}`);
@@ -1841,7 +1832,7 @@ async function main() {
             );
         } else {
             try {
-                originalRateLimitEnabled = await setGlobalRateLimitEnabled(settingsBrowserType, false);
+                ({ previous: originalRateLimitEnabled, storageState: adminSession } = await setGlobalRateLimitEnabled(settingsBrowserType, false));
                 canMutateRateLimit = true;
                 if (originalRateLimitEnabled) {
                     console.log('Temporarily disabled UI rate limiting for authenticated and login-failure audits.');
@@ -1982,7 +1973,9 @@ async function main() {
 
         if (canMutateRateLimit) {
             try {
-                await setGlobalRateLimitEnabled(settingsBrowserType, true);
+                // Fresh login while the login budget is untouched; its session then
+                // performs the restore once the rate-limit audit has exhausted it.
+                ({ storageState: adminSession } = await setGlobalRateLimitEnabled(settingsBrowserType, true));
                 console.log('Enabled UI rate limiting for dedicated rate-limit audit.');
 
                 console.log('Starting rate-limit test...');
@@ -2036,7 +2029,7 @@ async function main() {
         if (!restoreDone && originalRateLimitEnabled !== null) {
             restoreDone = true;
             try {
-                await setGlobalRateLimitEnabledWithRetry(settingsBrowserType, originalRateLimitEnabled);
+                await setGlobalRateLimitEnabled(settingsBrowserType, originalRateLimitEnabled, { storageState: adminSession });
                 console.log(`Restored UI rate limiting to ${originalRateLimitEnabled ? 'enabled' : 'disabled'}.`);
             } catch (error) {
                 console.warn(`Failed to restore UI rate limiting: ${error instanceof Error ? error.message : String(error)}`);
