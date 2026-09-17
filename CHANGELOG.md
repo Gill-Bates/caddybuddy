@@ -1,4 +1,10 @@
-## [1.6.1] - 2026-xx-xx
+## [1.6.2] - 2026-xx-xx
+
+
+<details markdown="1">
+<summary>Previous versions...</summary>
+
+## [1.6.1] - 2026-09-17
 
 - `New` SSL Labs report and scan buttons are now icon-only, with descriptive tooltips and screen-reader labels.
 - `New` The Sites and SSL Labs tables share compact 32px row controls on desktop; touch devices and narrow windows keep 44px targets.
@@ -12,9 +18,6 @@
 - `Fix` The Sites page's certificate days-remaining pill now shows just the count (e.g. "68d") with the full description available to screen readers, and the issue date, wildcard coverage, and remote-source notes render on one line with a separator instead of stacking without labels.
 - `Fix` Fixed dark mode styling for admonitions and collapsible sections (e.g. this changelog's "Previous versions" block) on the documentation site.
 - `Fix` Fixed the documentation site's light/dark logo toggle, which previously showed both logo variants stacked together.
-
-<details markdown="1">
-<summary>Previous versions...</summary>
 
 ## [1.6.0] - 2026-09-16
 
