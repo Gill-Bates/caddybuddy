@@ -5,6 +5,7 @@
 - `New` Settings → General shows Global Settings and the Maintenance Page side by side on wide screens (1200px and up); smaller screens keep the stacked layout.
 - `New` The passkey remove button in Settings is now icon-only with a tooltip and screen-reader label, and shows a busy state while the removal runs.
 - `Fix` Adding a passkey while the Passkey tab is open now reloads the page to show the new passkey; previously the dialog could stay open with its button stuck on the busy label.
+- `Fix` The Caddyfile editor and the site directives editor no longer make iOS Safari zoom in when tapped on touch devices; their text is now 16px there, while desktop keeps the compact size.
 
 <details markdown="1">
 <summary>Previous versions...</summary>

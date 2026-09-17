@@ -103,6 +103,17 @@ class UICaddyfileTests(unittest.TestCase):
             "Desktop Caddyfile panel must match the stable full-height card layout used on other pages.",
         )
 
+    def test_code_editors_use_16px_text_on_touch_devices(self) -> None:
+        # iOS Safari zooms into a focused field below 16px; CodeMirror's own theme sets 0.9rem.
+        css = (Path(__file__).resolve().parents[1] / "app/static/css/app.css").read_text(encoding="utf-8")
+        touch_block = css[css.index("@media (hover: none) and (pointer: coarse) {\n\n    .form-control,"):]
+        touch_block = touch_block[:touch_block.index("\n}\n")]
+
+        self.assertIn(
+            "    .caddyfile-editor-panel .cm-editor,\n    .sites-form-panel__config .cm-editor {\n        font-size: 1rem;\n    }",
+            touch_block,
+        )
+
     def test_caddyfile_mobile_css_keeps_horizontal_editor_scroll(self) -> None:
         css_path = Path(__file__).resolve().parents[1] / "app/static/css/app.css"
         css = css_path.read_text(encoding="utf-8")

@@ -4065,6 +4065,14 @@ body.app-body--menu-open .app-sidebar {
     .table--management .ssllabs-schedule-form .form-select.form-select-sm {
         font-size: 1rem;
     }
+
+    /* CodeMirror's theme (app/static/js/caddy-editor.js) sets 0.9rem and is
+       injected after this stylesheet, so the override needs a scoped selector
+       to win. */
+    .caddyfile-editor-panel .cm-editor,
+    .sites-form-panel__config .cm-editor {
+        font-size: 1rem;
+    }
 }
 
 .form-label {
