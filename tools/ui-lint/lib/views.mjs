@@ -55,7 +55,9 @@ export const VIEW_DEFS = [
     { name: 'caddyfile', url: '/caddyfile', scope: 'caddyfile' },
     { name: 'sites', url: '/sites', scope: 'sites', extraDevices: TABLE_VIEW_EXTRA_DEVICES },
     { name: 'ssllabs', url: '/ssl-labs', scope: 'ssllabs', extraDevices: TABLE_VIEW_EXTRA_DEVICES },
-    { name: 'settings', url: '/settings', scope: 'settings' },
+    // General shows its two cards side by side from 1200px; the laptop context
+    // covers the narrowest two-column width.
+    { name: 'settings', url: '/settings', scope: 'settings', extraDevices: ['laptop'] },
     { name: 'settings-security', url: '/settings', scope: 'settings', tab: '#settingsSecurityTab' },
     { name: 'settings-passkey', url: '/settings', scope: 'settings', tab: '#settingsPasskeyTab' },
     { name: 'settings-ssllabs', url: '/settings', scope: 'settings', tab: '#settingsSslLabsTab' },

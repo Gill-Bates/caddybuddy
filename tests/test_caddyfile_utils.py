@@ -20,6 +20,7 @@ from app.utils.caddyfile import (
     extract_upstream_from_directives,
     prepare_domain_directives,
     snippet_is_defined,
+    tls_snippet_names,
 )
 
 
@@ -285,7 +286,42 @@ class SmartImportHelpersTests(unittest.TestCase):
         self.assertIn("    log {\n        output stdout\n    }", block)
         self.assertNotIn("reverse_proxy", block)
         self.assertIn('header Content-Type "text/html; charset=utf-8"', block)
-        self.assertRegex(block, r"respond `<!DOCTYPE html>.*<main[^>]*><h1>Down</h1></main></body></html>` 503\n}$")
+        self.assertRegex(block, r"respond `<!DOCTYPE html>.*<main[^>]*>.*<div[^>]*><h1>Down</h1></div></main></body></html>` 503\n}$")
+
+    def test_maintenance_page_template_has_no_caddyfile_syntax(self) -> None:
+        # The template is embedded verbatim in a backtick token: braces would be expanded as
+        # placeholders, and "#" could be stripped as a comment by the Caddyfile helpers.
+        block = build_maintenance_site_block(
+            name="example.com",
+            caddy_directives=None,
+            body_html="<p>Down</p>",
+            import_security_headers=False,
+        )
+        respond_line = next(line for line in block.splitlines() if line.strip().startswith("respond "))
+        page = respond_line.strip().removeprefix("respond `").removesuffix("` 503")
+
+        for character in "{}`#":
+            with self.subTest(character=character):
+                self.assertNotIn(character, page)
+
+    def test_build_maintenance_site_block_keeps_only_imports_of_tls_snippets(self) -> None:
+        baseline = (
+            "(cf_dns) {\n    tls {\n        dns cloudflare token\n    }\n}\n\n"
+            "(proxy_app) {\n    handle {\n        reverse_proxy app:80\n    }\n}\n"
+        )
+        snippets = tls_snippet_names(baseline)
+
+        block = build_maintenance_site_block(
+            name="example.com",
+            caddy_directives="import cf_dns\nimport proxy_app",
+            body_html="<p>Down</p>",
+            import_security_headers=False,
+            tls_snippets=snippets,
+        )
+
+        self.assertEqual(snippets, frozenset({"cf_dns"}))
+        self.assertIn("    import cf_dns\n", block)
+        self.assertNotIn("proxy_app", block)
 
     def test_build_maintenance_site_block_escapes_caddy_syntax_in_page(self) -> None:
         block = build_maintenance_site_block(

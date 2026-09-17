@@ -44,6 +44,13 @@ test('table pages add the laptop, small phone and 200% zoom acceptance contexts'
     assert.ok(VIEWS.every((view) => !('extraDevices' in view)));
 });
 
+test('settings general tab adds the laptop context for its narrowest two-column width', () => {
+    const generalDevices = new Set(VIEWS.filter((view) => view.url === '/settings' && !view.tab).map((view) => view.device));
+    assert.deepEqual(generalDevices, new Set(['desktop', 'large-desktop', 'tablet', 'mobile', 'laptop']));
+    const securityDevices = new Set(VIEWS.filter((view) => view.tab === '#settingsSecurityTab').map((view) => view.device));
+    assert.equal(securityDevices.has('laptop'), false);
+});
+
 test('modal views open every app modal on their own reduced device matrix', () => {
     const modalViews = VIEWS.filter((view) => view.modal);
     assert.deepEqual(

@@ -625,20 +625,105 @@ _MAINTENANCE_RESPONSE_ESCAPES = str.maketrans({
     "\r": " ",
     "\n": " ",
 })
-# Inline styles only: a <style> block would need braces. System colors follow the
-# visitor's light/dark preference without a media query.
-_MAINTENANCE_PAGE_TEMPLATE = (
-    '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
-    '<meta name="viewport" content="width=device-width, initial-scale=1">'
-    '<meta name="color-scheme" content="light dark"><meta name="robots" content="noindex">'
-    "<title>Service unavailable</title></head>"
-    '<body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;'
-    "background:Canvas;color:CanvasText;font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;"
-    'line-height:1.6">'
-    '<main style="box-sizing:border-box;max-width:42rem;margin:1rem;padding:2rem 2.5rem;'
-    'border:1px solid color-mix(in srgb, CanvasText 15%, transparent);border-radius:12px">'
-    "__BODY__</main></body></html>"
+# Starfield behind the maintenance page as (x, y, radius, twinkle seconds; 0 = static)
+# in a 1200x800 viewBox.
+_MAINTENANCE_STARS = (
+    (673, 164, 1, 0), (108, 84, 2.2, 5), (202, 384, 1.2, 0), (1049, 229, 0.8, 0),
+    (186, 454, 1, 0), (153, 256, 0.8, 0), (1138, 444, 0.8, 0), (1168, 136, 0.8, 0),
+    (136, 600, 1.2, 3.5), (111, 236, 0.8, 0), (1150, 146, 1, 0), (868, 157, 1.2, 0),
+    (1179, 325, 1.2, 6.5), (380, 115, 1.2, 5), (394, 391, 0.8, 0), (1131, 739, 0.8, 0),
+    (1165, 71, 1.2, 0), (1026, 706, 1.2, 3.5), (653, 486, 1.2, 3.5), (750, 316, 0.8, 0),
+    (378, 725, 2.2, 0), (177, 598, 1, 0), (1085, 516, 1, 0), (929, 304, 1.2, 0),
+    (251, 534, 1, 0), (347, 785, 1, 0), (321, 510, 1, 0), (90, 694, 0.8, 0),
+    (1152, 596, 2.2, 0), (706, 721, 1, 0), (1027, 603, 2.2, 3.5), (150, 105, 1, 0),
+    (980, 723, 1.6, 0), (134, 758, 1.6, 0), (922, 301, 1.6, 3.5), (720, 33, 1, 0),
+    (737, 182, 1.2, 0), (1021, 70, 0.8, 0), (598, 142, 1.6, 0), (824, 410, 2.2, 3.5),
+    (175, 180, 1, 0), (832, 572, 1, 0),
 )
+
+
+def _maintenance_star(x: int, y: int, radius: float, twinkle: float) -> str:
+    if not twinkle:
+        return f'<circle cx="{x}" cy="{y}" r="{radius}" fill="rgb(235,227,210)" opacity="0.55"/>'
+    return (
+        f'<circle cx="{x}" cy="{y}" r="{radius}" fill="rgb(204,251,241)">'
+        f'<animate attributeName="opacity" values="0.35;1;0.35" dur="{twinkle}s" repeatCount="indefinite"/>'
+        "</circle>"
+    )
+
+
+# The page is a floating astronaut repairing things in space, in CaddyBuddy's palette
+# (navy, sand, teal). Inline styles and SVG SMIL animations only: a <style> block,
+# @keyframes, or a script would need braces. The scene is fixed dark, so
+# color-scheme dark gives the editable body readable default link colors.
+_MAINTENANCE_PAGE_TEMPLATE = (
+    '<!DOCTYPE html><html lang="en" style="background:rgb(11,24,33)"><head><meta charset="utf-8">'
+    '<meta name="viewport" content="width=device-width, initial-scale=1">'
+    '<meta name="color-scheme" content="dark"><meta name="robots" content="noindex">'
+    "<title>Service unavailable</title></head>"
+    '<body style="margin:0;min-height:100vh;box-sizing:border-box;display:flex;flex-direction:column;'
+    "align-items:center;justify-content:center;gap:1.25rem;padding:2rem 1rem;overflow-x:hidden;"
+    "color:rgb(235,227,210);font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;line-height:1.6;"
+    "background:radial-gradient(circle at 80% 12%, rgba(20,184,166,0.22) 0%, transparent 45%),"
+    "radial-gradient(circle at 12% 85%, rgba(235,227,210,0.08) 0%, transparent 40%),"
+    'linear-gradient(180deg, rgb(11,24,33) 0%, rgb(21,34,46) 55%, rgb(8,17,25) 100%)">'
+    '<svg aria-hidden="true" focusable="false" viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid slice" '
+    'style="position:fixed;inset:0;width:100%;height:100%;pointer-events:none">'
+    + "".join(_maintenance_star(*star) for star in _MAINTENANCE_STARS)
+    + "</svg>"
+    '<svg aria-hidden="true" focusable="false" viewBox="-10 -20 240 280" '
+    'style="position:relative;display:block;width:min(210px,48vw);height:auto;overflow:visible;'
+    'filter:drop-shadow(0 24px 40px rgba(0,0,0,0.5))">'
+    '<path d="M-40 270 C 30 230, 50 180, 96 152" fill="none" stroke="rgba(235,227,210,0.35)" '
+    'stroke-width="3" stroke-linecap="round" stroke-dasharray="7 9"/>'
+    "<g>"
+    '<animateTransform attributeName="transform" type="translate" values="0 0;0 -16;0 0" keyTimes="0;0.5;1" '
+    'calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1" dur="8s" repeatCount="indefinite"/>'
+    "<g>"
+    '<animateTransform attributeName="transform" type="rotate" values="-4 110 116;4 110 116;-4 110 116" '
+    'keyTimes="0;0.5;1" calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1" dur="11s" '
+    'repeatCount="indefinite"/>'
+    '<rect x="66" y="74" width="88" height="86" rx="20" fill="rgb(214,204,184)" stroke="rgba(8,17,25,0.55)" stroke-width="2"/>'
+    '<g transform="translate(192 70)"><g>'
+    '<animateTransform attributeName="transform" type="rotate" values="-18;14;-18" dur="2.6s" repeatCount="indefinite"/>'
+    '<rect x="-3.5" y="-38" width="7" height="42" rx="3.5" fill="rgb(148,163,184)"/>'
+    '<circle cx="0" cy="-42" r="10" fill="rgb(148,163,184)"/>'
+    '<rect x="-3.5" y="-54" width="7" height="12" fill="rgb(21,34,46)"/></g></g>'
+    '<g fill="none" stroke="rgb(248,244,234)" stroke-width="17" stroke-linecap="round">'
+    '<path d="M64 104 C 40 112, 30 132, 34 152"/><path d="M156 104 C 182 110, 196 92, 192 70"/>'
+    '<path d="M92 158 C 86 190, 78 206, 62 220"/><path d="M130 158 C 140 188, 146 206, 164 216"/></g>'
+    '<rect x="74" y="70" width="72" height="92" rx="26" fill="rgb(248,244,234)" stroke="rgba(8,17,25,0.55)" stroke-width="2"/>'
+    '<rect x="94" y="104" width="32" height="22" rx="6" fill="rgb(15,118,110)"/>'
+    '<circle cx="103" cy="115" r="3.5" fill="rgb(245,158,11)">'
+    '<animate attributeName="opacity" values="1;0.2;1" dur="1.6s" repeatCount="indefinite"/></circle>'
+    '<rect x="110" y="112" width="11" height="6" rx="3" fill="rgb(204,251,241)" opacity="0.8"/>'
+    '<circle cx="110" cy="62" r="46" fill="rgb(248,244,234)" stroke="rgba(8,17,25,0.45)" stroke-width="2"/>'
+    '<circle cx="110" cy="62" r="34" fill="rgb(21,34,46)" stroke="rgb(20,184,166)" stroke-width="2.5"/>'
+    '<path d="M88 44 C 96 36, 112 32, 124 36" fill="none" stroke="rgba(255,255,255,0.55)" '
+    'stroke-width="5" stroke-linecap="round"/>'
+    "</g></g></svg>"
+    '<main style="position:relative;box-sizing:border-box;width:min(40rem,100%);padding:1.75rem 2rem;'
+    "text-align:center;background:rgba(21,34,46,0.78);border:1px solid rgba(235,227,210,0.14);"
+    "border-radius:20px;box-shadow:0 22px 60px rgba(0,0,0,0.45);"
+    'backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)">'
+    '<p style="margin:0 0 0.5rem;color:rgb(94,234,212);font-size:0.78rem;font-weight:600;'
+    'letter-spacing:0.14em;text-transform:uppercase">503 &middot; Maintenance</p>'
+    '<div style="overflow-wrap:anywhere">__BODY__</div></main></body></html>'
+)
+
+
+_TLS_DIRECTIVE_RE = re.compile(r"(?m)^\s*tls\b")
+
+
+def tls_snippet_names(caddyfile: str) -> frozenset[str]:
+    """Return the names of snippets in ``caddyfile`` that contain a ``tls`` directive."""
+    names: set[str] = set()
+    for snippet in parse_caddyfile(caddyfile).snippets:
+        header, _newline, body = snippet.partition("\n")
+        match = _SNIPPET_HEADER_RE.match(header.strip())
+        if match is not None and _TLS_DIRECTIVE_RE.search(body):
+            names.add(match.group(1))
+    return frozenset(names)
 
 
 def build_maintenance_site_block(
@@ -647,19 +732,25 @@ def build_maintenance_site_block(
     caddy_directives: str | None,
     body_html: str,
     import_security_headers: bool,
+    tls_snippets: frozenset[str] = frozenset(),
 ) -> str:
     """Build a site block that answers every request with the maintenance page (HTTP 503).
 
-    Only certificate, listener, and logging directives of the site are kept; all
-    request handlers are replaced. ``body_html`` must already be sanitized.
+    Only certificate, listener, and logging directives of the site are kept, plus
+    imports of snippets named in ``tls_snippets`` (e.g. DNS-challenge setup). Other
+    imports may carry request handlers that would bypass the maintenance response,
+    so they are dropped. ``body_html`` must already be sanitized.
     """
     lines: list[str] = []
     normalized_directives = normalize_caddy_directives(caddy_directives or "")
     if normalized_directives:
         for chunk in _split_top_level_directives(normalized_directives):
             header, _body = _split_block_header_and_body(chunk)
-            directive = header.split(maxsplit=1)[0].lower() if header else ""
-            if directive in _MAINTENANCE_PRESERVED_DIRECTIVES:
+            tokens = header.split() if header else []
+            directive = tokens[0].lower() if tokens else ""
+            if directive in _MAINTENANCE_PRESERVED_DIRECTIVES or (
+                directive == "import" and len(tokens) > 1 and tokens[1] in tls_snippets
+            ):
                 lines.append(chunk)
 
     response_body = _MAINTENANCE_PAGE_TEMPLATE.replace("__BODY__", body_html).translate(_MAINTENANCE_RESPONSE_ESCAPES)

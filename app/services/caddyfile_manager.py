@@ -48,6 +48,7 @@ from app.utils.caddyfile import (
     inject_global_options,
     parse_caddyfile,
     snippet_is_defined,
+    tls_snippet_names,
 )
 from app.utils.domains import split_domain_names
 
@@ -586,6 +587,7 @@ async def build_full_caddyfile(session: AsyncSession) -> str:
         if any(site.maintenance_mode for site in sites)
         else None
     )
+    tls_snippets = tls_snippet_names(baseline) if maintenance_html is not None else frozenset()
     for site in sorted(sites, key=lambda item: item.domain):
         if site.maintenance_mode and maintenance_html is not None:
             parts.append(build_maintenance_site_block(
@@ -593,6 +595,7 @@ async def build_full_caddyfile(session: AsyncSession) -> str:
                 caddy_directives=site.caddy_directives,
                 body_html=maintenance_html,
                 import_security_headers=has_security_snippet,
+                tls_snippets=tls_snippets,
             ))
             continue
         parts.append(_render_generated_site_block(

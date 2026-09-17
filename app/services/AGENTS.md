@@ -19,7 +19,7 @@ Business logic layer, sitting between `app/routers/*` and persistence/integratio
 | `supervisor.py` | Process supervision helpers (e.g. managing/restarting the Caddy process). |
 | `events.py` | In-memory event bus for broadcasting resource changes to connected clients via Server-Sent Events; see module docstring for subscribe/publish semantics. Single-process only. |
 | `auth.py` | Authentication logic (credential verification, session bootstrap) backing `app/routers/ui/auth.py`, plus TOTP enrollment/verification: Fernet encryption of OTP secrets and recovery-code keys are derived from the password pepper (falling back to `CB_SECRET_KEY` when no pepper is configured), replay protection via repository counter updates. |
-| `runtime_settings.py` | Runtime settings service for DB-stored configuration (the settings that can change without redeploying, e.g. rate-limiter enabled flag). |
+| `runtime_settings.py` | Runtime settings service for DB-stored configuration (the settings that can change without redeploying, e.g. rate-limiter enabled flag), including the nh3-sanitized maintenance page HTML. |
 | `about.py` | About-page data: runtime metadata, dependency versions, changelog, GitHub update checks. |
 | `build_info.py` | Build/version metadata (git SHA, build date) surfaced via `/build-info`. |
 | `__init__.py` | Package marker. |

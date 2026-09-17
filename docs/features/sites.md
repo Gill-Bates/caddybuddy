@@ -25,9 +25,9 @@ Editing and deploying replaces the generated site block. Disabling a site keeps 
 
 The **Start/Stop** button in the **All Sites** list switches a site between serving and maintenance. A Play icon means the site is running normally; a Stop icon (together with a **Maintenance** badge) means it is stopped.
 
-While a site is stopped, Caddy keeps serving its domains, but every request receives HTTP 503 with the maintenance page instead of reaching the site's handlers. The site's `tls`, `log`, and `bind` directives stay in place, so certificates keep renewing. Starting the site deploys its normal site block again. The button is unavailable for disabled sites, which are not part of the Caddy configuration at all.
+While a site is stopped, Caddy keeps serving its domains, but every request receives HTTP 503 with the maintenance page instead of reaching the site's handlers. The site's `tls`, `log`, and `bind` directives stay in place, as do imports of baseline snippets that contain a `tls` directive (for example DNS-challenge setup), so certificates keep renewing. Other imports are dropped while the site is stopped because they may contain request handlers. Starting the site deploys its normal site block again. The button is unavailable for disabled sites, which are not part of the Caddy configuration at all.
 
-Edit the maintenance page under **Settings → General → Maintenance Page**. The editor supports headings, paragraphs, bold/italic/underline, lists, and links (`https://`, `http://`, `mailto:`); any other markup is removed when saving. Saving the page redeploys the configuration when at least one site is stopped.
+Edit the maintenance page under **Settings → General → Maintenance Page**. The editor supports headings, paragraphs, bold/italic/underline, lists, and links (`https://`, `http://`, `mailto:`); any other markup is removed when saving. Visitors see this content on a card in front of a dark, animated space scene with an astronaut at work; the scene and the "503 · Maintenance" label are fixed and not editable. Saving the page redeploys the configuration when at least one site is stopped.
 
 ## Delete a site
 

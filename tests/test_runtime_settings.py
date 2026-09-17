@@ -335,6 +335,22 @@ class RuntimeSettingsTests(unittest.IsolatedAsyncioTestCase):
             "<h2>Status</h2><ul><li><b>Item</b></li></ul>",
         )
 
+    def test_sanitize_maintenance_page_html_limits_the_sanitized_length(self) -> None:
+        # Entity escaping grows "&" to "&amp;", so a short raw input can exceed the limit once cleaned.
+        with self.assertRaisesRegex(ValueError, "must not exceed"):
+            sanitize_maintenance_page_html("<p>" + "&" * (MAINTENANCE_PAGE_MAX_LENGTH - 10) + "</p>")
+
+    async def test_get_maintenance_page_html_falls_back_to_default_for_invalid_stored_value(self) -> None:
+        async with self.session_factory() as session:
+            await runtime_settings.app_settings_repository.set(session, "maintenance_page_html", "<script>x</script>")
+            await session.commit()
+
+        with self.assertLogs("app.services.runtime_settings", "WARNING"):
+            async with self.session_factory() as session:
+                page = await get_maintenance_page_html(session)
+
+        self.assertIn("This Service is currently not available", page)
+
     def test_sanitize_maintenance_page_html_rejects_empty_and_oversized_content(self) -> None:
         for raw in ("", "   ", "<p><br></p>", "<p>&nbsp;</p>", "<script>alert(1)</script>"):
             with self.subTest(raw=raw), self.assertRaisesRegex(ValueError, "must not be empty"):

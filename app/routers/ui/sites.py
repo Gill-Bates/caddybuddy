@@ -526,6 +526,10 @@ async def set_site_maintenance(
         return redirect_to("/sites")
 
     site_name = site.site_name
+    if not site.enabled:
+        push_flash(request, "warning", f"Site '{site_name}' is disabled. Enable it before starting or stopping it.")
+        return redirect_to("/sites")
+
     maintenance_mode = action == "stop"
     past_action = "stopped" if maintenance_mode else "started"
     if site.maintenance_mode == maintenance_mode:

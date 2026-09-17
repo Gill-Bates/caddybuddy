@@ -31,7 +31,7 @@ Manage one Caddy installation through a focused web interface for sites, configu
 
 -   :material-web: **Sites**
 
-    Create, validate, enable, disable, and deploy site blocks with one or more domains.
+    Create, validate, enable, disable, and deploy site blocks with one or more domains, or stop a site to show a maintenance page.
 
     [Manage sites](features/sites.md)
 

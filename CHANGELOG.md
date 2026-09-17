@@ -1,7 +1,10 @@
 ## [1.6.2] - 2026-xx-xx
 
-- `New` Sites can be stopped and started from the **All Sites** list. A stopped site keeps its domains and certificates in Caddy but answers every request with HTTP 503 and a maintenance page.
+- `New` Sites can be stopped and started from the **All Sites** list. A stopped site keeps its domains and certificates in Caddy but answers every request with HTTP 503 and a maintenance page, shown as a card in front of an animated space scene with an astronaut at work.
 - `New` The maintenance page is edited with a lightweight rich-text editor under Settings → General; the content is sanitized to headings, paragraphs, lists, links, and basic text styles.
+- `New` Settings → General shows Global Settings and the Maintenance Page side by side on wide screens (1200px and up); smaller screens keep the stacked layout.
+- `New` The passkey remove button in Settings is now icon-only with a tooltip and screen-reader label, and shows a busy state while the removal runs.
+- `Fix` Adding a passkey while the Passkey tab is open now reloads the page to show the new passkey; previously the dialog could stay open with its button stuck on the busy label.
 
 <details markdown="1">
 <summary>Previous versions...</summary>

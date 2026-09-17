@@ -155,7 +155,7 @@
                                     <td data-label="Site">
                                         <div class="site-row-title">
                                             <span
-                                                class="status-dot site-status-dot {% if site.enabled %}status-dot--online{% else %}status-dot--offline{% endif %}"
+                                                class="status-dot site-status-dot {% if site.enabled and site.maintenance_mode %}status-dot--maintenance{% elif site.enabled %}status-dot--online{% else %}status-dot--offline{% endif %}"
                                                 aria-hidden="true"></span>
                                             <div class="fw-semibold">{{ site.site_name }}</div>
                                             {% if site.enabled and site.maintenance_mode %}
@@ -165,7 +165,7 @@
                                                 site_handler
                                                 }}</span>
                                             {% endif %}
-                                            <span class="visually-hidden">{% if site.enabled %}Enabled{% else
+                                            <span class="visually-hidden">{% if site.enabled and site.maintenance_mode %}Stopped{% elif site.enabled %}Enabled{% else
                                                 %}Disabled{% endif %}</span>
                                         </div>
                                     </td>
@@ -265,7 +265,7 @@
                                                 </button>
                                             </form>
                                             <a href="{{ request.app.url_path_for('sites_page', site_id=site.id) }}#form-panel"
-                                                class="btn btn-sm btn-outline-primary btn--icon-only"
+                                                class="btn btn-sm btn-outline-secondary btn--icon-only"
                                                 aria-label="Edit {{ site.site_name }}"
                                                 title="Edit {{ site.site_name }}">
                                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none"

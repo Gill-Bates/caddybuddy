@@ -13,8 +13,8 @@ Server-rendered HTML pages — the actual browser-facing application. Each modul
 | `auth.py` | Login, first-admin setup, and logout, including invisible-captcha context (`_captcha_context`) and failure rendering (`_render_login_failure`). OTP-enabled accounts get a session-bound, fingerprinted, 180-second second-factor challenge (`/login/otp`, cancellable via `/login/otp/cancel`); the authenticated session is issued only after the second factor. `/login`, `/login/otp`, and `/setup` are all rate-limited (`5/minute;20/hour`, `5/minute;20/hour`, and `10/minute` respectively). |
 | `dashboard.py` | Home/dashboard page (`home_page`). |
 | `onboarding.py` | First-run onboarding wizard: location/mode/preflight/enable-admin-API/execute steps. |
-| `settings.py` | App settings page: Caddy settings, SSL Labs settings/retention, password change, two-factor enrollment/confirmation/disable (`/settings/two-factor*`, responses with secrets or recovery codes are `Cache-Control: no-store`), SSL Labs email registration; also `restart_onboarding_wizard`. |
-| `sites.py` | Site management: listing, create/update/delete, certificate status/renewal, validation. |
+| `settings.py` | App settings page: Caddy settings, SSL Labs settings/retention, password change, two-factor enrollment/confirmation/disable (`/settings/two-factor*`, responses with secrets or recovery codes are `Cache-Control: no-store`), SSL Labs email registration, maintenance page editor (`/settings/maintenance-page`, redeploys when a site is stopped); also `restart_onboarding_wizard`. |
+| `sites.py` | Site management: listing, create/update/delete, start/stop maintenance mode (`/sites/{id}/maintenance`), certificate status/renewal, validation. |
 | `caddyfile.py` | Caddyfile viewer/editor page: view, save, validate-only, and trigger onboarding re-run. |
 | `ssllabs.py` | SSL Labs scan UI: page render, start scan, update schedule, grade filtering (`_normalize_filter_grade`). |
 | `about.py` | About page and update-check action. |

@@ -115,9 +115,20 @@
 
         document.addEventListener("selectionchange", updateToolState);
 
-        form.addEventListener("submit", () => {
+        // Capture phase: runs before the shared loading-submit handler, which skips
+        // prevented submits, so the Save button is not left in its busy state.
+        form.addEventListener("submit", (event) => {
+            // Reject an empty page here: the server would refuse it and the redirect drops the draft.
+            if (!content.textContent.trim()) {
+                event.preventDefault();
+                content.setAttribute("aria-invalid", "true");
+                content.focus();
+                window.CaddyBuddyApp?.pushInlineFlash?.("danger", "The maintenance page must not be empty.");
+                return;
+            }
+            content.removeAttribute("aria-invalid");
             source.value = content.innerHTML.trim();
-        });
+        }, { capture: true });
     };
 
     if (document.readyState === "loading") {

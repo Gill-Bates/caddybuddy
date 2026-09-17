@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.app_settings import DEFAULTS, app_settings_repository
 from app.utils.admin_targets import validate_admin_host
+
+logger = logging.getLogger(__name__)
 
 _SIMPLE_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _UNSAFE_CADDY_API_URL_PATTERN = re.compile(r"[\x00-\x1f\x7f\\]")
@@ -319,6 +322,11 @@ def sanitize_maintenance_page_html(raw_html: str) -> str:
         strip_comments=True,
     )
     cleaned = _EMPTY_PARAGRAPH_PATTERN.sub("", cleaned).strip()
+    # Sanitizing can grow the markup (entity escaping, rel attributes on links).
+    if len(cleaned) > MAINTENANCE_PAGE_MAX_LENGTH:
+        raise ValueError(
+            f"The maintenance page must not exceed {MAINTENANCE_PAGE_MAX_LENGTH} characters."
+        )
     visible_text = _HTML_TAG_PATTERN.sub("", cleaned).replace("&nbsp;", " ").strip()
     if not visible_text:
         raise ValueError("The maintenance page must not be empty.")
@@ -328,7 +336,12 @@ def sanitize_maintenance_page_html(raw_html: str) -> str:
 async def get_maintenance_page_html(session: AsyncSession) -> str:
     """Get the sanitized maintenance page body shown for stopped sites."""
     value = await app_settings_repository.get(session, "maintenance_page_html")
-    return sanitize_maintenance_page_html(str(value))
+    try:
+        return sanitize_maintenance_page_html(str(value))
+    except ValueError as exc:
+        # An unusable stored value must not lock the Settings page or block deploys.
+        logger.warning("Stored maintenance page is invalid (%s); using the default page.", exc)
+        return sanitize_maintenance_page_html(DEFAULTS["maintenance_page_html"])
 
 
 async def set_maintenance_page_html(session: AsyncSession, raw_html: str) -> str:

@@ -38,7 +38,7 @@ ssllabs_retention_values else 0 %}
         <section class="tab-pane fade show active" id="settingsGeneralPanel" role="tabpanel"
             aria-labelledby="settingsGeneralTab" tabindex="0">
             <div class="row g-4">
-                <div class="col-12">
+                <div class="col-12 col-xl-6">
                     <div class="panel-card settings-panel settings-panel--primary" id="caddy-settings">
                         <div class="panel-card__header">
                             <h2 class="h5 mb-0">Global Settings</h2>
@@ -49,7 +49,7 @@ ssllabs_retention_values else 0 %}
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
                                 <div class="row g-3">
-                                    <div class="col-12 col-lg-6">
+                                    <div class="col-12 col-lg-6 col-xl-12">
                                         <label for="caddy_api_url" class="form-label">Caddy Admin URL</label>
                                         <input type="url" class="form-control" id="caddy_api_url" name="caddy_api_url"
                                             value="{{ caddy_api_url }}" placeholder="http://localhost:2019" required
@@ -58,7 +58,7 @@ ssllabs_retention_values else 0 %}
                                         <div class="form-text">Used for health checks, onboarding, and configuration
                                             sync.</div>
                                     </div>
-                                    <div class="col-12 col-lg-6">
+                                    <div class="col-12 col-lg-6 col-xl-12">
                                         <label for="caddyfile_path" class="form-label">Mounted Caddyfile Path</label>
                                         <input type="text" class="form-control" id="caddyfile_path"
                                             name="caddyfile_path" value="{{ caddyfile_path }}"
@@ -98,14 +98,11 @@ ssllabs_retention_values else 0 %}
                                         Restart onboarding wizard
                                     </button>
                                 </form>
-                                <div class="form-text mt-2">
-                                    Resets the wizard state and reopens the onboarding flow from the beginning.
-                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
-                <div class="col-12">
+                <div class="col-12 col-xl-6">
                     <div class="panel-card settings-panel" id="maintenance-page-settings">
                         <div class="panel-card__header">
                             <h2 class="h5 mb-0">Maintenance Page</h2>
@@ -118,65 +115,70 @@ ssllabs_retention_values else 0 %}
                                     id="maintenance-page-label">Page content</label>
                                 <div class="maintenance-editor__toolbar" role="group" aria-label="Text formatting"
                                     data-maintenance-editor-toolbar hidden>
-                                    <button type="button" class="btn btn-sm btn-outline-secondary maintenance-editor__tool"
-                                        data-editor-command="bold" aria-pressed="false" aria-label="Bold"
-                                        title="Bold"><strong aria-hidden="true">B</strong></button>
-                                    <button type="button" class="btn btn-sm btn-outline-secondary maintenance-editor__tool"
-                                        data-editor-command="italic" aria-pressed="false" aria-label="Italic"
-                                        title="Italic"><em aria-hidden="true">I</em></button>
-                                    <button type="button" class="btn btn-sm btn-outline-secondary maintenance-editor__tool"
-                                        data-editor-command="underline" aria-pressed="false" aria-label="Underline"
-                                        title="Underline"><u aria-hidden="true">U</u></button>
-                                    <span class="maintenance-editor__separator" aria-hidden="true"></span>
-                                    <button type="button" class="btn btn-sm btn-outline-secondary maintenance-editor__tool"
-                                        data-editor-block="h1" aria-pressed="false" aria-label="Heading 1"
-                                        title="Heading 1">H1</button>
-                                    <button type="button" class="btn btn-sm btn-outline-secondary maintenance-editor__tool"
-                                        data-editor-block="h2" aria-pressed="false" aria-label="Heading 2"
-                                        title="Heading 2">H2</button>
-                                    <button type="button" class="btn btn-sm btn-outline-secondary maintenance-editor__tool"
-                                        data-editor-block="p" aria-pressed="false" aria-label="Paragraph"
-                                        title="Paragraph"><span aria-hidden="true">&para;</span></button>
-                                    <span class="maintenance-editor__separator" aria-hidden="true"></span>
-                                    <button type="button" class="btn btn-sm btn-outline-secondary maintenance-editor__tool"
-                                        data-editor-command="insertUnorderedList" aria-pressed="false"
-                                        aria-label="Bulleted list" title="Bulleted list">
-                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                            stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false">
-                                            <path d="M9 6h11M9 12h11M9 18h11"></path>
-                                            <circle cx="4" cy="6" r="1" fill="currentColor"></circle>
-                                            <circle cx="4" cy="12" r="1" fill="currentColor"></circle>
-                                            <circle cx="4" cy="18" r="1" fill="currentColor"></circle>
-                                        </svg>
-                                    </button>
-                                    <button type="button" class="btn btn-sm btn-outline-secondary maintenance-editor__tool"
-                                        data-editor-command="insertOrderedList" aria-pressed="false"
-                                        aria-label="Numbered list" title="Numbered list">
-                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                            stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false">
-                                            <path d="M10 6h10M10 12h10M10 18h10"></path>
-                                            <path d="M4 4.5h1.2V9M3.6 9h2.2M3.6 14.2c.3-.5.8-.7 1.3-.7.7 0 1.2.4 1.2 1 0 .9-2.5 1.9-2.5 3.5h2.6"></path>
-                                        </svg>
-                                    </button>
-                                    <span class="maintenance-editor__separator" aria-hidden="true"></span>
-                                    <button type="button" class="btn btn-sm btn-outline-secondary maintenance-editor__tool"
-                                        data-editor-link aria-label="Insert link" title="Insert link">
-                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                                            aria-hidden="true" focusable="false">
-                                            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
-                                            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
-                                        </svg>
-                                    </button>
-                                    <button type="button" class="btn btn-sm btn-outline-secondary maintenance-editor__tool"
-                                        data-editor-command="removeFormat" aria-label="Clear formatting"
-                                        title="Clear formatting">
-                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                                            aria-hidden="true" focusable="false">
-                                            <path d="M4 7V5h11v2M9.5 5 7 19M5 19h4M15 13l6 6M21 13l-6 6"></path>
-                                        </svg>
-                                    </button>
+                                    <div class="maintenance-editor__group">
+                                        <button type="button" class="btn btn-sm btn-outline-secondary maintenance-editor__tool"
+                                            data-editor-command="bold" aria-pressed="false" aria-label="Bold"
+                                            title="Bold"><strong aria-hidden="true">B</strong></button>
+                                        <button type="button" class="btn btn-sm btn-outline-secondary maintenance-editor__tool"
+                                            data-editor-command="italic" aria-pressed="false" aria-label="Italic"
+                                            title="Italic"><em aria-hidden="true">I</em></button>
+                                        <button type="button" class="btn btn-sm btn-outline-secondary maintenance-editor__tool"
+                                            data-editor-command="underline" aria-pressed="false" aria-label="Underline"
+                                            title="Underline"><u aria-hidden="true">U</u></button>
+                                    </div>
+                                    <div class="maintenance-editor__group">
+                                        <button type="button" class="btn btn-sm btn-outline-secondary maintenance-editor__tool"
+                                            data-editor-block="h1" aria-pressed="false" aria-label="Heading 1"
+                                            title="Heading 1">H1</button>
+                                        <button type="button" class="btn btn-sm btn-outline-secondary maintenance-editor__tool"
+                                            data-editor-block="h2" aria-pressed="false" aria-label="Heading 2"
+                                            title="Heading 2">H2</button>
+                                        <button type="button" class="btn btn-sm btn-outline-secondary maintenance-editor__tool"
+                                            data-editor-block="p" aria-pressed="false" aria-label="Paragraph"
+                                            title="Paragraph"><span aria-hidden="true">&para;</span></button>
+                                    </div>
+                                    <div class="maintenance-editor__group">
+                                        <button type="button" class="btn btn-sm btn-outline-secondary maintenance-editor__tool"
+                                            data-editor-command="insertUnorderedList" aria-pressed="false"
+                                            aria-label="Bulleted list" title="Bulleted list">
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false">
+                                                <path d="M9 6h11M9 12h11M9 18h11"></path>
+                                                <circle cx="4" cy="6" r="1" fill="currentColor"></circle>
+                                                <circle cx="4" cy="12" r="1" fill="currentColor"></circle>
+                                                <circle cx="4" cy="18" r="1" fill="currentColor"></circle>
+                                            </svg>
+                                        </button>
+                                        <button type="button" class="btn btn-sm btn-outline-secondary maintenance-editor__tool"
+                                            data-editor-command="insertOrderedList" aria-pressed="false"
+                                            aria-label="Numbered list" title="Numbered list">
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false">
+                                                <path d="M10 6h10M10 12h10M10 18h10"></path>
+                                                <path d="M4 4.5h1.2V9M3.6 9h2.2M3.6 14.2c.3-.5.8-.7 1.3-.7.7 0 1.2.4 1.2 1 0 .9-2.5 1.9-2.5 3.5h2.6"></path>
+                                            </svg>
+                                        </button>
+                                    </div>
+                                    <div class="maintenance-editor__group">
+                                        <button type="button" class="btn btn-sm btn-outline-secondary maintenance-editor__tool"
+                                            data-editor-link aria-label="Insert link" title="Insert link">
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                                aria-hidden="true" focusable="false">
+                                                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                                                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                                            </svg>
+                                        </button>
+                                        <button type="button" class="btn btn-sm btn-outline-secondary maintenance-editor__tool"
+                                            data-editor-command="removeFormat" aria-label="Clear formatting"
+                                            title="Clear formatting">
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                                aria-hidden="true" focusable="false">
+                                                <path d="M4 7V5h11v2M9.5 5 7 19M5 19h4M15 13l6 6M21 13l-6 6"></path>
+                                            </svg>
+                                        </button>
+                                    </div>
                                 </div>
                                 <div class="form-control maintenance-editor__content" contenteditable="true"
                                     role="textbox" aria-multiline="true" aria-labelledby="maintenance-page-label"

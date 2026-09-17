@@ -13,7 +13,7 @@
 
 CaddyBuddy is a lightweight web UI for managing a single Caddy installation.
 
-It provides a dashboard, site management, a Caddyfile editor, certificate monitoring and renewal, SSL Labs assessments with weekly or monthly scheduling, onboarding, and secure defaults in one compact container image. Authentication combines CSRF protection, invisible anti-bot checks, rate limiting, optional passkey (WebAuthn) sign-in, and optional TOTP two-factor authentication.
+It provides a dashboard, site management with a per-site maintenance mode, a Caddyfile editor, certificate monitoring and renewal, SSL Labs assessments with weekly or monthly scheduling, onboarding, and secure defaults in one compact container image. Authentication combines CSRF protection, invisible anti-bot checks, rate limiting, optional passkey (WebAuthn) sign-in, and optional TOTP two-factor authentication.
 
 ## Screenshots
 

@@ -162,7 +162,7 @@ class UISitesTests(unittest.TestCase):
         self.assertIn("Checking certificate...", response.text)
         self.assertIn('class="site-cert__pending"', response.text)
         self.assertIn('aria-live="polite" aria-atomic="true"', response.text)
-        self.assertIn('class="btn btn-sm btn-outline-primary btn--icon-only"', response.text)
+        self.assertIn('class="btn btn-sm btn-outline-secondary btn--icon-only"', response.text)
         self.assertIn('aria-label="Edit Marketing"', response.text)
         self.assertIn('data-site-certificate-domains=\'["example.com"]\'', response.text)
 
@@ -843,6 +843,7 @@ class UISitesTests(unittest.TestCase):
         self.assertRegex(response.text, r'<input type="hidden" name="action"\s+value="start">')
         self.assertIn('aria-label="Start Blog"', response.text)
         self.assertIn('class="badge site-maintenance-badge">Maintenance</span>', response.text)
+        self.assertIn("status-dot site-status-dot status-dot--maintenance", response.text)
         self.assertRegex(response.text, r'<button[^>]*data-site-run-toggle="stopped"[^>]*>')
         self.assertNotRegex(response.text, r'<button[^>]*data-site-run-toggle="stopped"[^>]*js-confirm')
 
@@ -885,7 +886,7 @@ class UISitesTests(unittest.TestCase):
         return response, session, set_mode, deploy, push_flash_mock, event_mock
 
     def test_stop_site_enables_maintenance_mode_and_deploys(self) -> None:
-        site = SimpleNamespace(id=7, site_name="Shop", maintenance_mode=False)
+        site = SimpleNamespace(id=7, site_name="Shop", enabled=True, maintenance_mode=False)
 
         response, session, set_mode, deploy, push_flash_mock, event_mock = self._post_maintenance(
             site, {"action": "stop"},
@@ -901,7 +902,7 @@ class UISitesTests(unittest.TestCase):
         event_mock.assert_awaited_once_with("site", "updated", "7")
 
     def test_start_site_rolls_back_when_deploy_fails(self) -> None:
-        site = SimpleNamespace(id=8, site_name="Blog", maintenance_mode=True)
+        site = SimpleNamespace(id=8, site_name="Blog", enabled=True, maintenance_mode=True)
 
         response, session, set_mode, _deploy, push_flash_mock, event_mock = self._post_maintenance(
             site, {"action": "start"}, deploy_result=(False, "Caddy Admin API unavailable."),
@@ -915,8 +916,20 @@ class UISitesTests(unittest.TestCase):
         self.assertIn("was not started: Caddy Admin API unavailable.", push_flash_mock.call_args.args[2])
         event_mock.assert_not_awaited()
 
+    def test_maintenance_toggle_rejects_disabled_site(self) -> None:
+        site = SimpleNamespace(id=10, site_name="Old", enabled=False, maintenance_mode=False)
+
+        response, session, set_mode, deploy, flash, event = self._post_maintenance(site, {"action": "stop"})
+
+        self.assertEqual(response.status_code, 303)
+        set_mode.assert_not_awaited()
+        deploy.assert_not_awaited()
+        session.commit.assert_not_awaited()
+        event.assert_not_awaited()
+        self.assertEqual(flash.call_args.args[1], "warning")
+
     def test_maintenance_toggle_is_idempotent_and_rejects_unknown_actions(self) -> None:
-        site = SimpleNamespace(id=9, site_name="Shop", maintenance_mode=True)
+        site = SimpleNamespace(id=9, site_name="Shop", enabled=True, maintenance_mode=True)
 
         _response, _session, set_mode, deploy, _flash, _event = self._post_maintenance(site, {"action": "stop"})
         set_mode.assert_not_awaited()
