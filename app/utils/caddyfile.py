@@ -712,6 +712,14 @@ _MAINTENANCE_PAGE_TEMPLATE = (
 )
 
 
+def render_maintenance_page_html(body_html: str) -> str:
+    """Wrap sanitized maintenance page body HTML in the full page shell.
+
+    ``body_html`` must already be sanitized; this only fills in the template.
+    """
+    return _MAINTENANCE_PAGE_TEMPLATE.replace("__BODY__", body_html)
+
+
 _TLS_DIRECTIVE_RE = re.compile(r"(?m)^\s*tls\b")
 
 
@@ -753,7 +761,7 @@ def build_maintenance_site_block(
             ):
                 lines.append(chunk)
 
-    response_body = _MAINTENANCE_PAGE_TEMPLATE.replace("__BODY__", body_html).translate(_MAINTENANCE_RESPONSE_ESCAPES)
+    response_body = render_maintenance_page_html(body_html).translate(_MAINTENANCE_RESPONSE_ESCAPES)
     lines.extend((
         'header Content-Type "text/html; charset=utf-8"',
         'header Cache-Control "no-store"',

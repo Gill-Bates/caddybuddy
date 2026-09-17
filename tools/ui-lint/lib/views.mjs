@@ -75,6 +75,16 @@ export const VIEW_DEFS = [
     },
     // The site form only moves into its modal below 768px.
     { name: 'sites-form-modal', url: '/sites', scope: 'sites', modal: '#site-form-modal', devices: ['mobile', 'mobile-small'] },
+    // Opened directly via bootstrap.Modal, so its iframe stays empty here (populating
+    // it requires the Preview button's own form submission, which this audit does
+    // not simulate); this still covers the modal chrome and its accessibility.
+    {
+        name: 'settings-maintenance-preview-modal',
+        url: '/settings',
+        scope: 'settings',
+        modal: '#maintenancePagePreviewModal',
+        devices: MODAL_VIEW_DEVICES,
+    },
 ];
 
 /**

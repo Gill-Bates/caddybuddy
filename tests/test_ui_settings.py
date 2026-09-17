@@ -502,6 +502,39 @@ class UISettingsTests(unittest.TestCase):
         deploy.assert_not_awaited()
         session.commit.assert_not_awaited()
 
+    def _post_maintenance_preview(self, form_data):
+        app = self._build_action_app()
+        current_user = SimpleNamespace(username="admin", role="admin")
+        with (
+            patch("app.routers.ui.settings.require_admin", new=AsyncMock(return_value=current_user)),
+            patch("app.routers.ui.settings.validated_csrf_form", new=AsyncMock(return_value=form_data)),
+            TestClient(app) as client,
+        ):
+            return client.post("/settings/maintenance-page/preview")
+
+    def test_maintenance_page_preview_renders_sanitized_page_for_same_origin_frame(self) -> None:
+        response = self._post_maintenance_preview(
+            {"maintenance_page_html": '<h1 onclick="x()">Back soon</h1><script>alert(1)</script>'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("<h1>Back soon</h1>", response.text)
+        self.assertNotIn("<script>", response.text)
+        self.assertNotIn("onclick", response.text)
+        self.assertIn("503 &middot; Maintenance", response.text)
+        self.assertEqual(
+            response.headers["content-security-policy"],
+            "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self'",
+        )
+        self.assertEqual(response.headers["x-frame-options"], "SAMEORIGIN")
+        self.assertEqual(response.headers["cache-control"], "no-store")
+
+    def test_maintenance_page_preview_rejects_empty_content(self) -> None:
+        response = self._post_maintenance_preview({"maintenance_page_html": "<p><br></p>"})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json(), {"success": False, "message": "The maintenance page must not be empty."})
+
     def test_settings_page_updates_caddy_configuration(self) -> None:
         app = self._build_app()
         current_user = SimpleNamespace(username="admin", role="admin")

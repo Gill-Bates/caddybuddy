@@ -55,12 +55,13 @@ test('modal views open every app modal on their own reduced device matrix', () =
     const modalViews = VIEWS.filter((view) => view.modal);
     assert.deepEqual(
         new Set(modalViews.map((view) => view.modal)),
-        new Set(['#confirmActionModal', '#addPasskeyModal', '#site-form-modal']),
+        new Set(['#confirmActionModal', '#addPasskeyModal', '#site-form-modal', '#maintenancePagePreviewModal']),
     );
     const devicesFor = (modal) => new Set(modalViews.filter((view) => view.modal === modal).map((view) => view.device));
     assert.deepEqual(devicesFor('#confirmActionModal'), new Set(['desktop', 'mobile']));
     assert.deepEqual(devicesFor('#addPasskeyModal'), new Set(['desktop', 'mobile']));
     assert.deepEqual(devicesFor('#site-form-modal'), new Set(['mobile', 'mobile-small']));
+    assert.deepEqual(devicesFor('#maintenancePagePreviewModal'), new Set(['desktop', 'mobile']));
     assert.ok(VIEWS.every((view) => !('devices' in view)));
     assert.equal(VIEWS.find((view) => view.modal === '#addPasskeyModal').tab, '#settingsPasskeyTab');
 });

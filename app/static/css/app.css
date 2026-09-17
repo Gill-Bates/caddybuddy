@@ -1934,15 +1934,36 @@ body.app-body--menu-open .app-sidebar {
     --bs-btn-active-border-color: var(--cb-accent-strong);
 }
 
+/* Mirrors the rendered maintenance page's card (see _MAINTENANCE_PAGE_TEMPLATE in
+   app/utils/caddyfile.py) so the editor previews content close to how visitors
+   will actually see it, rather than as a plain light-theme form field. */
+.maintenance-editor__content,
+.maintenance-editor__content.form-control:focus {
+    color: rgb(235, 227, 210);
+    background: rgb(21, 34, 46);
+}
+
 .maintenance-editor__content {
     min-height: 12rem;
     max-height: 32rem;
     overflow-y: auto;
     line-height: 1.6;
+    text-align: center;
+    border-color: rgba(235, 227, 210, 0.14);
+    border-radius: 20px;
+    padding: 1.75rem 2rem;
 }
 
 .maintenance-editor__content > :last-child {
     margin-bottom: 0;
+}
+
+.maintenance-preview__frame {
+    display: block;
+    width: 100%;
+    height: min(38rem, 75vh);
+    border: 0;
+    border-radius: 0 0 calc(var(--bs-border-radius-lg, 0.5rem) - 1px) calc(var(--bs-border-radius-lg, 0.5rem) - 1px);
 }
 
 /* Passkeys (Settings -> Passkey) */

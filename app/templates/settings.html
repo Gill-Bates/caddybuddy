@@ -193,16 +193,40 @@ ssllabs_retention_values else 0 %}
                                     paragraphs, lists, links, and basic text styles are kept; other markup is removed
                                     when saving.
                                 </div>
-                                <div class="mt-3">
+                                <div class="mt-3 d-flex gap-2">
                                     <button type="submit" class="btn btn-primary" data-loading-submit-button
-                                        data-loading-label="Saving...">Save maintenance page</button>
+                                        data-loading-label="Saving...">Save</button>
+                                    <button type="button" class="btn btn-outline-secondary"
+                                        data-maintenance-preview-button
+                                        aria-controls="maintenancePagePreviewModal">Preview</button>
                                 </div>
+                            </form>
+                            <form action="{{ request.app.url_path_for('preview_maintenance_page') }}" method="post"
+                                target="maintenance-preview-frame" data-maintenance-preview-form hidden>
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <input type="hidden" name="maintenance_page_html" data-maintenance-preview-input>
                             </form>
                         </div>
                     </div>
                 </div>
             </div>
         </section>
+
+        <div class="modal fade" id="maintenancePagePreviewModal" tabindex="-1"
+            aria-labelledby="maintenancePagePreviewModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2 class="modal-title h5" id="maintenancePagePreviewModalLabel">Maintenance page preview</h2>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body p-0">
+                        <iframe name="maintenance-preview-frame" class="maintenance-preview__frame"
+                            title="Maintenance page preview" sandbox></iframe>
+                    </div>
+                </div>
+            </div>
+        </div>
 
         <section class="tab-pane fade" id="settingsSecurityPanel" role="tabpanel" aria-labelledby="settingsSecurityTab"
             tabindex="0">

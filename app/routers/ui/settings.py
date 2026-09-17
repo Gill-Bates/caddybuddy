@@ -47,6 +47,7 @@ from app.services.runtime_settings import (
     get_rate_limit_enabled,
     get_ssllabs_email,
     get_ssllabs_history_retention_days,
+    sanitize_maintenance_page_html,
     set_caddy_config,
     set_maintenance_page_html,
     set_rate_limit_enabled,
@@ -59,6 +60,7 @@ from app.services.ssllabs import (
     register_email_with_ssllabs,
     ssllabs_service,
 )
+from app.utils.caddyfile import render_maintenance_page_html
 from app.utils.otp import provisioning_qr_data_url
 from app.utils.ssllabs import mask_email
 
@@ -401,6 +403,38 @@ async def update_maintenance_page(
 
     await session.commit()
     return _settings_response(request, success=True, message="Maintenance page saved.")
+
+
+@router.post("/settings/maintenance-page/preview", response_class=HTMLResponse)
+@limiter.limit("20/minute")
+async def preview_maintenance_page(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+):
+    current_user = await require_admin(request, session)
+    if current_user is None:
+        if _expects_json_response(request):
+            return JSONResponse({"success": False, "message": "Authentication required."}, status_code=401)
+        return redirect_to("/login")
+
+    form = await validated_csrf_form(request)
+    try:
+        sanitized = sanitize_maintenance_page_html(str(form.get("maintenance_page_html", "")))
+    except ValueError as exc:
+        return JSONResponse({"success": False, "message": str(exc)}, status_code=400)
+
+    response = HTMLResponse(render_maintenance_page_html(sanitized))
+    # This is inert, nh3-sanitized markup rendered for an admin-only preview iframe.
+    # It needs its own policy: the page shell is styled entirely via inline `style`
+    # attributes, and it must be embeddable by our own same-origin modal — both of
+    # which the app-wide security headers (added only when a response doesn't already
+    # set them, see SecurityHeadersMiddleware) would otherwise block.
+    response.headers["content-security-policy"] = (
+        "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self'"
+    )
+    response.headers["x-frame-options"] = "SAMEORIGIN"
+    response.headers["cache-control"] = "no-store"
+    return response
 
 
 @router.post("/settings/ssllabs", response_class=HTMLResponse)

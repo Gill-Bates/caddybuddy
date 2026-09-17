@@ -115,19 +115,42 @@
 
         document.addEventListener("selectionchange", updateToolState);
 
-        // Capture phase: runs before the shared loading-submit handler, which skips
-        // prevented submits, so the Save button is not left in its busy state.
-        form.addEventListener("submit", (event) => {
-            // Reject an empty page here: the server would refuse it and the redirect drops the draft.
+        // Copies the editor into the textarea; an empty page is rejected here because
+        // the server would refuse it and a Save redirect would drop the draft.
+        const syncSource = () => {
             if (!content.textContent.trim()) {
-                event.preventDefault();
                 content.setAttribute("aria-invalid", "true");
                 content.focus();
                 window.CaddyBuddyApp?.pushInlineFlash?.("danger", "The maintenance page must not be empty.");
-                return;
+                return false;
             }
             content.removeAttribute("aria-invalid");
             source.value = content.innerHTML.trim();
+            return true;
+        };
+
+        const previewButton = form.querySelector("[data-maintenance-preview-button]");
+        const previewForm = document.querySelector("[data-maintenance-preview-form]");
+        const previewInput = previewForm?.querySelector("[data-maintenance-preview-input]");
+        const previewModal = document.getElementById("maintenancePagePreviewModal");
+
+        if (previewButton && previewForm && previewInput && previewModal) {
+            previewButton.addEventListener("click", () => {
+                if (!syncSource()) {
+                    return;
+                }
+                previewInput.value = source.value;
+                previewForm.requestSubmit();
+                window.bootstrap.Modal.getOrCreateInstance(previewModal).show();
+            });
+        }
+
+        // Capture phase: runs before the shared loading-submit handler, which skips
+        // prevented submits, so the Save button is not left in its busy state.
+        form.addEventListener("submit", (event) => {
+            if (!syncSource()) {
+                event.preventDefault();
+            }
         }, { capture: true });
     };
 
