@@ -64,6 +64,9 @@ CHALLENGE_TTL_SECONDS = 300
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 _MAX_CLIENT_DATA_BYTES = 4096
 _MAX_TRANSPORTS = 8
+# Sign-in is unauthenticated: one message for unknown credentials, inactive
+# accounts, and failed signatures, so responses do not reveal which applies.
+_SIGN_IN_FAILED_MESSAGE = "The passkey could not be verified."
 
 
 class PasskeyError(RuntimeError):
@@ -396,11 +399,12 @@ class PasskeyService:
         passkey = await passkey_repository.get_by_credential_id(session, credential_id)
         if passkey is None:
             logger.warning("Passkey sign-in used an unknown credential.")
-            raise PasskeyVerificationError("This passkey is not registered.")
+            raise PasskeyVerificationError(_SIGN_IN_FAILED_MESSAGE)
 
         user = await user_repository.get_by_id(session, passkey.user_id)
         if user is None or not user.is_active:
-            raise PasskeyVerificationError("This account cannot sign in.")
+            logger.warning("Passkey sign-in rejected for missing or inactive user_id=%s.", passkey.user_id)
+            raise PasskeyVerificationError(_SIGN_IN_FAILED_MESSAGE)
 
         try:
             verified = verify_authentication_response(
@@ -417,7 +421,7 @@ class PasskeyService:
                 user.username,
                 type(exc).__name__,
             )
-            raise PasskeyVerificationError("The passkey could not be verified.") from exc
+            raise PasskeyVerificationError(_SIGN_IN_FAILED_MESSAGE) from exc
 
         recorded = await passkey_repository.record_authentication(
             session,
@@ -433,7 +437,7 @@ class PasskeyService:
                 passkey.sign_count,
                 verified.new_sign_count,
             )
-            raise PasskeyVerificationError("The passkey could not be verified.")
+            raise PasskeyVerificationError(_SIGN_IN_FAILED_MESSAGE)
 
         logger.info("Passkey sign-in verified for username=%r", user.username)
         return user

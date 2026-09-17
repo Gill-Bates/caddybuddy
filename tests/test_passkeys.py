@@ -131,6 +131,28 @@ class PasskeyRepositoryTests(unittest.IsolatedAsyncioTestCase):
                     expires_at=self.now + timedelta(seconds=300),
                 )
 
+    async def test_sign_in_failures_share_one_message(self) -> None:
+        # An unauthenticated caller must not learn whether a credential exists or its account is inactive.
+        async with self.session_factory() as session:
+            inactive = await user_repository.create(
+                session, username="inactive", email=None, password_hash="$2b$12$" + "c" * 53, is_active=False
+            )
+            await session.commit()
+        await self._create_passkey("credential-inactive", user_id=inactive.id)
+        request = SimpleNamespace(url=SimpleNamespace(scheme="https", hostname="example.com", port=443))
+
+        messages = []
+        for credential_id in ("credential-unknown", "credential-inactive"):
+            challenge = f"challenge-{credential_id}"
+            await self._store_challenge(challenge, ceremony="authentication")
+            credential = {"id": credential_id, "response": {"clientDataJSON": _client_data(challenge)}}
+            async with self.session_factory() as session:
+                with self.assertRaises(PasskeyVerificationError) as raised:
+                    await passkey_service.finish_authentication(session, request, credential=credential)
+            messages.append(str(raised.exception))
+
+        self.assertEqual(messages, ["The passkey could not be verified."] * 2)
+
     async def test_signature_counter_must_advance(self) -> None:
         passkey_id = await self._create_passkey("credential-counter", user_id=self.owner_id, sign_count=5)
 

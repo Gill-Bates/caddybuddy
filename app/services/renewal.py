@@ -9,6 +9,7 @@ import fcntl
 import logging
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager, suppress
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,10 @@ _SUCCESS_MESSAGES = {
 }
 
 
+class RenewalLockError(RuntimeError):
+    """Raised when another worker already holds the renewal lock for a scope."""
+
+
 @contextmanager
 def renewal_file_lock(lock_dir: Path, scope: str):
     """File-based lock using flock to prevent parallel certificate renewal runs across workers."""
@@ -53,7 +58,7 @@ def renewal_file_lock(lock_dir: Path, scope: str):
         try:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise RuntimeError(f"Certificate renewal is already running for {scope}.")
+            raise RenewalLockError(f"Certificate renewal is already running for {scope}.")
         try:
             yield
         finally:
@@ -88,25 +93,21 @@ class CertificateRenewalService:
         if self.settings.caddy_control_mode == "disabled":
             # restart_repair needs a full Caddy restart, which requires a control mode.
             if capability.mode == "restart_repair":
-                return CertificateRenewalCapability(
+                return replace(
+                    capability,
                     mode="unavailable",
                     reason="control_mode_disabled",
                     requires_confirmation=False,
-                    scope_name=capability.scope_name,
-                    scope_type=capability.scope_type,
-                    wait_domains=capability.wait_domains,
                 )
             # Forced purge would delete artifacts from disk; that is not allowed in
             # API-only deployments. Downgrade to a best-effort Admin API reload that
             # lets Caddy renew anything missing or within its renewal window.
             if capability.mode == "artifact_purge":
-                return CertificateRenewalCapability(
+                return replace(
+                    capability,
                     mode="api_reload",
                     reason="control_mode_disabled",
                     requires_confirmation=False,
-                    scope_name=capability.scope_name,
-                    scope_type=capability.scope_type,
-                    wait_domains=capability.wait_domains,
                 )
         return capability
 
@@ -139,7 +140,7 @@ class CertificateRenewalService:
                     wait_domains=domains,
                 )
             # We need to fetch the current info for this domain
-            domain_states = {d: (site.enabled, getattr(site, "updated_at", None)) for d in domains}
+            domain_states = {d: (site.enabled, site.updated_at) for d in domains}
             infos = await get_certificate_info_for_domains(list(domains), managed_site_states=domain_states)
             cert_info = infos.get(domain)
 
@@ -153,8 +154,7 @@ class CertificateRenewalService:
                 wait_domains=domains,
             )
 
-        cert_status = getattr(cert_info, "status", "missing")
-        if cert_status == "storage_unavailable":
+        if cert_info.status == "storage_unavailable":
             return CertificateRenewalCapability(
                 mode="storage_unavailable",
                 reason="storage_unreadable",
@@ -164,9 +164,8 @@ class CertificateRenewalService:
                 wait_domains=domains,
             )
 
-        is_wildcard = getattr(cert_info, "is_wildcard", False)
-        covering_name = getattr(cert_info, "covering_name", None) or domain
-        if is_wildcard:
+        if cert_info.is_wildcard:
+            covering_name = cert_info.covering_name or domain
             return CertificateRenewalCapability(
                 mode="wildcard_scope_required",
                 reason=covering_name,
@@ -176,16 +175,11 @@ class CertificateRenewalService:
                 wait_domains=domains,
             )
 
-        local_artifact_present = getattr(cert_info, "local_artifact_present", False)
-        valid = getattr(cert_info, "valid", False)
-        source = getattr(cert_info, "source", "none")
-        local_artifact_complete = getattr(cert_info, "local_artifact_complete", False)
-        artifact_scope = getattr(cert_info, "artifact_scope_name", None) or domain
-
+        artifact_scope = cert_info.artifact_scope_name or domain
         target_wait_domains = domains
 
-        if not local_artifact_present:
-            if valid and source == "remote":
+        if not cert_info.local_artifact_present:
+            if cert_info.valid and cert_info.source == "remote":
                 return CertificateRenewalCapability(
                     mode="restart_repair",
                     reason="local_artifact_missing",
@@ -203,9 +197,9 @@ class CertificateRenewalService:
                     scope_type="domain",
                     wait_domains=target_wait_domains,
                 )
-        elif not local_artifact_complete:
+        elif not cert_info.local_artifact_complete:
             # Present but incomplete (e.g. missing .key or .json)
-            if valid:
+            if cert_info.valid:
                 return CertificateRenewalCapability(
                     mode="restart_repair",
                     reason="local_artifact_incomplete",
@@ -228,7 +222,7 @@ class CertificateRenewalService:
             mode="artifact_purge",
             reason="standard_renewal",
             requires_confirmation=False,
-            scope_name=getattr(cert_info, "artifact_scope_name", None) or domain,
+            scope_name=artifact_scope,
             scope_type="domain",
             wait_domains=target_wait_domains,
         )
@@ -254,10 +248,6 @@ class CertificateRenewalService:
 
         plan = trusted_plan
         target_domains = list(plan.wait_domains)
-        if not target_domains:
-            domains = split_domain_names(site.domain)
-            target_domains = [domains[0].lower().strip()] if domains else []
-
         if not target_domains:
             return False, "Site has no renewal target domain."
 
@@ -286,10 +276,8 @@ class CertificateRenewalService:
                     return False, message
 
                 return True, message or _SUCCESS_MESSAGES.get(plan.mode, "Certificate renewal succeeded.")
-        except CaddyServiceError as exc:
+        except (CaddyServiceError, RenewalLockError) as exc:
             return False, str(exc)
-        except RuntimeError as e:
-            return False, str(e)
 
     async def _publish(self, progress: RenewalProgress | None, action: str, payload: dict[str, Any]) -> None:
         if progress is not None:

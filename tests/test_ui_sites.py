@@ -204,7 +204,7 @@ class UISitesTests(unittest.TestCase):
             caddy_directives="reverse_proxy backend:8080",
         )
         certificate_info = {
-            "mail.steiner.rs": SimpleNamespace(
+            "mail.steiner.rs": CertificateInfo(
                 exists=True,
                 valid=True,
                 status="valid",
@@ -212,7 +212,7 @@ class UISitesTests(unittest.TestCase):
                 expires_at=None,
                 days_remaining=74,
             ),
-            "mail.kwiring.com": SimpleNamespace(
+            "mail.kwiring.com": CertificateInfo(
                 exists=True,
                 valid=False,
                 status="expired",
@@ -443,7 +443,7 @@ class UISitesTests(unittest.TestCase):
         )
         issued_at = datetime(2026, 5, 28, tzinfo=UTC)
         certificate_info = {
-            "example.com": SimpleNamespace(
+            "example.com": CertificateInfo(
                 exists=True,
                 valid=True,
                 issued_at=issued_at,
@@ -481,7 +481,7 @@ class UISitesTests(unittest.TestCase):
         )
         issued_at = datetime(2026, 5, 11, tzinfo=UTC)
         certificate_info = {
-            "dav.cirrio.de": SimpleNamespace(
+            "dav.cirrio.de": CertificateInfo(
                 exists=True,
                 valid=True,
                 issued_at=issued_at,

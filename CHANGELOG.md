@@ -6,6 +6,7 @@
 - `New` The passkey remove button in Settings is now icon-only with a tooltip and screen-reader label, and shows a busy state while the removal runs.
 - `Fix` Adding a passkey while the Passkey tab is open now reloads the page to show the new passkey; previously the dialog could stay open with its button stuck on the busy label.
 - `Fix` The Caddyfile editor and the site directives editor no longer make iOS Safari zoom in when tapped on touch devices; their text is now 16px there, while desktop keeps the compact size.
+- `Security` Failed passkey sign-ins now return the same message whether the passkey is unknown, belongs to an inactive account, or fails verification, so the response no longer reveals which case applies.
 
 <details markdown="1">
 <summary>Previous versions...</summary>

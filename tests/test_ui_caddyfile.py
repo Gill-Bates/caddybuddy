@@ -85,7 +85,9 @@ class UICaddyfileTests(unittest.TestCase):
         css_path = Path(__file__).resolve().parents[1] / "app/static/css/app.css"
         css = css_path.read_text(encoding="utf-8")
 
-        column_block = css.split(".app-page--caddyfile>.app-grid>.col-12 {", 1)[1].split("}", 1)[0]
+        column_rule = re.search(r"\.app-page--caddyfile>\.app-grid>\.col-12 \{([^}]*)\}", css)
+        self.assertIsNotNone(column_rule, "Desktop Caddyfile column rule .app-page--caddyfile>.app-grid>.col-12 not found.")
+        column_block = column_rule.group(1)
         for declaration in ("overflow: visible;", "padding-inline: 0.35rem;", "margin-inline: -0.35rem;"):
             self.assertIn(
                 declaration,
@@ -106,12 +108,17 @@ class UICaddyfileTests(unittest.TestCase):
     def test_code_editors_use_16px_text_on_touch_devices(self) -> None:
         # iOS Safari zooms into a focused field below 16px; CodeMirror's own theme sets 0.9rem.
         css = (Path(__file__).resolve().parents[1] / "app/static/css/app.css").read_text(encoding="utf-8")
-        touch_block = css[css.index("@media (hover: none) and (pointer: coarse) {\n\n    .form-control,"):]
-        touch_block = touch_block[:touch_block.index("\n}\n")]
+        touch_rule = re.search(
+            r"@media \(hover: none\) and \(pointer: coarse\) \{\n\n    \.form-control,.*?\n\}\n",
+            css,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(touch_rule, "Touch-device media query that lifts inputs to 1rem not found.")
 
         self.assertIn(
             "    .caddyfile-editor-panel .cm-editor,\n    .sites-form-panel__config .cm-editor {\n        font-size: 1rem;\n    }",
-            touch_block,
+            touch_rule.group(0),
+            "Code editors must render 16px text on touch devices so iOS Safari does not zoom on focus.",
         )
 
     def test_caddyfile_mobile_css_keeps_horizontal_editor_scroll(self) -> None:

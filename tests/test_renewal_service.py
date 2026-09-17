@@ -29,7 +29,11 @@ from app.services.certificates import (
     CertificateRenewalCapability,
     ParsedCertificate,
 )
-from app.services.renewal import CertificateRenewalService, renewal_file_lock
+from app.services.renewal import (
+    CertificateRenewalService,
+    RenewalLockError,
+    renewal_file_lock,
+)
 
 
 def tearDownModule() -> None:
@@ -50,7 +54,7 @@ class RenewalServiceTests(unittest.IsolatedAsyncioTestCase):
             # inside both the first lock and the assertRaises block.
             with (
                 renewal_file_lock(lock_dir, scope),
-                self.assertRaises(RuntimeError),
+                self.assertRaises(RenewalLockError),
                 renewal_file_lock(lock_dir, scope),
             ):
                 pass
@@ -134,6 +138,38 @@ class RenewalServiceTests(unittest.IsolatedAsyncioTestCase):
             success, _msg = await self.service.execute(site, plan, progress=progress_mock)
             self.assertTrue(success)
             execute_mock.assert_called_once_with(["test.com"], progress_mock)
+
+    async def test_execute_reports_lock_contention_but_propagates_unrelated_runtime_errors(self) -> None:
+        site = Site(domain="test.com", enabled=True)
+        plan = CertificateRenewalCapability(
+            mode="restart_repair",
+            reason="local_artifact_missing",
+            requires_confirmation=False,
+            scope_name="test.com",
+            scope_type="domain",
+            wait_domains=("test.com",),
+        )
+
+        with (
+            patch.object(self.service, "build_plan", new=AsyncMock(return_value=plan)),
+            patch(
+                "app.services.renewal.renewal_file_lock",
+                side_effect=RenewalLockError("Certificate renewal is already running for test.com."),
+            ),
+        ):
+            success, message = await self.service.execute(site, plan)
+        self.assertFalse(success)
+        self.assertEqual(message, "Certificate renewal is already running for test.com.")
+
+        # Any other RuntimeError is an unexpected failure and must reach the caller's
+        # exception handling instead of being shown to the user as a renewal result.
+        with (
+            patch.object(self.service, "build_plan", new=AsyncMock(return_value=plan)),
+            patch.object(self.service, "_execute_restart_repair", new=AsyncMock(side_effect=RuntimeError("internal"))),
+            patch("app.services.renewal.renewal_file_lock"),
+            self.assertRaisesRegex(RuntimeError, "internal"),
+        ):
+            await self.service.execute(site, plan)
 
     async def test_execute_progress_callback_failure_is_non_fatal(self) -> None:
         site = Site(domain="test.com", enabled=True)
