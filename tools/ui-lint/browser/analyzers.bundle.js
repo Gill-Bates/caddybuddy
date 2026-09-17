@@ -495,10 +495,15 @@
             && Boolean(el.closest('.ssllabs-filterbar'))
         );
         const chipRemoveMinSize = numberConstant(constants.CHIP_REMOVE_CLICK_TARGET_MIN_SIZE_PX, minSize);
+        // The editor toolbar is compact exactly where app.css switches it; its own
+        // size contract is enforced by editorToolbarAnalyzer.
+        const editorToolsCompact = !window.matchMedia(String(constants.TABLE_TOUCH_SIZING_MEDIA_QUERY || '(max-width: 1199.98px), (hover: none), (pointer: coarse)')).matches;
+        const editorToolMinSize = numberConstant(constants.EDITOR_TOOL_SIZE_PX, minSize);
         const requiredTargetSize = (el) => {
             if (isDenseManagementTableTarget(el) || isDenseManagementToolbarTarget(el)) {
                 return denseTableMinSize;
             }
+            if (editorToolsCompact && el.matches('.maintenance-editor__tool')) return editorToolMinSize;
             if (el.matches('.tag-input__remove')) return chipRemoveMinSize;
             return minSize;
         };
@@ -2099,6 +2104,54 @@
         };
     }
 
+    // Maintenance page editor toolbar (Settings -> General): every tool is the
+    // same square (compact with a precise pointer on wide screens, 44px
+    // otherwise), and each tool group sits on a single line so wrapping never
+    // strands part of a group.
+    function editorToolbarAnalyzer(constants = {}, scope = '') {
+        const fallback = { present: false, touchSized: false, toolSizeMismatches: [], splitGroups: [] };
+        const toolbar = scope === 'settings' ? document.querySelector('[data-maintenance-editor-toolbar]') : null;
+        if (!toolbar || !isVisible(toolbar)) {
+            return { editorToolbar: fallback };
+        }
+
+        const tolerance = Number(constants.TABLE_RHYTHM_TOLERANCE_PX ?? 1);
+        const touchSized = window.matchMedia(String(constants.TABLE_TOUCH_SIZING_MEDIA_QUERY || '(max-width: 1199.98px), (hover: none), (pointer: coarse)')).matches;
+        const expected = touchSized
+            ? Number(constants.CLICK_TARGET_MIN_SIZE_PX ?? 44)
+            : Number(constants.EDITOR_TOOL_SIZE_PX ?? 36);
+        const off = (actual, target) => Math.abs(actual - target) > tolerance;
+        const describe = (el) => ({
+            tag: el.tagName,
+            className: typeof el.className === 'string' ? el.className.slice(0, 120) : '',
+            text: compactText(el.getAttribute('aria-label') || el.textContent),
+        });
+
+        const toolSizeMismatches = Array.from(toolbar.querySelectorAll('.maintenance-editor__tool'))
+            .filter((el) => isVisible(el))
+            .map((el) => ({ el, rect: rectOf(el) }))
+            .filter(({ rect }) => off(rect.width, expected) || off(rect.height, expected))
+            .slice(0, 20)
+            .map(({ el, rect }) => ({
+                ...describe(el),
+                width: roundTo(rect.width, 2),
+                height: roundTo(rect.height, 2),
+                expected,
+            }));
+
+        const splitGroups = Array.from(toolbar.querySelectorAll('.maintenance-editor__group'))
+            .map((group) => ({ group, tops: Array.from(group.children).filter((el) => isVisible(el)).map((el) => rectOf(el).top) }))
+            .filter(({ tops }) => tops.length > 1 && Math.max(...tops) - Math.min(...tops) > tolerance)
+            .slice(0, 20)
+            .map(({ group, tops }) => ({
+                ...describe(group),
+                text: compactText(Array.from(group.children).map((el) => el.getAttribute('aria-label') || '').join(' ')),
+                lineSpreadPx: roundTo(Math.max(...tops) - Math.min(...tops), 2),
+            }));
+
+        return { editorToolbar: { present: true, touchSized, toolSizeMismatches, splitGroups } };
+    }
+
     // On mobile the SSL Labs domains table must collapse into standalone site
     // cards (mirroring the Sites list): each site row renders as a block-level
     // tile with a border + corner radius, and the table head is hidden. This
@@ -2315,6 +2368,7 @@
         const sitesFormControlHeights = sitesFormControlHeightAnalyzer(constants, scope);
         const managementTableDensity = managementTableDensityAnalyzer(constants, scope);
         const tableRhythm = tableRhythmAnalyzer(constants, scope);
+        const editorToolbar = editorToolbarAnalyzer(constants, scope);
         const ssllabsMobileCardLayout = ssllabsMobileCardLayoutAnalyzer(constants, scope);
         const mobileSpacing = mobileSpacingAnalyzer(constants);
         const state = stateAnalyzer();
@@ -2346,6 +2400,7 @@
             ...sitesFormControlHeights,
             ...managementTableDensity,
             ...tableRhythm,
+            ...editorToolbar,
             ...ssllabsMobileCardLayout,
             ...modalTheme,
             ...mobileSpacing,

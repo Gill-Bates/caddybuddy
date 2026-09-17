@@ -92,6 +92,31 @@ test('summarizeFindings reports shared table rhythm drift as hard findings and s
     assert.equal(output.tableCellPadding, 1);
 });
 
+test('summarizeFindings reports maintenance editor toolbar drift as hard findings and serializes details', () => {
+    const tool = { tag: 'BUTTON', className: 'btn btn-sm maintenance-editor__tool', text: 'Heading 1', width: 42, height: 36, expected: 36 };
+    const group = { tag: 'DIV', className: 'maintenance-editor__group', text: 'Insert link Clear formatting', lineSpreadPx: 44 };
+    const editorToolbar = { present: true, touchSized: false, toolSizeMismatches: [tool], splitGroups: [group] };
+    const result = summarizeFindings({
+        name: 'laptop-settings-light',
+        metrics: { editorToolbar },
+        diff: { ratio: 0, sizeMismatch: false },
+        network: {},
+    });
+
+    assert.ok(result.hardFindings.includes('editorToolSizes=1'));
+    assert.ok(result.hardFindings.includes('editorToolGroupsSplit=1'));
+
+    const output = serializeResultForOutput({
+        ...result,
+        metrics: { horizontalOverflow: { offenders: [] }, spacing: {}, layoutShift: { value: 0 }, editorToolbar },
+    }, { summaryPath: '/tmp/ui-lint-summary.json', visualRegressionEnabled: false });
+
+    assert.equal(output.editorToolSizes, 1);
+    assert.deepEqual(output.editorToolSizeDetails, [tool]);
+    assert.equal(output.editorToolGroupsSplit, 1);
+    assert.deepEqual(output.editorToolGroupsSplitDetails, [group]);
+});
+
 test('summarizeFindings treats About page value font-size drift as a hard finding', () => {
     const result = summarizeFindings({
         name: 'desktop-about-light',

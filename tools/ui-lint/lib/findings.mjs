@@ -202,6 +202,12 @@ export function summarizeFindings(result) {
         actionGapMismatches: [],
         cellPaddingMismatches: [],
     });
+    ensureObject(metrics, 'editorToolbar', {
+        present: false,
+        touchSized: false,
+        toolSizeMismatches: [],
+        splitGroups: [],
+    });
     ensureObject(metrics, 'ssllabsMobileCardLayout', {
         present: false,
         rowCount: 0,
@@ -316,6 +322,8 @@ export function summarizeFindings(result) {
     for (const key of ['controlSizeMismatches', 'toolbarHeightMismatches', 'actionGapMismatches', 'cellPaddingMismatches']) {
         ensureArray(metrics.tableRhythm, key);
     }
+    ensureArray(metrics.editorToolbar, 'toolSizeMismatches');
+    ensureArray(metrics.editorToolbar, 'splitGroups');
     ensureArray(metrics.ssllabsMobileCardLayout, 'issues');
 
     ensureObject(report, 'diff', { ratio: 0, sizeMismatch: false });
@@ -505,6 +513,9 @@ export function summarizeFindings(result) {
     if (tableRhythm.toolbarHeightMismatches.length) pushHard(`tableToolbarHeights=${tableRhythm.toolbarHeightMismatches.length}`);
     if (tableRhythm.actionGapMismatches.length) pushHard(`tableActionGaps=${tableRhythm.actionGapMismatches.length}`);
     if (tableRhythm.cellPaddingMismatches.length) pushHard(`tableCellPadding=${tableRhythm.cellPaddingMismatches.length}`);
+    const { editorToolbar } = metrics;
+    if (editorToolbar.toolSizeMismatches.length) pushHard(`editorToolSizes=${editorToolbar.toolSizeMismatches.length}`);
+    if (editorToolbar.splitGroups.length) pushHard(`editorToolGroupsSplit=${editorToolbar.splitGroups.length}`);
     if (
         isMobile
         && metrics.ssllabsMobileCardLayout.present

@@ -1901,8 +1901,9 @@ body.app-body--menu-open .app-sidebar {
 }
 
 /* Every tool is the same square, whatever its label or icon. Compact on wide
-   screens with a precise pointer; touch keeps the 44px target. */
-.maintenance-editor__tool {
+   screens with a precise pointer; touch keeps the 44px target. Qualified with
+   .btn so the later global .btn sizing cannot override it. */
+.btn.maintenance-editor__tool {
     --cb-editor-tool-size: 2.25rem;
     inline-size: var(--cb-editor-tool-size);
     min-inline-size: var(--cb-editor-tool-size);
@@ -1914,7 +1915,7 @@ body.app-body--menu-open .app-sidebar {
 }
 
 @media (max-width: 1199.98px), (hover: none), (pointer: coarse) {
-    .maintenance-editor__tool {
+    .btn.maintenance-editor__tool {
         --cb-editor-tool-size: 2.75rem;
     }
 }

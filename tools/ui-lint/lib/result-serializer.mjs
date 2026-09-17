@@ -104,6 +104,10 @@ export function serializeResultForOutput(result, { summaryPath, visualRegression
         tableActionGapDetails: sanitizeDetails(metrics.tableRhythm?.actionGapMismatches),
         tableCellPadding: countItems(metrics.tableRhythm?.cellPaddingMismatches),
         tableCellPaddingDetails: sanitizeDetails(metrics.tableRhythm?.cellPaddingMismatches),
+        editorToolSizes: countItems(metrics.editorToolbar?.toolSizeMismatches),
+        editorToolSizeDetails: sanitizeDetails(metrics.editorToolbar?.toolSizeMismatches),
+        editorToolGroupsSplit: countItems(metrics.editorToolbar?.splitGroups),
+        editorToolGroupsSplitDetails: sanitizeDetails(metrics.editorToolbar?.splitGroups),
         ssllabsMobileCardLayout: metrics.ssllabsMobileCardLayout?.present ? 1 : 0,
         ssllabsMobileCardRowCount: metrics.ssllabsMobileCardLayout?.rowCount ?? null,
         ssllabsMobileCardTheadHidden: metrics.ssllabsMobileCardLayout?.present

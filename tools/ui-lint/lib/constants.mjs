@@ -127,6 +127,11 @@ export const TABLE_ACTION_GAP_TOUCH_PX = 8;
 // Read-only About tables reuse --cb-table-cell-padding-block (0.375rem).
 export const TABLE_CELL_PADDING_BLOCK_PX = 6;
 export const TABLE_RHYTHM_TOLERANCE_PX = 1;
+// Maintenance page editor toolbar (Settings -> General): every tool is the same
+// square, compact with a precise pointer on wide screens (switching on
+// TABLE_TOUCH_SIZING_MEDIA_QUERY like the tables) and CLICK_TARGET_MIN_SIZE_PX
+// otherwise. Tool groups wrap as a whole and never split across lines.
+export const EDITOR_TOOL_SIZE_PX = 36;
 export const SSLLABS_DOMAIN_CARD_SUMMARY_HEIGHT_MAX_PX = 56;
 // Compact desktop controls plus the card divider/padding keep the filter row
 // comfortably below 60px. Touch contexts retain 44px controls.
@@ -188,6 +193,7 @@ export const UI_EVAL_CONSTANTS = Object.freeze({
   TABLE_ACTION_GAP_TOUCH_PX,
   TABLE_CELL_PADDING_BLOCK_PX,
   TABLE_RHYTHM_TOLERANCE_PX,
+  EDITOR_TOOL_SIZE_PX,
   SSLLABS_DOMAIN_CARD_SUMMARY_HEIGHT_MAX_PX,
   SSLLABS_FILTERBAR_HEIGHT_MAX_PX,
   SSLLABS_MOBILE_CARD_MIN_BORDER_RADIUS_PX,
