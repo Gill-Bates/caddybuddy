@@ -320,12 +320,6 @@ export async function stabilizeVisualSnapshot(page, config = getVisualRegression
             }
         });
 
-        try {
-            document.querySelectorAll(':hover').forEach((el) => {
-                el.blur?.();
-            });
-        } catch { }
-
         document.activeElement?.blur?.();
         window.scrollTo(0, 0);
     }, {

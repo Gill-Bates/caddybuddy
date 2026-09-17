@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 import unittest
 from pathlib import Path
@@ -14,40 +13,23 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app.config.settings import get_settings
+from tests.env_overrides import ModuleEnv
 
-_ENV_OVERRIDES = {
-    "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CB_ADMIN_PASSWORD": "UnitTestPassword-123A",
-    "CADDYBUDDY_ADMIN_PASSWORD": "UnitTestPassword-123A",
-}
-_ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}
-
-for key, value in _ENV_OVERRIDES.items():
-    os.environ[key] = value
-
-get_settings.cache_clear()
+_ENV = ModuleEnv()
 
 from fastapi.testclient import TestClient
 
 from app.routers.ui.caddyfile import router as caddyfile_router
-from tests.ui_test_app import build_ui_test_app
+from tests.ui_test_app import build_ui_test_app, extract_csrf_token
 
 
 def tearDownModule() -> None:
-    for key, original_value in _ORIGINAL_ENV.items():
-        if original_value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = original_value
-    get_settings.cache_clear()
+    _ENV.restore()
 
 
 class UICaddyfileTests(unittest.TestCase):
     def setUp(self) -> None:
-        for key, value in _ENV_OVERRIDES.items():
-            os.environ[key] = value
-        get_settings.cache_clear()
+        _ENV.apply()
         self.onboarding_patcher = patch(
             "app.routers.ui._common.get_onboarding_state",
             new=AsyncMock(return_value=SimpleNamespace(status="completed")),
@@ -98,13 +80,6 @@ class UICaddyfileTests(unittest.TestCase):
             raise AssertionError(f"CSP nonce missing from header: {header}")
         nonce = match.group(1)
         self.assertIn(f'<meta name="csp-nonce" content="{nonce}">', response.text)
-
-    @staticmethod
-    def _extract_csrf_token(html: str) -> str:
-        match = re.search(r'name="csrf_token" value="([^"]+)"', html)
-        if match is None:
-            raise AssertionError("csrf_token input not found in caddyfile page")
-        return match.group(1)
 
     def test_caddyfile_desktop_css_keeps_card_shadow_inside_safe_gutter(self) -> None:
         css_path = Path(__file__).resolve().parents[1] / "app/static/css/app.css"
@@ -279,7 +254,7 @@ class UICaddyfileTests(unittest.TestCase):
 
         with (
             patch("app.routers.ui.caddyfile.require_user", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.caddyfile.validated_form", new=AsyncMock(return_value={"caddyfile": "example.com { respond \"ok\" }"})),
+            patch("app.routers.ui.caddyfile.validated_csrf_form", new=AsyncMock(return_value={"caddyfile": "example.com { respond \"ok\" }"})),
             patch("app.middleware.csrf.validate_csrf_token"),
             TestClient(app) as client,
         ):
@@ -309,7 +284,7 @@ class UICaddyfileTests(unittest.TestCase):
             TestClient(app) as client,
         ):
             page = client.get("/caddyfile")
-            csrf_token = self._extract_csrf_token(page.text)
+            csrf_token = extract_csrf_token(page.text)
             response = client.post(
                 "/caddyfile/onboard",
                 data={"csrf_token": csrf_token},
@@ -343,7 +318,7 @@ class UICaddyfileTests(unittest.TestCase):
             TestClient(app) as client,
         ):
             page = client.get("/caddyfile")
-            csrf_token = self._extract_csrf_token(page.text)
+            csrf_token = extract_csrf_token(page.text)
             response = client.post(
                 "/caddyfile/onboard",
                 data={"csrf_token": csrf_token},
@@ -377,7 +352,7 @@ class UICaddyfileTests(unittest.TestCase):
             TestClient(app) as client,
         ):
             page = client.get("/caddyfile")
-            csrf_token = self._extract_csrf_token(page.text)
+            csrf_token = extract_csrf_token(page.text)
             response = client.post(
                 "/caddyfile/onboard",
                 data={"csrf_token": csrf_token},

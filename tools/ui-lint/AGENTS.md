@@ -10,15 +10,12 @@ Playwright-based UI audit tool for CaddyBuddy: accessibility checks (axe-core), 
 | File | Description |
 |------|-------------|
 | `run-ui-lint.mjs` | Main entry point (`npm run audit`); orchestrates the full audit run across pages/browsers and produces `ui-lint-summary.json`. |
-| `playwright.config.mjs` | Playwright project/browser configuration (chromium/firefox/webkit + mobile projects referenced in `package.json` scripts). |
-| `test-click.mjs` | Small standalone click/interaction script. |
-| `visual-regression.mjs` | Thin entry point delegating to `visual/visual-regression.mjs`. |
 | `package.json` | Audit/browser-install scripts and dependency declarations. Dependencies use unpinned `"latest"`, so refreshes can change behavior and must be reviewed with the lockfile diff. |
 
 ## Subdirectories
 | Directory | Purpose |
 |-----------|---------|
-| `browser/` | Code injected into the page context during audits: `analyzers/accessibility.js` (axe-core-based accessibility analyzer), `analyzers.bundle.js` (bundled analyzers for injection), `utils/dom-cache.js` (DOM query caching for analyzer performance). |
+| `browser/` | Code injected into the page context during audits: `analyzers.bundle.js`, a hand-maintained (not built) bundle of all analyzers. |
 | `lib/` | Node-side support library, including `node:test` unit tests in `*.test.mjs` and `totp.mjs` (TOTP code generation for logging into 2FA-enabled audit accounts). |
 | `visual/` | Visual regression implementation and its `node:test` coverage; generated comparison output lives under the ignored `test-results/` tree. |
 | `node_modules/` | npm dependencies (gitignored) — not documented. |
@@ -33,9 +30,8 @@ Playwright-based UI audit tool for CaddyBuddy: accessibility checks (axe-core), 
 - Dependencies are declared as `"latest"` in `package.json` — if an audit starts failing unexpectedly after installation, check the lockfile and upstream changes before assuming an app regression.
 
 ### Testing Requirements
-- Run `node --test lib/*.test.mjs visual/*.test.mjs` for the tracked Node unit tests.
+- Run `npm test` (`node --test lib/*.test.mjs visual/*.test.mjs`) for the tracked Node unit tests.
 - Run `npm run audit` against a running app for a full lint/accessibility pass; use `npm run audit:visual` to include Chromium visual regression.
-- The Playwright `npm test` and mobile scripts expect `tests/**/*.spec.*`, which are not currently tracked; do not use them as the default verification command until that suite exists in the repository.
 
 ### Common Patterns
 - ESM (`.mjs`) throughout; browser-context code kept physically separate (`browser/`) from Node-context orchestration (`lib/`, root).

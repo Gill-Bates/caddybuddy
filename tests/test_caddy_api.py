@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import os
 import unittest
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -15,27 +14,24 @@ from unittest.mock import AsyncMock, patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-_ENV_OVERRIDES = {
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CADDYBUDDY_ADMIN_PASSWORD": "unit-test-password",
-}
-_ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}
+from tests.env_overrides import ModuleEnv
 
-for key, value in _ENV_OVERRIDES.items():
-    os.environ[key] = value
+_ENV = ModuleEnv(
+    {
+        "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
+        "CADDYBUDDY_ADMIN_PASSWORD": "unit-test-password",
+    }
+)
 
 from app.config.limiter import limiter
 from app.database.session import get_db_session
+from app.dependencies.web import require_admin_api_user
 from app.routers import caddy_api
 from app.services.caddyfile_manager import CaddyOnboardingResult, CaddySyncResult
 
 
 def tearDownModule() -> None:
-    for key, original_value in _ORIGINAL_ENV.items():
-        if original_value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = original_value
+    _ENV.restore()
 
 
 def _build_app(session: object) -> FastAPI:
@@ -50,7 +46,7 @@ def _build_app(session: object) -> FastAPI:
         return SimpleNamespace(is_admin=True)
 
     app.dependency_overrides[get_db_session] = _get_session_override
-    app.dependency_overrides[caddy_api._require_admin_api_user] = _require_admin_override
+    app.dependency_overrides[require_admin_api_user] = _require_admin_override
     return app
 
 

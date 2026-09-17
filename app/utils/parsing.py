@@ -57,14 +57,6 @@ def parse_json_object(raw_value: str, field_name: str) -> dict[str, Any]:
     return parsed
 
 
-def pretty_json(value: dict[str, Any] | list[Any]) -> str:
-    """Render a JSON-compatible value as indented, deterministic JSON."""
-    try:
-        return json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False)
-    except TypeError as exc:
-        raise ValueError("value must be JSON-compatible.") from exc
-
-
 def parse_expires_days(
     raw_value: str | None,
     *,

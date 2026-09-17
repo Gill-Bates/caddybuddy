@@ -19,7 +19,7 @@ Builds the CodeMirror 6 editor used by the Caddyfile editor page (`app/routers/u
 - This package is pinned (exact versions in `package.json`, unlike `ui-lint/` which uses `"latest"`) — bump versions deliberately, not incidentally.
 
 ### Testing Requirements
-- Run `npm run build`, then run `.venv/bin/python -m pytest tests/test_ui_caddyfile.py` from the repository root. This package has no tracked standalone test script.
+- Run `npm run build`, then run `.venv/bin/python -m pytest tests/test_ui_caddyfile.py` from the repository root. This package has no test script of its own; the bundled brace scanner (`app/static/js/caddy-editor-braces.js`) is covered by `tests/test_caddy_editor_braces.mjs` (`node --test tests/test_caddy_editor_braces.mjs`).
 
 ## Dependencies
 

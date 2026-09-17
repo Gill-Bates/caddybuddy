@@ -46,11 +46,12 @@ from app.utils.caddyfile import extract_site_handler_from_directives
 from app.utils.domains import split_domain_names
 
 from ._common import (
+    parse_checkbox,
     parse_int,
     require_admin,
     require_onboarding_completed,
     require_user,
-    validated_form,
+    validated_csrf_form,
 )
 
 logger = logging.getLogger(__name__)
@@ -128,12 +129,6 @@ def _pick_worst_certificate_info(infos: list[CertificateInfo | None]) -> Certifi
             selected = info
             selected_priority = priority
     return selected
-
-
-async def _invalidate_certificate_cache_for_domains(domains: list[str]) -> None:
-    unique_domains = sorted({domain.lower().strip() for domain in domains if domain and domain.strip()})
-    for domain in unique_domains:
-        await invalidate_certificate_cache(domain)
 
 
 async def _has_local_certificate(domain: str, certificates_path: Path | None) -> tuple[bool, bool]:
@@ -302,13 +297,13 @@ async def save_site(
     if current_user is None:
         return redirect_to("/")
 
-    form = await validated_form(request)
+    form = await validated_csrf_form(request)
 
     site_id_raw = str(form.get("site_id", "")).strip()
     site_name = str(form.get("site_name", "")).strip()
     domain = str(form.get("domain", "")).strip()
     caddy_directives = str(form.get("caddy_directives", "")).strip()
-    enabled = str(form.get("enabled", "")).strip().lower() in {"1", "true", "on", "yes"}
+    enabled = parse_checkbox(form.get("enabled"))
 
     try:
         payload = SiteCreateRequest(
@@ -463,7 +458,7 @@ async def delete_site(
     if current_user is None:
         return redirect_to("/")
 
-    await validated_form(request)
+    await validated_csrf_form(request)
 
     site = await site_repository.get_by_id(session, site_id)
     if site is None:
@@ -518,7 +513,7 @@ async def renew_certificate(
     if current_user is None:
         return redirect_to("/")
 
-    form = await validated_form(request)
+    form = await validated_csrf_form(request)
 
     site = await site_repository.get_by_id(session, site_id)
     if site is None:
@@ -645,13 +640,13 @@ async def validate_site(
     if current_user.role != "admin":
         return JSONResponse({"detail": "Administrator access is required."}, status_code=403)
 
-    form = await validated_form(request)
+    form = await validated_csrf_form(request)
     try:
         payload = SiteCreateRequest(
             site_name=str(form.get("site_name", "")).strip(),
             domain=str(form.get("domain", "")).strip(),
             caddy_directives=str(form.get("caddy_directives", "")).strip(),
-            enabled=str(form.get("enabled", "")).strip().lower() in {"1", "true", "on", "yes"},
+            enabled=parse_checkbox(form.get("enabled")),
         )
     except ValidationError as exc:
         return JSONResponse({"valid": False, "message": exc.errors()[0]["msg"]})

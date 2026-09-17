@@ -23,7 +23,7 @@ CaddyBuddy is a focused, server-rendered web control plane for administering a s
 | `app/` | The FastAPI application package — the only Python package actually shipped (see `pyproject.toml`). See `app/AGENTS.md`. |
 | `docker/` | Container image (Dockerfile), entrypoint script, and Compose example. See `docker/AGENTS.md`. |
 | `docs/` | MkDocs Material documentation source, published via GitHub Pages. See `docs/AGENTS.md`. |
-| `tests/` | Pytest suite (plus a couple of standalone `.mjs` frontend-logic tests) mirroring `app/` module names. See `tests/AGENTS.md`. |
+| `tests/` | Pytest suite (plus a few standalone `.mjs` frontend-logic tests) mirroring `app/` module names. See `tests/AGENTS.md`. |
 | `tools/` | Developer tooling: CodeMirror asset bundler and the Playwright-based UI lint/visual-regression harness. See `tools/AGENTS.md`. |
 
 Not documented here (generated, runtime, or tool-local state, all gitignored): `site/` (MkDocs build output), `data/` (runtime SQLite DB + lock files), `.venv*`, `node_modules/`, `.omc/`, `.omx/`, `.claude/`, `.codex/`, `__pycache__/`.
@@ -40,7 +40,7 @@ Not documented here (generated, runtime, or tool-local state, all gitignored): `
 - Use the repository-local environment for Python commands.
 - Python: `.venv/bin/python -m pytest` from the repo root; tests in `tests/` generally follow the source module or behavior they cover.
 - Lint: `.venv/bin/ruff check .`.
-- Frontend/UI: `tools/ui-lint/` runs Playwright-based accessibility, visual-regression, and lint checks against the running app; a couple of narrow `.mjs` logic tests live directly in `tests/`.
+- Frontend/UI: `tools/ui-lint/` runs Playwright-based accessibility, visual-regression, and lint checks against the running app; narrow `.mjs` logic tests run with `node --test tests/*.mjs` from the repo root.
 
 ### Common Patterns
 - Preferred layering: `routers/` orchestrate HTTP concerns, `services/` own non-trivial business workflows, `repositories/` own ordinary aggregate access, and `models/` define persistence. Existing routers may call repositories for simple lookups, and transaction-bound services may issue tightly scoped ORM operations; follow the local guide before adding a new exception. `schemas/` holds shared Pydantic API contracts.

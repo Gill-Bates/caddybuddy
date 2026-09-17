@@ -6,51 +6,35 @@
 
 from __future__ import annotations
 
-import os
-import re
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, patch
 
 from app.config.limiter import limiter
 from app.config.settings import get_settings
+from tests.env_overrides import ModuleEnv
 
-_ENV_OVERRIDES = {
-    "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CB_ADMIN_PASSWORD": "UnitTestPassword-123A",
-    "CADDYBUDDY_ADMIN_PASSWORD": "UnitTestPassword-123A",
-}
-_ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}
-
-for key, value in _ENV_OVERRIDES.items():
-    os.environ[key] = value
-
-get_settings.cache_clear()
+_ENV = ModuleEnv()
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.database.session import get_db_session
 from app.routers.ui.settings import router as settings_router
-from tests.ui_test_app import build_ui_test_app
+from app.services.passkeys import MAX_PASSKEYS_PER_USER
+from app.services.runtime_settings import SSLLABS_RETENTION_DEFAULT_DAYS
+from tests.ui_test_app import build_ui_test_app, extract_csrf_token
 
 
 def tearDownModule() -> None:
-    for key, original_value in _ORIGINAL_ENV.items():
-        if original_value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = original_value
-    get_settings.cache_clear()
+    _ENV.restore()
 
 
 class UISettingsTests(unittest.TestCase):
     def setUp(self) -> None:
-        for key, value in _ENV_OVERRIDES.items():
-            os.environ[key] = value
-        get_settings.cache_clear()
+        _ENV.apply()
         self.onboarding_patcher = patch(
             "app.routers.ui._common.get_onboarding_state",
             new=AsyncMock(return_value=SimpleNamespace(status="completed")),
@@ -63,22 +47,28 @@ class UISettingsTests(unittest.TestCase):
             new=AsyncMock(return_value=[]),
         )
         self.passkey_list = self.passkey_list_patcher.start()
+        self.retention_patcher = patch(
+            "app.routers.ui.settings.get_ssllabs_history_retention_days",
+            new=AsyncMock(return_value=SSLLABS_RETENTION_DEFAULT_DAYS),
+        )
+        self.retention_patcher.start()
+        # Saving an SSL Labs email starts the real scheduler, which would open the real database.
+        self.ssllabs_startup_patcher = patch(
+            "app.routers.ui.settings.ssllabs_service.startup",
+            new=AsyncMock(),
+        )
+        self.ssllabs_startup_patcher.start()
 
     def tearDown(self) -> None:
         self.onboarding_patcher.stop()
         self.passkey_list_patcher.stop()
+        self.retention_patcher.stop()
+        self.ssllabs_startup_patcher.stop()
         get_settings.cache_clear()
 
     @staticmethod
     async def _session_override():
         yield AsyncMock()
-
-    @staticmethod
-    def _extract_csrf_token(html: str) -> str:
-        match = re.search(r'name="csrf_token" value="([^"]+)"', html)
-        if match is None:
-            raise AssertionError("csrf_token input not found in settings page")
-        return match.group(1)
 
     def _build_app(self):
         return build_ui_test_app(
@@ -109,6 +99,86 @@ class UISettingsTests(unittest.TestCase):
         self.assertIn('id="settingsSslLabsTab"', template)
         self.assertIn('class="tab-content" id="settingsTabContent"', template)
         self.assertIn(".settings-tabs .nav-link.active {", css)
+
+    def test_settings_page_renders_passkey_add_modal(self) -> None:
+        app = self._build_app()
+        current_user = SimpleNamespace(username="admin", role="admin")
+
+        with (
+            patch("app.routers.ui.settings.require_admin", new=AsyncMock(return_value=current_user)),
+            patch(
+                "app.routers.ui.settings.get_caddy_config",
+                new=AsyncMock(
+                    return_value=SimpleNamespace(
+                        admin_url="http://localhost:2019",
+                        caddyfile_path_str="/app/Caddyfile",
+                    )
+                ),
+            ),
+            patch("app.routers.ui.settings.get_rate_limit_enabled", new=AsyncMock(return_value=True)),
+            patch("app.routers.ui.settings.get_ssllabs_email", new=AsyncMock(return_value=None)),
+            TestClient(app) as client,
+        ):
+            response = client.get("/settings")
+
+        self.assertEqual(response.status_code, 200)
+        # The modal markup, its trigger, and the register button must all be
+        # present exactly once and in document order (trigger before modal).
+        self.assertEqual(response.text.count('id="addPasskeyModal"'), 1)
+        self.assertEqual(response.text.count("data-passkey-register-button"), 1)
+        self.assertIn('data-bs-target="#addPasskeyModal"', response.text)
+        self.assertLess(
+            response.text.index('data-bs-target="#addPasskeyModal"'),
+            response.text.index('id="addPasskeyModal"'),
+        )
+        # Below the limit, the trigger opens the modal instead of being disabled.
+        trigger_start = response.text.index('data-bs-target="#addPasskeyModal"')
+        trigger_tag = response.text[max(0, trigger_start - 200):trigger_start]
+        self.assertNotIn("disabled", trigger_tag[trigger_tag.rindex("<button") :])
+
+    def test_settings_page_disables_passkey_add_trigger_when_limit_reached(self) -> None:
+        app = self._build_app()
+        current_user = SimpleNamespace(username="admin", role="admin")
+        now = datetime.now(UTC)
+        self.passkey_list.return_value = [
+            SimpleNamespace(
+                id=index,
+                device_name=f"Device {index}",
+                transports=None,
+                created_at=now,
+                last_used_at=None,
+            )
+            for index in range(MAX_PASSKEYS_PER_USER)
+        ]
+
+        with (
+            patch("app.routers.ui.settings.require_admin", new=AsyncMock(return_value=current_user)),
+            patch(
+                "app.routers.ui.settings.get_caddy_config",
+                new=AsyncMock(
+                    return_value=SimpleNamespace(
+                        admin_url="http://localhost:2019",
+                        caddyfile_path_str="/app/Caddyfile",
+                    )
+                ),
+            ),
+            patch("app.routers.ui.settings.get_rate_limit_enabled", new=AsyncMock(return_value=True)),
+            patch("app.routers.ui.settings.get_ssllabs_email", new=AsyncMock(return_value=None)),
+            TestClient(app) as client,
+        ):
+            response = client.get("/settings")
+
+        self.assertEqual(response.status_code, 200)
+        # At the limit, the trigger must be disabled and not wired to open the
+        # modal, and the reason must be visible text, not just a title attribute
+        # (title tooltips are unreachable on disabled buttons and on touch).
+        self.assertNotIn('data-bs-target="#addPasskeyModal"', response.text)
+        self.assertIn(
+            f"The maximum of {MAX_PASSKEYS_PER_USER} passkeys is registered. Remove one to add another.",
+            response.text,
+        )
+        self.assertIn('id="passkey-limit-hint"', response.text)
+        self.assertIn('aria-describedby="passkey-limit-hint"', response.text)
 
     def test_passkey_deletion_rejects_an_incorrect_current_password(self) -> None:
         app = self._build_action_app()
@@ -318,7 +388,7 @@ class UISettingsTests(unittest.TestCase):
             TestClient(app) as client,
         ):
             page = client.get("/settings")
-            csrf_token = self._extract_csrf_token(page.text)
+            csrf_token = extract_csrf_token(page.text)
             response = client.post(
                 "/settings/onboarding/restart",
                 data={"csrf_token": csrf_token},
@@ -352,7 +422,7 @@ class UISettingsTests(unittest.TestCase):
             TestClient(app) as client,
         ):
             page = client.get("/settings")
-            csrf_token = self._extract_csrf_token(page.text)
+            csrf_token = extract_csrf_token(page.text)
             response = client.post(
                 "/settings/caddy",
                 data={
@@ -396,7 +466,7 @@ class UISettingsTests(unittest.TestCase):
             TestClient(app) as client,
         ):
             page = client.get("/settings")
-            csrf_token = self._extract_csrf_token(page.text)
+            csrf_token = extract_csrf_token(page.text)
             response = client.post(
                 "/settings/caddy",
                 headers={
@@ -446,7 +516,7 @@ class UISettingsTests(unittest.TestCase):
             try:
                 with TestClient(app) as client:
                     page = client.get("/settings")
-                    csrf_token = self._extract_csrf_token(page.text)
+                    csrf_token = extract_csrf_token(page.text)
                     response = client.post(
                         "/settings/caddy",
                         data={
@@ -504,7 +574,7 @@ class UISettingsTests(unittest.TestCase):
             try:
                 with TestClient(app, raise_server_exceptions=True) as client:
                     page = client.get("/settings")
-                    csrf_token = self._extract_csrf_token(page.text)
+                    csrf_token = extract_csrf_token(page.text)
                     response = client.post(
                         "/settings/caddy",
                         data={
@@ -543,7 +613,7 @@ class UISettingsTests(unittest.TestCase):
             TestClient(app) as client,
         ):
             page = client.get("/settings")
-            csrf_token = self._extract_csrf_token(page.text)
+            csrf_token = extract_csrf_token(page.text)
             response = client.post(
                 "/settings/caddy",
                 data={
@@ -586,7 +656,7 @@ class UISettingsTests(unittest.TestCase):
             TestClient(app) as client,
         ):
             page = client.get("/settings")
-            csrf_token = self._extract_csrf_token(page.text)
+            csrf_token = extract_csrf_token(page.text)
             response = client.post(
                 "/settings/ssllabs",
                 data={
@@ -624,7 +694,7 @@ class UISettingsTests(unittest.TestCase):
             TestClient(app) as client,
         ):
             page = client.get("/settings")
-            csrf_token = self._extract_csrf_token(page.text)
+            csrf_token = extract_csrf_token(page.text)
             response = client.post(
                 "/settings/ssllabs",
                 headers={
@@ -665,7 +735,7 @@ class UISettingsTests(unittest.TestCase):
             TestClient(app) as client,
         ):
             page = client.get("/settings")
-            csrf_token = self._extract_csrf_token(page.text)
+            csrf_token = extract_csrf_token(page.text)
             response = client.post(
                 "/settings/ssllabs",
                 data={
@@ -696,7 +766,7 @@ class UISettingsTests(unittest.TestCase):
             TestClient(app) as client,
         ):
             page = client.get("/settings")
-            csrf_token = self._extract_csrf_token(page.text)
+            csrf_token = extract_csrf_token(page.text)
             response = client.post(
                 "/settings/ssllabs-retention",
                 data={"csrf_token": csrf_token, "retention_days": "90"},
@@ -724,7 +794,7 @@ class UISettingsTests(unittest.TestCase):
             TestClient(app) as client,
         ):
             page = client.get("/settings")
-            csrf_token = self._extract_csrf_token(page.text)
+            csrf_token = extract_csrf_token(page.text)
             response = client.post(
                 "/settings/ssllabs-retention",
                 data={"csrf_token": csrf_token, "retention_days": "abc"},
@@ -759,7 +829,7 @@ class UISettingsTests(unittest.TestCase):
             TestClient(app) as client,
         ):
             page = client.get("/settings")
-            csrf_token = self._extract_csrf_token(page.text)
+            csrf_token = extract_csrf_token(page.text)
             response = client.post(
                 "/settings/change-password",
                 data={

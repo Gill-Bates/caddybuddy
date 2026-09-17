@@ -52,9 +52,18 @@
     --md-default-fg-color--lightest: rgba(238, 242, 244, 0.16);
     --md-typeset-color: #eef2f4;
     --md-typeset-a-color: #5eead4;
+    --md-code-fg-color: #eef2f4;
     --md-code-bg-color: #15222e;
     --md-footer-bg-color: #0b131a;
     --md-footer-bg-color--dark: #080e13;
+    /* Material's own :root fallback pins these to the light defaults for
+       any scheme name other than the built-in "default"/"slate" (see the
+       #only-light/#only-dark comment above); re-declare them here so
+       admonitions and <details> (e.g. the changelog's "Previous
+       versions..." block) aren't stuck with a light background/text in
+       dark mode. */
+    --md-admonition-fg-color: var(--md-default-fg-color);
+    --md-admonition-bg-color: var(--md-default-bg-color);
 }
 
 body {
@@ -107,6 +116,15 @@ body {
     width: 100%;
     height: auto;
     max-width: min(100%, 31rem);
+}
+
+/* Material's built-in #only-light/#only-dark rules target the default
+   scheme names ("default"/"slate"). Since this theme uses custom scheme
+   names ("caddybuddy"/"caddybuddy-dark"), those rules never match and both
+   logo variants render stacked. Re-declare the toggle for our scheme names. */
+[data-md-color-scheme="caddybuddy"] img[src$="#only-dark"],
+[data-md-color-scheme="caddybuddy-dark"] img[src$="#only-light"] {
+    display: none;
 }
 
 .md-typeset .hero__tagline {

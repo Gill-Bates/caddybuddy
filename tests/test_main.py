@@ -6,25 +6,14 @@
 
 from __future__ import annotations
 
-import os
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app.config.settings import get_settings
+from tests.env_overrides import ModuleEnv
 
-_ENV_OVERRIDES = {
-    "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CB_ADMIN_PASSWORD": "UnitTestPassword-123A",
-    "CADDYBUDDY_ADMIN_PASSWORD": "UnitTestPassword-123A",
-}
-_ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}
-
-for key, value in _ENV_OVERRIDES.items():
-    os.environ[key] = value
-
-get_settings.cache_clear()
+_ENV = ModuleEnv()
 
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
@@ -33,12 +22,7 @@ import app.main as main_module
 
 
 def tearDownModule() -> None:
-    for key, original_value in _ORIGINAL_ENV.items():
-        if original_value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = original_value
-    get_settings.cache_clear()
+    _ENV.restore()
 
 
 def _request(
@@ -75,9 +59,7 @@ def _request(
 
 class MainModuleTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        for key, value in _ENV_OVERRIDES.items():
-            os.environ[key] = value
-        get_settings.cache_clear()
+        _ENV.apply()
 
     def tearDown(self) -> None:
         get_settings.cache_clear()
@@ -419,9 +401,7 @@ class MainModuleTests(unittest.IsolatedAsyncioTestCase):
 
 class LifespanTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        for key, value in _ENV_OVERRIDES.items():
-            os.environ[key] = value
-        get_settings.cache_clear()
+        _ENV.apply()
 
     def tearDown(self) -> None:
         get_settings.cache_clear()

@@ -25,11 +25,13 @@ import {
     MOBILE_TOPBAR_CLEARANCE_MIN_PX,
     MOBILE_CARD_HEADING_ALIGNMENT_TOLERANCE_PX,
     DESKTOP_PRIMARY_PANEL_HEIGHT_TOLERANCE_PX,
-    DESKTOP_VIEWPORT_PANEL_FOOTER_GAP_MAX_PX,
+    DESKTOP_VIEWPORT_PANEL_FOOTER_GAP_EXPECTED_PX,
+    DESKTOP_VIEWPORT_PANEL_FOOTER_GAP_TOLERANCE_PX,
     ONBOARDING_WIZARD_ACTIVE_OPACITY_MIN,
     ONBOARDING_WIZARD_INACTIVE_OPACITY_MAX,
-    SITES_TABLE_DENSE_ROW_TARGET_PX,
-    SITES_TABLE_ROW_MAX_HEIGHT_PX,
+    MANAGEMENT_TABLE_ROW_MAX_HEIGHT_PX,
+    MANAGEMENT_TABLE_ROW_TARGET_PX,
+    MANAGEMENT_TABLE_ROW_TOLERANCE_PX,
     SSLLABS_MOBILE_CARD_MIN_BORDER_RADIUS_PX,
     VISUAL_DRIFT_THRESHOLD,
 } from './constants.mjs';
@@ -181,14 +183,24 @@ export function summarizeFindings(result) {
         passesEditorBottomGap: true,
         passesActionsGap: true,
     });
-    ensureObject(metrics, 'sitesTableDensity', {
+    ensureObject(metrics, 'managementTableDensity', {
         present: false,
-        maximumRowHeight: SITES_TABLE_ROW_MAX_HEIGHT_PX,
-        targetRowHeight: SITES_TABLE_DENSE_ROW_TARGET_PX,
+        maximumRowHeight: MANAGEMENT_TABLE_ROW_MAX_HEIGHT_PX,
+        targetRowHeight: MANAGEMENT_TABLE_ROW_TARGET_PX,
+        tolerance: MANAGEMENT_TABLE_ROW_TOLERANCE_PX,
         rowCount: 0,
         medianRowHeightPx: null,
         maxRowHeightPx: null,
+        passesTarget: true,
         oversizedRows: [],
+    });
+    ensureObject(metrics, 'tableRhythm', {
+        present: false,
+        touchSized: false,
+        controlSizeMismatches: [],
+        toolbarHeightMismatches: [],
+        actionGapMismatches: [],
+        cellPaddingMismatches: [],
     });
     ensureObject(metrics, 'ssllabsMobileCardLayout', {
         present: false,
@@ -224,8 +236,9 @@ export function summarizeFindings(result) {
     ensureObject(metrics, 'desktopViewportPanelFooterGap', {
         present: false,
         gapPx: null,
-        maximum: DESKTOP_VIEWPORT_PANEL_FOOTER_GAP_MAX_PX,
-        passesMaximum: true,
+        expected: DESKTOP_VIEWPORT_PANEL_FOOTER_GAP_EXPECTED_PX,
+        tolerance: DESKTOP_VIEWPORT_PANEL_FOOTER_GAP_TOLERANCE_PX,
+        passesTolerance: true,
     });
     ensureObject(metrics, 'onboardingWizardStepDimming', {
         present: false,
@@ -299,7 +312,10 @@ export function summarizeFindings(result) {
     ensureArray(metrics.state, 'missingAriaBusy');
     ensureArray(metrics.horizontalOverflow, 'offenders');
     ensureArray(metrics.cardContainment, 'cardsPastFooter');
-    ensureArray(metrics.sitesTableDensity, 'oversizedRows');
+    ensureArray(metrics.managementTableDensity, 'oversizedRows');
+    for (const key of ['controlSizeMismatches', 'toolbarHeightMismatches', 'actionGapMismatches', 'cellPaddingMismatches']) {
+        ensureArray(metrics.tableRhythm, key);
+    }
     ensureArray(metrics.ssllabsMobileCardLayout, 'issues');
 
     ensureObject(report, 'diff', { ratio: 0, sizeMismatch: false });
@@ -392,6 +408,10 @@ export function summarizeFindings(result) {
     if (metrics.badgeAlignmentIssues?.length) pushHard(`badgeAlignmentIssues=${metrics.badgeAlignmentIssues.length}`);
     if (metrics.clickTargetsTooSmall?.length) pushHard(`clickTargetsTooSmall=${metrics.clickTargetsTooSmall.length}`);
     if (metrics.inputZoomRisks?.length) pushHard(`inputZoomRisks=${metrics.inputZoomRisks.length}`);
+    if (metrics.toastExit?.offenders?.length) pushHard(`toastExitVisible=${metrics.toastExit.offenders.length}`);
+    if (metrics.reducedTransparencyBackdrop?.offenders?.length) {
+        pushHard(`reducedTransparencyBackdrop=${metrics.reducedTransparencyBackdrop.offenders.length}`);
+    }
     if (metrics.pageBackdrop?.present && metrics.pageBackdrop.passesBackdrop === false) {
         pushHard(`pageBackdropHidden=${Number(metrics.pageBackdrop.htmlHasGradient)}/${metrics.pageBackdrop.bodyBackgroundColor || 'none'}`);
     }
@@ -473,11 +493,18 @@ export function summarizeFindings(result) {
             `sitesFormLayout=${metrics.sitesFormLayout.editorBottomGapPx}/${metrics.sitesFormLayout.maximumEditorBottomGap}/${metrics.sitesFormLayout.actionsGapPx}/${metrics.sitesFormLayout.maximumActionsGap}`
         );
     }
-    if (metrics.sitesTableDensity.present && metrics.sitesTableDensity.oversizedRows.length) {
-        pushWarning(
-            `sitesTableRowsTooTall=${metrics.sitesTableDensity.oversizedRows.length}/${metrics.sitesTableDensity.maxRowHeightPx}/${metrics.sitesTableDensity.maximumRowHeight}`
-        );
+    const tableDensity = metrics.managementTableDensity;
+    if (tableDensity.present && tableDensity.passesTarget === false) {
+        pushHard(`tableRowMedianTooTall=${tableDensity.medianRowHeightPx}/${tableDensity.targetRowHeight}`);
     }
+    if (tableDensity.present && tableDensity.oversizedRows.length) {
+        pushWarning(`tableRowsTooTall=${tableDensity.oversizedRows.length}/${tableDensity.maxRowHeightPx}/${tableDensity.maximumRowHeight}`);
+    }
+    const { tableRhythm } = metrics;
+    if (tableRhythm.controlSizeMismatches.length) pushHard(`tableControlSizes=${tableRhythm.controlSizeMismatches.length}`);
+    if (tableRhythm.toolbarHeightMismatches.length) pushHard(`tableToolbarHeights=${tableRhythm.toolbarHeightMismatches.length}`);
+    if (tableRhythm.actionGapMismatches.length) pushHard(`tableActionGaps=${tableRhythm.actionGapMismatches.length}`);
+    if (tableRhythm.cellPaddingMismatches.length) pushHard(`tableCellPadding=${tableRhythm.cellPaddingMismatches.length}`);
     if (
         isMobile
         && metrics.ssllabsMobileCardLayout.present
@@ -508,8 +535,8 @@ export function summarizeFindings(result) {
     if (isDesktop && metrics.desktopPrimaryPanelHeightAlignment.present && metrics.desktopPrimaryPanelHeightAlignment.passesTolerance === false) {
         pushHard(`desktopPrimaryPanelHeightAlignment=${metrics.desktopPrimaryPanelHeightAlignment.delta}/${metrics.desktopPrimaryPanelHeightAlignment.tolerance}`);
     }
-    if (isDesktop && metrics.desktopViewportPanelFooterGap.present && metrics.desktopViewportPanelFooterGap.passesMaximum === false) {
-        pushHard(`desktopViewportPanelFooterGap=${metrics.desktopViewportPanelFooterGap.gapPx}/${metrics.desktopViewportPanelFooterGap.maximum}`);
+    if (isDesktop && metrics.desktopViewportPanelFooterGap.present && metrics.desktopViewportPanelFooterGap.passesTolerance === false) {
+        pushHard(`desktopViewportPanelFooterGap=${metrics.desktopViewportPanelFooterGap.gapPx}/${metrics.desktopViewportPanelFooterGap.expected}/${metrics.desktopViewportPanelFooterGap.tolerance}`);
     }
     if (metrics.cardContainment.cardsPastFooter.length) pushWarning(`cardsPastFooter=${metrics.cardContainment.cardsPastFooter.length}`);
     if (metrics.primaryPanelPadding.present && metrics.primaryPanelPadding.mismatches?.length) {

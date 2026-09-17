@@ -9,7 +9,7 @@ Server-rendered HTML pages — the actual browser-facing application. Each modul
 ## Key Files
 | File | Description |
 |------|-------------|
-| `_common.py` | Shared helpers used across every UI route: `require_onboarding_completed`, `require_user`/`require_admin` (auth gating), `validated_csrf_form` (CSRF-checked form parsing), `safe_next`/`parse_int`, `commit_and_flash` (commit DB changes + push a flash message). |
+| `_common.py` | Shared helpers used across every UI route: `require_onboarding_completed`, `require_user`/`require_admin` (auth gating that returns `None` instead of raising, so pages can flash/redirect), `validated_csrf_form` (CSRF-checked form parsing), `safe_next`/`parse_int`/`parse_checkbox`, `commit_and_flash` (commit DB changes + push a flash message). |
 | `auth.py` | Login, first-admin setup, and logout, including invisible-captcha context (`_captcha_context`) and failure rendering (`_render_login_failure`). OTP-enabled accounts get a session-bound, fingerprinted, 180-second second-factor challenge (`/login/otp`, cancellable via `/login/otp/cancel`); the authenticated session is issued only after the second factor. `/login`, `/login/otp`, and `/setup` are all rate-limited (`5/minute;20/hour`, `5/minute;20/hour`, and `10/minute` respectively). |
 | `dashboard.py` | Home/dashboard page (`home_page`). |
 | `onboarding.py` | First-run onboarding wizard: location/mode/preflight/enable-admin-API/execute steps. |

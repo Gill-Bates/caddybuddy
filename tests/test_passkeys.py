@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
@@ -20,27 +19,24 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.config.limiter import limiter
 from app.config.settings import get_settings
+from tests.env_overrides import ModuleEnv
 
-_ENV_OVERRIDES = {
-    "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
-}
-_ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}
-
-for key, value in _ENV_OVERRIDES.items():
-    os.environ[key] = value
-
-get_settings.cache_clear()
+_ENV = ModuleEnv(
+    {
+        "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
+        "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
+    }
+)
 
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.database.session import get_db_session
+from app.dependencies.web import require_api_user
 from app.models.base import Base
 from app.repositories.passkeys import DuplicatePasskeyError, passkey_repository
 from app.repositories.users import user_repository
-from app.routers.passkeys import _require_api_user
 from app.routers.passkeys import router as passkeys_router
 from app.services.passkeys import (
     PasskeyChallengeError,
@@ -53,12 +49,7 @@ from app.services.passkeys import (
 
 
 def tearDownModule() -> None:
-    for key, original_value in _ORIGINAL_ENV.items():
-        if original_value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = original_value
-    get_settings.cache_clear()
+    _ENV.restore()
 
 
 def _client_data(challenge: object) -> str:
@@ -256,9 +247,7 @@ class PasskeyServiceChallengeTests(unittest.IsolatedAsyncioTestCase):
 
 class PasskeyLoginRouteTests(unittest.TestCase):
     def setUp(self) -> None:
-        for key, value in _ENV_OVERRIDES.items():
-            os.environ[key] = value
-        get_settings.cache_clear()
+        _ENV.apply()
         self._limiter_enabled = limiter.enabled
         limiter.enabled = False
 
@@ -350,7 +339,7 @@ class PasskeyRegistrationRouteTests(unittest.TestCase):
             return user
 
         app.dependency_overrides[get_db_session] = _session_override
-        app.dependency_overrides[_require_api_user] = _user_override
+        app.dependency_overrides[require_api_user] = _user_override
         return app
 
     def test_registration_start_rejects_an_incorrect_current_password(self) -> None:

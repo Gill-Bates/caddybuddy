@@ -576,6 +576,27 @@
 
     // Time a paused toast still gets after the pointer or focus leaves it.
     const TOAST_RESUME_GRACE_MS = 1500;
+    // Upper bound for the slide-out (--cb-duration-slide plus headroom).
+    const TOAST_SLIDE_FALLBACK_MS = 400;
+    // Extra travel past the viewport edge so the toast's box shadow is not left behind.
+    const TOAST_EXIT_MARGIN_PX = 12;
+
+    // Stores how far this toast has to travel to leave the viewport completely
+    // (--cb-toast-exit-x/-y in app.css). It depends on the stack's inset and
+    // padding and, in a bottom-anchored stack, on every toast below this one,
+    // so CSS alone cannot know it. Uses the layout position (offsetLeft/Top),
+    // which the slide transform itself does not affect.
+    App.setToastExitOffset = (toastElement) => {
+        const toastStack = toastElement.offsetParent;
+        if (!(toastStack instanceof HTMLElement)) {
+            return;
+        }
+        const stackRect = toastStack.getBoundingClientRect();
+        const left = stackRect.left + toastElement.offsetLeft;
+        const top = stackRect.top + toastElement.offsetTop;
+        toastElement.style.setProperty("--cb-toast-exit-x", `${Math.ceil(window.innerWidth - left + TOAST_EXIT_MARGIN_PX)}px`);
+        toastElement.style.setProperty("--cb-toast-exit-y", `${Math.ceil(window.innerHeight - top + TOAST_EXIT_MARGIN_PX)}px`);
+    };
 
     App.initializeAutoDismissToasts = () => {
         for (const toastElement of document.querySelectorAll("[data-auto-dismiss-toast]")) {
@@ -590,61 +611,89 @@
                 ? Math.min(delayValue, 60000)
                 : 5000;
 
-            if (window.bootstrap?.Toast) {
-                // Bootstrap's own autohide cannot be paused, so a message can
-                // vanish while it is being read or while the pointer is on its
-                // way to the close button. Drive the countdown here instead and
-                // suspend it while the toast is hovered or holds focus.
-                const toast = window.bootstrap.Toast.getOrCreateInstance(toastElement, { autohide: false });
-                toastElement.addEventListener("hidden.bs.toast", () => toastElement.remove(), { once: true });
-
-                let timerId = 0;
-                let startedAt = 0;
-                let remaining = delay;
-
-                const clearTimer = () => {
-                    if (timerId !== 0) {
-                        window.clearTimeout(timerId);
-                        timerId = 0;
-                    }
-                };
-                const resumeTimer = () => {
-                    clearTimer();
-                    startedAt = Date.now();
-                    timerId = window.setTimeout(() => {
-                        timerId = 0;
-                        toast.hide();
-                    }, remaining);
-                };
-                const pauseTimer = () => {
-                    if (timerId === 0) {
-                        return;
-                    }
-                    clearTimer();
-                    // Always leave a grace period so the toast does not disappear
-                    // the instant the pointer or focus leaves it.
-                    remaining = Math.max(TOAST_RESUME_GRACE_MS, remaining - (Date.now() - startedAt));
-                };
-
-                for (const eventName of ["mouseenter", "focusin"]) {
-                    toastElement.addEventListener(eventName, pauseTimer);
+            // Bootstrap's Toast plugin is deliberately not used: its autohide
+            // cannot be paused, and its .showing class (opacity:0 during both
+            // show and hide) swallows the slide transition in app.css.
+            let leaving = false;
+            const leave = () => {
+                if (leaving) {
+                    return;
                 }
-                for (const eventName of ["mouseleave", "focusout"]) {
-                    toastElement.addEventListener(eventName, resumeTimer);
+                leaving = true;
+                clearTimer();
+                // prefers-reduced-motion turns the slide off (app.css), so there is
+                // no transitionend to wait for and the toast goes right away.
+                if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+                    toastElement.remove();
+                    return;
                 }
-                toastElement.addEventListener("hide.bs.toast", clearTimer, { once: true });
+                toastElement.addEventListener("transitionend", (event) => {
+                    // Ignore transitions bubbling up from the close button.
+                    if (event.target === toastElement && event.propertyName === "transform") {
+                        toastElement.remove();
+                    }
+                });
+                // transitionend does not fire in a hidden tab, so remove the
+                // element after the slide anyway.
+                window.setTimeout(() => toastElement.remove(), TOAST_SLIDE_FALLBACK_MS);
+                // Toasts below may have left since this one entered.
+                App.setToastExitOffset(toastElement);
+                toastElement.classList.remove("is-entered");
+            };
 
-                toast.show();
-                resumeTimer();
-                continue;
+            let timerId = 0;
+            let startedAt = 0;
+            let remaining = delay;
+
+            const clearTimer = () => {
+                if (timerId !== 0) {
+                    window.clearTimeout(timerId);
+                    timerId = 0;
+                }
+            };
+            // Drive the countdown here and suspend it while the toast is hovered
+            // or holds focus, so a message does not vanish while it is being read
+            // or while the pointer is on its way to the close button.
+            const resumeTimer = () => {
+                if (leaving) {
+                    return;
+                }
+                clearTimer();
+                startedAt = Date.now();
+                timerId = window.setTimeout(() => {
+                    timerId = 0;
+                    leave();
+                }, remaining);
+            };
+            const pauseTimer = () => {
+                if (timerId === 0) {
+                    return;
+                }
+                clearTimer();
+                // Always leave a grace period so the toast does not disappear
+                // the instant the pointer or focus leaves it.
+                remaining = Math.max(TOAST_RESUME_GRACE_MS, remaining - (Date.now() - startedAt));
+            };
+
+            for (const eventName of ["mouseenter", "focusin"]) {
+                toastElement.addEventListener(eventName, pauseTimer);
             }
+            for (const eventName of ["mouseleave", "focusout"]) {
+                toastElement.addEventListener(eventName, resumeTimer);
+            }
+            toastElement.querySelector("[data-toast-dismiss]")?.addEventListener("click", leave);
 
             toastElement.classList.add("show");
-            window.setTimeout(() => {
-                toastElement.classList.add("showing");
-                toastElement.classList.remove("show");
-                window.setTimeout(() => toastElement.remove(), 180);
-            }, delay);
+            // Server-rendered toasts already sit at the CSS fallback offset; jump
+            // to the exact one instead of sliding there. The flush also commits
+            // that off-screen start position before entering, otherwise the
+            // browser collapses both states into one style pass and skips the slide.
+            toastElement.style.transition = "none";
+            App.setToastExitOffset(toastElement);
+            void toastElement.offsetWidth;
+            toastElement.style.removeProperty("transition");
+            toastElement.classList.add("is-entered");
+            resumeTimer();
         }
     };
 
@@ -693,11 +742,8 @@
         const closeButton = document.createElement("button");
         closeButton.type = "button";
         closeButton.className = "btn-close btn-close-white";
-        closeButton.setAttribute("data-bs-dismiss", "toast");
+        closeButton.setAttribute("data-toast-dismiss", "");
         closeButton.setAttribute("aria-label", "Close");
-        closeButton.addEventListener("click", () => {
-            toastElement.remove();
-        });
 
         content.append(body, closeButton);
         toastElement.append(content);

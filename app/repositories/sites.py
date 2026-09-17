@@ -147,21 +147,6 @@ class SiteRepository:
         result = await session.execute(statement)
         return result.scalar_one_or_none()
 
-    async def get_by_domain(self, session: AsyncSession, domain: str) -> Site | None:
-        """Get site by a contained domain name. Domain matching is case-insensitive."""
-        normalized_domain = _normalize_domain_name(domain)
-        requested_domains = self._domain_names(normalized_domain)
-        result = await session.execute(select(Site).where(Site.domain == normalized_domain))
-        site = result.scalar_one_or_none()
-        if site is not None:
-            return site
-
-        result = await session.execute(select(Site).order_by(Site.domain.asc()).with_for_update())
-        for site in result.scalars().all():
-            if not requested_domains.isdisjoint(self._domain_names(site.domain)):
-                return site
-        return None
-
     async def domain_exists(
         self,
         session: AsyncSession,

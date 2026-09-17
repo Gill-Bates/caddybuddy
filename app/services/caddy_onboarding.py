@@ -59,7 +59,6 @@ OnboardingMode = Literal[
     "unconfigured",
     "default_config",
 ]
-OnboardingRuntimeLocation = Literal["host", "container"]
 OnboardingStatus = Literal["not_started", "in_progress", "failed", "completed"]
 
 _STATE_KEY = "caddy_onboarding_wizard"
@@ -742,19 +741,6 @@ async def _mark_onboarding_failed(
     state.exclusive_manager_confirmed = exclusive_manager_confirmed
     await save_onboarding_state(session, state)
     return state
-
-
-async def _restore_previous_runtime_settings(
-    session: AsyncSession,
-    *,
-    previous_admin_api_url: str,
-    previous_caddyfile_path: str,
-    previous_email: str | None,
-) -> None:
-    await set_caddy_api_url(session, previous_admin_api_url)
-    await set_caddyfile_path(session, previous_caddyfile_path)
-    await set_ssllabs_email(session, previous_email or "")
-    await session.flush()
 
 
 async def _probe_admin_api(admin_api_url: str) -> tuple[bool, str | None, bool, str | None]:

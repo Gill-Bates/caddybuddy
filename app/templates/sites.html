@@ -129,7 +129,7 @@
                 </div>
                 <div class="sites-list-scroll">
                     <div class="table-responsive">
-                        <table class="table sites-table align-middle mb-0">
+                        <table class="table table--management sites-table align-middle mb-0">
                             <colgroup>
                                 <col class="sites-table__site-col">
                                 <col class="sites-table__domain-col">
@@ -181,21 +181,28 @@
                                             data-site-certificate-domain="{{ primary_domain or '' }}"
                                             data-site-certificate-domains='{{ site_domains | tojson }}'>
                                             {% if site_cert and site_cert.exists %}
+                                            {% set status_label = "Valid" if site_cert.valid else "Expired" %}
+                                            {% set has_days_pill = site_cert.days_remaining is not none and
+                                            site_cert.days_remaining > 0 %}
+                                            {# The issue date stays visible as its own line: a hover-only hint
+                                            is unreachable on touch devices. #}
                                             <div class="site-cert__summary {% if site_cert.valid %}site-cert__summary--valid{% else %}site-cert__summary--expired{% endif %}">
                                                 <span class="status-dot {% if site_cert.valid %}status-dot--online{% else %}status-dot--offline{% endif %}"
                                                     aria-hidden="true"></span>
-                                                <span class="site-cert__status">{% if site_cert.valid %}Valid{% else
-                                                    %}Expired{% endif %}</span>
-                                                {% if site_cert.days_remaining is not none and site_cert.days_remaining > 0 %}
-                                                <span class="site-cert__days">{{ site_cert.days_remaining }}d</span>
+                                                <span class="site-cert__status">{{ status_label }}</span>
+                                                {% if has_days_pill %}
+                                                <span class="site-cert__days"><span aria-hidden="true">{{
+                                                        site_cert.days_remaining }}d</span><span
+                                                        class="visually-hidden">{{ site_cert.days_remaining }} days
+                                                        remaining</span></span>
                                                 {% endif %}
                                             </div>
+                                            {% if site_cert.issued_at %}
                                             <div class="site-cert__meta">
-                                                {% if site_cert.issued_at %}
                                                 <div class="site-cert__issued">Issued {{
                                                     site_cert.issued_at.strftime('%Y-%m-%d') }}</div>
-                                                {% endif %}
                                             </div>
+                                            {% endif %}
                                             {% elif site_cert and site_cert.error_message %}
                                             <div class="site-cert__error">
                                                 <div class="site-cert__error-title">Certificate check failed</div>

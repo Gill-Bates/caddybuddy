@@ -6,25 +6,14 @@
 
 from __future__ import annotations
 
-import os
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app.config.settings import get_settings
+from tests.env_overrides import ModuleEnv
 
-_ENV_OVERRIDES = {
-    "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CB_ADMIN_PASSWORD": "UnitTestPassword-123A",
-    "CADDYBUDDY_ADMIN_PASSWORD": "UnitTestPassword-123A",
-}
-_ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}
-
-for key, value in _ENV_OVERRIDES.items():
-    os.environ[key] = value
-
-get_settings.cache_clear()
+_ENV = ModuleEnv()
 
 from fastapi.testclient import TestClient
 
@@ -33,19 +22,12 @@ from tests.ui_test_app import build_ui_test_app
 
 
 def tearDownModule() -> None:
-    for key, original_value in _ORIGINAL_ENV.items():
-        if original_value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = original_value
-    get_settings.cache_clear()
+    _ENV.restore()
 
 
 class UIAboutTests(unittest.TestCase):
     def setUp(self) -> None:
-        for key, value in _ENV_OVERRIDES.items():
-            os.environ[key] = value
-        get_settings.cache_clear()
+        _ENV.apply()
         self.onboarding_patcher = patch(
             "app.routers.ui._common.get_onboarding_state",
             new=AsyncMock(return_value=SimpleNamespace(status="completed")),

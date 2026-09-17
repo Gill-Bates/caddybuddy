@@ -71,7 +71,7 @@ class CertificateRenewalCapability:
 @dataclass(slots=True, frozen=True)
 class CertificateName:
     value: str
-    source: str  # "san" | "cn"
+    source: str  # "san"
 
 
 @dataclass(slots=True, frozen=True)

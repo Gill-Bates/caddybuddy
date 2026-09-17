@@ -1,3 +1,21 @@
+## [1.6.1] - 2026-xx-xx
+
+- `New` SSL Labs report and scan buttons are now icon-only, with descriptive tooltips and screen-reader labels.
+- `New` The Sites and SSL Labs tables share compact 32px row controls on desktop; touch devices and narrow windows keep 44px targets.
+- `New` The SSL Labs schedule's next run is shown as its own timestamp next to the schedule select instead of inside the dropdown.
+- `Fix` Live updates no longer drop their server connection every 25 seconds, which lost events during the reconnect and could hit the `/events` rate limit with several tabs open.
+- `Fix` The compact SSL Labs schedule select no longer makes iOS Safari zoom in when it is focused.
+- `Fix` Toast notifications slide in and out again; previously they popped in and vanished without animation, and closing one removed it instantly.
+- `Fix` Toasts now travel their exact distance to clear the viewport when sliding out, so stacked or bottom-anchored toasts no longer leave a visible sliver on screen.
+- `Fix` The reduced-transparency accessibility preference now actually removes the sidebar backdrop blur; the override was previously nested in the wrong media query and never applied.
+- `Fix` The dashboard's SSL Labs rank history card no longer flickers into view; its loading shell now fades into the chart or the empty state instead of popping in the instant the (usually near-instant) history fetch returns.
+- `Fix` The Sites page's certificate days-remaining pill now shows just the count (e.g. "68d") with the full description available to screen readers, and the issue date, wildcard coverage, and remote-source notes render on one line with a separator instead of stacking without labels.
+- `Fix` Fixed dark mode styling for admonitions and collapsible sections (e.g. this changelog's "Previous versions" block) on the documentation site.
+- `Fix` Fixed the documentation site's light/dark logo toggle, which previously showed both logo variants stacked together.
+
+<details markdown="1">
+<summary>Previous versions...</summary>
+
 ## [1.6.0] - 2026-09-16
 
 - `New` Added passkey (WebAuthn) sign-in as an alternative to a password: enroll and manage up to 10 passkeys per account in Settings, and sign in with them directly from the login page.
@@ -12,9 +30,6 @@
 - `Fix` The dashboard's SSL Labs rank history chart now only offers time ranges covered by the configured retention window, and hosts on a monthly scan schedule no longer show gaps in the earliest weeks of a range.
 - `Security` Added invisible anti-bot checks to the sign-in and first-run account setup forms, combining a honeypot with a signed, time-bound form token; rejected submissions are logged in the same structured format used for other failed login attempts.
 - `Security` The Docker image build no longer leaves `pip` installed in the base Python interpreter, closing a gap where pip's vendored dependencies (setuptools, msgpack) reappeared as reported vulnerabilities.
-
-<details markdown="1">
-<summary>Previous versions...</summary>
 
 ## [1.5.1] - 2026-09-14
 

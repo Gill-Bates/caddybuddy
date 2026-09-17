@@ -263,6 +263,7 @@
         }
 
         const button = root.querySelector("[data-passkey-register-button]");
+        const addButton = root.querySelector("[data-passkey-add-button]");
         const nameInput = root.querySelector("[data-passkey-device-name]");
         const passwordInput = root.querySelector("[data-passkey-current-password]");
         const startUrl = root.dataset.passkeyStartUrl;
@@ -270,9 +271,27 @@
         if (!(button instanceof HTMLButtonElement) || !startUrl || !finishUrl) {
             return;
         }
+
+        // Clear the modal's inputs when it closes (whether via Cancel, Escape,
+        // or a backdrop click), so a stale password never lingers in the DOM.
+        const modalElement = document.getElementById("addPasskeyModal");
+        modalElement?.addEventListener("hidden.bs.modal", () => {
+            if (nameInput instanceof HTMLInputElement) {
+                nameInput.value = "";
+            }
+            if (passwordInput instanceof HTMLInputElement) {
+                passwordInput.value = "";
+            }
+        });
+
         if (!supported) {
             root.querySelector("[data-passkey-unsupported]")?.classList.remove("d-none");
             button.disabled = true;
+            // The header button still opens the modal via data-bs-toggle unless
+            // also disabled here; the modal's own button alone is not enough.
+            if (addButton instanceof HTMLButtonElement) {
+                addButton.disabled = true;
+            }
             return;
         }
 

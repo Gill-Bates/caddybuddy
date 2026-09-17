@@ -18,14 +18,14 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-_ENV_OVERRIDES = {
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CADDYBUDDY_ADMIN_PASSWORD": "unit-test-password",
-}
-_ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}
+from tests.env_overrides import ModuleEnv
 
-for key, value in _ENV_OVERRIDES.items():
-    os.environ[key] = value
+_ENV = ModuleEnv(
+    {
+        "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
+        "CADDYBUDDY_ADMIN_PASSWORD": "unit-test-password",
+    }
+)
 
 from app.config.settings import get_settings
 from app.models.base import Base
@@ -54,19 +54,12 @@ from app.services.runtime_settings import (
 
 
 def tearDownModule() -> None:
-    for key, original_value in _ORIGINAL_ENV.items():
-        if original_value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = original_value
-    get_settings.cache_clear()
+    _ENV.restore()
 
 
 class CaddyOnboardingServiceTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        for key, value in _ENV_OVERRIDES.items():
-            os.environ[key] = value
-        get_settings.cache_clear()
+        _ENV.apply()
         self._temp_dir = tempfile.TemporaryDirectory()
         database_path = Path(self._temp_dir.name) / "onboarding.db"
         self.engine = create_async_engine(

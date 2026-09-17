@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 import unittest
 from pathlib import Path
@@ -17,40 +16,23 @@ from app.config.limiter import limiter
 from app.config.settings import get_settings
 from app.services.auth import PASSWORD_MIN_LENGTH
 from app.utils.hidden_captcha import CaptchaOutcome
+from tests.env_overrides import ModuleEnv
 
-_ENV_OVERRIDES = {
-    "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CB_ADMIN_PASSWORD": "UnitTestPassword-123A",
-    "CADDYBUDDY_ADMIN_PASSWORD": "UnitTestPassword-123A",
-}
-_ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}
-
-for key, value in _ENV_OVERRIDES.items():
-    os.environ[key] = value
-
-get_settings.cache_clear()
+_ENV = ModuleEnv()
 
 from fastapi.testclient import TestClient
 
 from app.routers.ui.auth import router as auth_router
-from tests.ui_test_app import build_ui_test_app
+from tests.ui_test_app import build_ui_test_app, extract_csrf_token
 
 
 def tearDownModule() -> None:
-    for key, original_value in _ORIGINAL_ENV.items():
-        if original_value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = original_value
-    get_settings.cache_clear()
+    _ENV.restore()
 
 
 class UIAuthTests(unittest.TestCase):
     def setUp(self) -> None:
-        for key, value in _ENV_OVERRIDES.items():
-            os.environ[key] = value
-        get_settings.cache_clear()
+        _ENV.apply()
         self.captcha_verifier_patcher = patch(
             "app.routers.ui.auth.verify_captcha_token",
             return_value=CaptchaOutcome.OK,
@@ -63,12 +45,19 @@ class UIAuthTests(unittest.TestCase):
             new=AsyncMock(return_value=False),
         )
         self.passkey_available = self.passkey_available_patcher.start()
+        # Likewise for "does any user exist" (setup mode); setup-mode tests patch it to False.
+        self.users_exist_patcher = patch(
+            "app.routers.ui.auth.user_repository.exists_any",
+            new=AsyncMock(return_value=True),
+        )
+        self.users_exist_patcher.start()
         self._limiter_enabled = limiter.enabled
         limiter.enabled = False
 
     def tearDown(self) -> None:
         self.captcha_verifier_patcher.stop()
         self.passkey_available_patcher.stop()
+        self.users_exist_patcher.stop()
         limiter.enabled = self._limiter_enabled
         get_settings.cache_clear()
 
@@ -78,13 +67,6 @@ class UIAuthTests(unittest.TestCase):
             session_override=self._session_override,
             stub_routes=[],
         )
-
-    @staticmethod
-    def _extract_csrf_token(html: str) -> str:
-        match = re.search(r'name="csrf_token" value="([^"]+)"', html)
-        if match is None:
-            raise AssertionError("csrf_token input not found in login page")
-        return match.group(1)
 
     @staticmethod
     def _extract_captcha_token(html: str) -> str:
@@ -127,7 +109,7 @@ class UIAuthTests(unittest.TestCase):
         ):
             login_page = client.get("/login")
             self.assertNotIn('placeholder="Enter username"', login_page.text)
-            csrf_token = self._extract_csrf_token(login_page.text)
+            csrf_token = extract_csrf_token(login_page.text)
             response = client.post(
                 "/login",
                 data={
@@ -182,7 +164,7 @@ class UIAuthTests(unittest.TestCase):
                     "password": "Password123!",
                     "website": "https://spam.example",
                     "captcha_token": self._extract_captcha_token(login_page.text),
-                    "csrf_token": self._extract_csrf_token(login_page.text),
+                    "csrf_token": extract_csrf_token(login_page.text),
                 },
             )
 
@@ -213,7 +195,7 @@ class UIAuthTests(unittest.TestCase):
             TestClient(app) as client,
         ):
             login_page = client.get("/login")
-            csrf_token = self._extract_csrf_token(login_page.text)
+            csrf_token = extract_csrf_token(login_page.text)
             response = client.post(
                 "/login",
                 data={
@@ -253,7 +235,7 @@ class UIAuthTests(unittest.TestCase):
                     "username": "admin",
                     "password": "Password123!",
                     "next": "/sites",
-                    "csrf_token": self._extract_csrf_token(login_page.text),
+                    "csrf_token": extract_csrf_token(login_page.text),
                 },
                 follow_redirects=False,
             )
@@ -292,14 +274,14 @@ class UIAuthTests(unittest.TestCase):
                     "username": "admin",
                     "password": "Password123!",
                     "next": "/sites",
-                    "csrf_token": self._extract_csrf_token(login_page.text),
+                    "csrf_token": extract_csrf_token(login_page.text),
                 },
                 follow_redirects=False,
             )
             otp_page = client.get("/login/otp")
             response = client.post(
                 "/login/otp",
-                data={"code": "123456", "csrf_token": self._extract_csrf_token(otp_page.text)},
+                data={"code": "123456", "csrf_token": extract_csrf_token(otp_page.text)},
                 follow_redirects=False,
             )
 
@@ -339,14 +321,14 @@ class UIAuthTests(unittest.TestCase):
                     "username": "admin",
                     "password": "Password123!",
                     "next": "/sites",
-                    "csrf_token": self._extract_csrf_token(login_page.text),
+                    "csrf_token": extract_csrf_token(login_page.text),
                 },
                 follow_redirects=False,
             )
             otp_page = client.get("/login/otp")
             response = client.post(
                 "/login/otp",
-                data={"code": "123456", "csrf_token": self._extract_csrf_token(otp_page.text)},
+                data={"code": "123456", "csrf_token": extract_csrf_token(otp_page.text)},
                 follow_redirects=False,
             )
 
@@ -376,7 +358,7 @@ class UIAuthTests(unittest.TestCase):
                     "username": "admin",
                     "password": "Password123!",
                     "next": "/",
-                    "csrf_token": self._extract_csrf_token(login_page.text),
+                    "csrf_token": extract_csrf_token(login_page.text),
                 },
                 follow_redirects=False,
             )
@@ -384,7 +366,7 @@ class UIAuthTests(unittest.TestCase):
             self.assertIn("Cancel and return to sign in", otp_page.text)
             cancel = client.post(
                 "/login/otp/cancel",
-                data={"csrf_token": self._extract_csrf_token(otp_page.text)},
+                data={"csrf_token": extract_csrf_token(otp_page.text)},
                 follow_redirects=False,
             )
             login_again = client.get("/login", follow_redirects=False)
@@ -402,7 +384,7 @@ class UIAuthTests(unittest.TestCase):
 
         with TestClient(app) as client:
             login_page = client.get("/login")
-            csrf_token = self._extract_csrf_token(login_page.text)
+            csrf_token = extract_csrf_token(login_page.text)
             with patch("app.routers.ui.auth.get_session_user", new=AsyncMock(return_value=user)):
                 response = client.post(
                     "/logout",
@@ -449,7 +431,7 @@ class UIAuthTests(unittest.TestCase):
             TestClient(app) as client,
         ):
             login_page = client.get("/login")
-            csrf_token = self._extract_csrf_token(login_page.text)
+            csrf_token = extract_csrf_token(login_page.text)
             response = client.post(
                 "/setup",
                 data={
@@ -473,7 +455,7 @@ class UIAuthTests(unittest.TestCase):
             TestClient(app) as client,
         ):
             login_page = client.get("/login")
-            csrf_token = self._extract_csrf_token(login_page.text)
+            csrf_token = extract_csrf_token(login_page.text)
             response = client.post(
                 "/setup",
                 data={
@@ -495,7 +477,7 @@ class UIAuthTests(unittest.TestCase):
             TestClient(app) as client,
         ):
             login_page = client.get("/login")
-            csrf_token = self._extract_csrf_token(login_page.text)
+            csrf_token = extract_csrf_token(login_page.text)
             response = client.post(
                 "/setup",
                 data={
@@ -517,7 +499,7 @@ class UIAuthTests(unittest.TestCase):
             TestClient(app) as client,
         ):
             login_page = client.get("/login")
-            csrf_token = self._extract_csrf_token(login_page.text)
+            csrf_token = extract_csrf_token(login_page.text)
             response = client.post(
                 "/setup",
                 data={
@@ -539,7 +521,7 @@ class UIAuthTests(unittest.TestCase):
             TestClient(app) as client,
         ):
             login_page = client.get("/login")
-            csrf_token = self._extract_csrf_token(login_page.text)
+            csrf_token = extract_csrf_token(login_page.text)
             response = client.post(
                 "/setup",
                 data={

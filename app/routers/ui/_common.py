@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 _UNSAFE_NEXT_PATH_RE = re.compile(r"[\x00-\x1f\x7f\\]")
 _MAX_FORM_BODY_BYTES = 2 * 1024 * 1024
+_CHECKBOX_TRUE_VALUES = frozenset({"1", "true", "on", "yes"})
 
 
 async def require_onboarding_completed(session: AsyncSession) -> Response | None:
@@ -41,11 +42,12 @@ async def require_onboarding_completed(session: AsyncSession) -> Response | None
 
 
 async def require_user(request: Request, session: AsyncSession) -> User | None:
-    """Return the current user or None if not authenticated."""
-    current_user = await get_session_user(request, session)
-    if current_user is None:
-        return None
-    return current_user
+    """Return the current user, or None if not authenticated.
+
+    UI routes use this instead of ``app.dependencies.web.require_api_user`` so an
+    anonymous visitor gets a redirect or flash rather than a 401 body.
+    """
+    return await get_session_user(request, session)
 
 
 async def require_admin(request: Request, session: AsyncSession) -> User | None:
@@ -74,9 +76,6 @@ async def validated_csrf_form(request: Request) -> FormData:
     return form
 
 
-validated_form = validated_csrf_form
-
-
 def safe_next(next_path: str | None) -> str:
     """Sanitize the 'next' redirect path to prevent open redirects."""
     decoded_path = unquote(next_path) if next_path else None
@@ -100,6 +99,16 @@ def parse_int(value: object, *, default: int | None = None) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def parse_checkbox(value: object) -> bool:
+    """Return True when a form value represents a checked checkbox.
+
+    Browsers submit ``on`` for a checked box, but the same forms are also driven
+    by fetch/JSON clients that send ``true``/``1``/``yes``; an unchecked box is
+    omitted entirely and therefore arrives here as ``None``.
+    """
+    return str(value or "").strip().lower() in _CHECKBOX_TRUE_VALUES
 
 
 async def commit_and_flash(

@@ -36,7 +36,7 @@ from ._common import (
     require_admin,
     require_onboarding_completed,
     require_user,
-    validated_form,
+    validated_csrf_form,
 )
 
 router = APIRouter()
@@ -87,7 +87,7 @@ async def save_caddyfile(
     if current_user is None:
         return redirect_to("/")
 
-    form = await validated_form(request)
+    form = await validated_csrf_form(request)
     baseline_caddyfile = str(form.get("caddyfile", "")).strip()
 
     caddy_config = await get_caddy_config(session)
@@ -130,7 +130,7 @@ async def validate_caddyfile_only(
     if current_user.role != "admin":
         return JSONResponse({"valid": False, "message": "Administrator access is required."}, status_code=403)
 
-    form = await validated_form(request)
+    form = await validated_csrf_form(request)
     baseline_caddyfile = str(form.get("caddyfile", "")).strip()
 
     if not baseline_caddyfile:

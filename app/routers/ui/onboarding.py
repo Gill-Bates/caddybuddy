@@ -37,7 +37,7 @@ from app.services.runtime_settings import (
     suggest_caddyfile_path,
 )
 
-from ._common import require_admin, validated_form
+from ._common import require_admin, validated_csrf_form
 
 router = APIRouter()
 
@@ -117,7 +117,7 @@ async def onboarding_location_action(
     if current_user is None:
         return redirect_to("/")
 
-    form = await validated_form(request)
+    form = await validated_csrf_form(request)
     try:
         await save_onboarding_location(
             session,
@@ -142,7 +142,7 @@ async def onboarding_mode_action(
     if current_user is None:
         return redirect_to("/")
 
-    form = await validated_form(request)
+    form = await validated_csrf_form(request)
     # The runtime location is auto-detected by the service; only honour an explicit
     # override if one is posted (none is sent by the wizard form).
     runtime_location_raw = form.get("runtime_location")
@@ -178,7 +178,7 @@ async def onboarding_preflight_action(
     if current_user is None:
         return redirect_to("/")
 
-    form = await validated_form(request)
+    form = await validated_csrf_form(request)
     try:
         state = await run_onboarding_preflight(
             session,
@@ -209,7 +209,7 @@ async def onboarding_enable_admin_api_action(
     if current_user is None:
         return redirect_to("/")
 
-    form = await validated_form(request)
+    form = await validated_csrf_form(request)
     # Enforce the confirmation server-side; the HTML `required` attribute is only client-side UX.
     if str(form.get("confirm_admin_api_enablement", "")) != "yes":
         push_flash(request, "danger", "Confirm that CaddyBuddy may modify the Caddyfile and restart Caddy.")
@@ -241,7 +241,7 @@ async def onboarding_execute_action(
     if current_user is None:
         return redirect_to("/")
 
-    form = await validated_form(request)
+    form = await validated_csrf_form(request)
     try:
         state = await execute_onboarding(
             session,

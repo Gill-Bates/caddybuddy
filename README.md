@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  A focused web control plane for one Caddy installation.
+  A lightweight GUI for Caddy Web Server with Certificate Management
 </p>
 
 <p align="center">

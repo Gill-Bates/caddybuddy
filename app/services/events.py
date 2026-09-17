@@ -129,44 +129,43 @@ class _SubscriberStream(AsyncIterator[ResourceEvent]):
             self._bus._activate_subscriber(self)
             self._active = True
 
-        try:
-            event = await self._queue.get()
-        except asyncio.CancelledError:
-            self.close_from_bus()
-            raise
+        # A cancelled get() is loss-free and must not release the slot: the SSE
+        # heartbeat cancels it via asyncio.wait_for on every idle tick. A real
+        # disconnect releases the stream through aclose() instead.
+        event = await self._queue.get()
         if event is None:
-            self._closed = True
-            self._active = False
-            self._bus._release_subscriber(self)
+            self._release()
             raise StopAsyncIteration
         return event
 
-    async def aclose(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        self._active = False
-        self._bus._release_subscriber(self)
+    def _release(self) -> bool:
+        """Close this stream and hand its bus slot back, at most once.
 
-    def close_from_bus(self) -> None:
+        Returns True only when this call performed the release *and* the stream
+        was already activated, meaning a reader may still be blocked on the
+        queue. ``EventBus._release_subscriber`` discards, so repeat calls from
+        the various close paths are harmless.
+        """
         if self._closed:
-            return
+            return False
         self._closed = True
         was_active = self._active
         self._active = False
         self._bus._release_subscriber(self)
-        if was_active:
+        return was_active
+
+    async def aclose(self) -> None:
+        self._release()
+
+    def close_from_bus(self) -> None:
+        if self._release():
             _close_queue(self._queue)
 
     def deliver(self, event: ResourceEvent) -> None:
         self._queue.put_nowait(event)
 
     def __del__(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        self._active = False
-        self._bus._release_subscriber(self)
+        self._release()
 
 
 class EventBus:

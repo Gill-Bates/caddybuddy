@@ -17,13 +17,11 @@ from sqlalchemy.orm import aliased
 from app.models.entities import Site, SslLabsRankHistory, SslLabsScan, SslLabsTarget
 from app.schemas.ssllabs import (
     SSLLABS_ACTIVE_SCAN_STATUSES,
-    SSLLABS_TERMINAL_SCAN_STATUSES,
     SslLabsScanStatus,
 )
 from app.utils.domains import split_domain_names
 
 ACTIVE_SCAN_STATUSES = frozenset(SSLLABS_ACTIVE_SCAN_STATUSES)
-TERMINAL_SCAN_STATUSES = frozenset(SSLLABS_TERMINAL_SCAN_STATUSES)
 ACTIVE_SCAN_STALE_AFTER = timedelta(hours=2)
 _MAX_DUE_TARGET_LIMIT = 500
 _TLS_OFF_RE = re.compile(r"(?im)^\s*tls\s+off\s*$")
@@ -210,30 +208,6 @@ class SslLabsRepository:
         except IntegrityError:
             return await self.get_active_scan_for_target(session, target.id, now=effective_now)
         return scan
-
-    async def list_completed_scans_since(
-        self,
-        session: AsyncSession,
-        *,
-        since: datetime,
-    ) -> list[SslLabsScan]:
-        """Return ready scans with a grade completed at or after ``since``.
-
-        Used to build the dashboard SSL Labs rank timeseries. Ordered by host then
-        completion time so callers can bucket per host chronologically.
-        """
-        _require_aware_datetime(since, name="since")
-        result = await session.execute(
-            select(SslLabsScan)
-            .where(
-                SslLabsScan.status == "ready",
-                SslLabsScan.grade.is_not(None),
-                SslLabsScan.completed_at.is_not(None),
-                SslLabsScan.completed_at >= since,
-            )
-            .order_by(SslLabsScan.host.asc(), SslLabsScan.completed_at.asc(), SslLabsScan.id.asc())
-        )
-        return list(result.scalars().all())
 
     async def record_rank_history(
         self,

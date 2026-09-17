@@ -6,26 +6,15 @@
 
 from __future__ import annotations
 
-import os
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app.config.settings import get_settings
+from tests.env_overrides import ModuleEnv
 
-_ENV_OVERRIDES = {
-    "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CB_ADMIN_PASSWORD": "UnitTestPassword-123A",
-    "CADDYBUDDY_ADMIN_PASSWORD": "UnitTestPassword-123A",
-}
-_ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}
-
-for key, value in _ENV_OVERRIDES.items():
-    os.environ[key] = value
-
-get_settings.cache_clear()
+_ENV = ModuleEnv()
 
 from fastapi.testclient import TestClient
 
@@ -35,19 +24,12 @@ from tests.ui_test_app import build_ui_test_app
 
 
 def tearDownModule() -> None:
-    for key, original_value in _ORIGINAL_ENV.items():
-        if original_value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = original_value
-    get_settings.cache_clear()
+    _ENV.restore()
 
 
 class UIDashboardTests(unittest.TestCase):
     def setUp(self) -> None:
-        for key, value in _ENV_OVERRIDES.items():
-            os.environ[key] = value
-        get_settings.cache_clear()
+        _ENV.apply()
 
     def tearDown(self) -> None:
         get_settings.cache_clear()
@@ -210,6 +192,27 @@ class UIDashboardTests(unittest.TestCase):
         self.assertNotIn("prev. scan", chart_script)
         self.assertNotIn("prev. day", chart_script)
 
+    def test_ssllabs_history_card_fades_in_instead_of_popping(self) -> None:
+        """The loading shell resolves to the chart or the empty state as soon as
+        the history fetch returns, which for a same-origin, usually sub-50ms
+        request is fast enough that a hard visibility cut reads as a flicker.
+        Fading opacity/height in on reveal replaces that pop."""
+        css = Path("app/static/css/app.css").read_text(encoding="utf-8")
+
+        reveal_block_start = css.index(".ssllabs-history-toolbar,\n.ssllabs-history-inspector,")
+        reveal_block = css[reveal_block_start:css.index("}", reveal_block_start)]
+        self.assertIn("opacity: 1;", reveal_block)
+        self.assertIn("transition: opacity var(--cb-duration-fast) ease;", reveal_block)
+
+        loading_block_start = css.index(".ssllabs-history-card--loading .ssllabs-history-toolbar,")
+        loading_block = css[loading_block_start:css.index("}", loading_block_start)]
+        self.assertIn("visibility: hidden;", loading_block)
+        self.assertIn("opacity: 0;", loading_block)
+
+        chart_wrap_start = css.index(".ssllabs-history-chart-wrap {")
+        chart_wrap_block = css[chart_wrap_start:css.index("}", chart_wrap_start)]
+        self.assertIn("transition: height var(--cb-duration-fast) ease;", chart_wrap_block)
+
     def test_home_page_redirects_to_wizard_when_onboarding_not_completed(self) -> None:
         app = self._build_app()
         current_user = SimpleNamespace(username="admin", role="admin")
@@ -248,6 +251,7 @@ class UIDashboardTests(unittest.TestCase):
         with (
             patch("app.routers.ui.dashboard.require_user", new=AsyncMock(return_value=None)),
             patch("app.routers.ui.auth.user_repository.exists_any", new=AsyncMock(return_value=True)),
+            patch("app.routers.ui.auth.passkey_service.any_registered", new=AsyncMock(return_value=False)),
             TestClient(app) as client,
         ):
             response = client.get("/", follow_redirects=True)

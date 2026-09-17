@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { captureStablePair, disableMotion, login, waitForStableFullPageHeight } from './browser-utils.mjs';
+import { captureStablePair, collectPreferenceProbes, disableMotion, login, waitForStableFullPageHeight } from './browser-utils.mjs';
 import { LOGIN_CAPTCHA_MIN_AGE_MS } from './constants.mjs';
 
 
@@ -360,4 +360,77 @@ test('captureStablePair takes a throwaway screenshot before the compared pair', 
         assert.equal(call.fullPage, true);
         assert.equal(call.animations, 'disabled');
     }
+});
+
+class PreferenceProbePage {
+    constructor({ cdpAvailable = true, toastProbeError = null } = {}) {
+        this.cdpAvailable = cdpAvailable;
+        this.toastProbeError = toastProbeError;
+        this.reducedMotion = 'reduce';
+        this.events = [];
+    }
+
+    async emulateMedia({ reducedMotion }) {
+        this.reducedMotion = reducedMotion;
+        this.events.push(`emulateMedia:${reducedMotion}`);
+    }
+
+    async evaluate(fn) {
+        const source = String(fn);
+        if (source.includes('toastExitProbe')) {
+            this.events.push(`toastExitProbe@${this.reducedMotion}`);
+            if (this.toastProbeError) {
+                throw this.toastProbeError;
+            }
+            return { present: true, offenders: [] };
+        }
+        this.events.push('reducedTransparencyProbe');
+        return { present: true, offenders: [] };
+    }
+
+    context() {
+        return {
+            newCDPSession: async () => {
+                if (!this.cdpAvailable) {
+                    throw new Error('CDP session is only supported in Chromium');
+                }
+                return {
+                    send: async (method, params) => {
+                        this.events.push(`${method}:${params.features.map((f) => `${f.name}=${f.value}`).join(',')}`);
+                    },
+                    detach: async () => this.events.push('detach'),
+                };
+            },
+        };
+    }
+}
+
+test('collectPreferenceProbes runs each probe under its media feature and restores reduced motion', async () => {
+    const page = new PreferenceProbePage();
+
+    const probes = await collectPreferenceProbes(page);
+
+    assert.deepEqual(probes, {
+        toastExit: { present: true, offenders: [] },
+        reducedTransparencyBackdrop: { present: true, offenders: [] },
+    });
+    assert.deepEqual(page.events, [
+        'emulateMedia:no-preference',
+        'toastExitProbe@no-preference',
+        'emulateMedia:reduce',
+        'Emulation.setEmulatedMedia:prefers-reduced-transparency=reduce,prefers-reduced-motion=no-preference',
+        'reducedTransparencyProbe',
+        'Emulation.setEmulatedMedia:',
+        'detach',
+        'emulateMedia:reduce',
+    ]);
+});
+
+test('collectPreferenceProbes skips reduced transparency without CDP and restores motion on probe errors', async () => {
+    const skipped = await collectPreferenceProbes(new PreferenceProbePage({ cdpAvailable: false }));
+    assert.equal(skipped.reducedTransparencyBackdrop, null);
+
+    const failing = new PreferenceProbePage({ toastProbeError: new Error('probe failed') });
+    await assert.rejects(collectPreferenceProbes(failing), /probe failed/);
+    assert.equal(failing.reducedMotion, 'reduce');
 });

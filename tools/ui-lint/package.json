@@ -12,13 +12,7 @@
         "audit:visual": "UI_LINT_VISUAL_REGRESSION=1 UI_LINT_BROWSERS=chromium UI_LINT_BROWSER_CONCURRENCY=1 UI_LINT_DEVICE_CONCURRENCY=1 node run-ui-lint.mjs",
         "install:browsers": "playwright install chromium firefox webkit",
         "install:browsers:ci": "playwright install --with-deps chromium firefox webkit",
-        "test": "playwright test",
-        "ci:test": "playwright test --workers=1",
-        "test:mobile": "playwright test tests/mobile.spec.mjs --project=mobile-chromium --project=mobile-webkit --project=mobile-webkit-se --workers=1",
-        "test:mobile:update-snapshots": "UI_LINT_MOBILE_SCREENSHOTS=1 playwright test tests/mobile.spec.mjs --project=mobile-chromium --project=mobile-webkit --project=mobile-webkit-se --workers=1 --update-snapshots",
-        "test:headed": "playwright test --headed",
-        "test:ui": "playwright test --ui",
-        "report": "playwright show-report"
+        "test": "node --test lib/*.test.mjs visual/*.test.mjs"
     },
     "dependencies": {
         "@axe-core/playwright": "latest",

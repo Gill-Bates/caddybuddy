@@ -36,7 +36,7 @@ from ._common import (
     require_admin,
     require_onboarding_completed,
     require_user,
-    validated_form,
+    validated_csrf_form,
 )
 
 router = APIRouter()
@@ -167,7 +167,7 @@ async def start_ssllabs_scan(
     if onboarding_redirect is not None:
         return onboarding_redirect
 
-    form = await validated_form(request)
+    form = await validated_csrf_form(request)
     mode = str(form.get("mode", "cache")).strip().lower()
     if mode not in {"cache", "fresh"}:
         push_flash(request, "danger", "Invalid SSL Labs scan mode.")
@@ -210,7 +210,7 @@ async def update_ssllabs_schedule(
     if onboarding_redirect is not None:
         return onboarding_redirect
 
-    form = await validated_form(request)
+    form = await validated_csrf_form(request)
     try:
         frequency = parse_ssllabs_schedule_control(str(form.get("schedule_frequency", "")))
         await ssllabs_service.update_schedule(target_id=target_id, frequency=frequency)

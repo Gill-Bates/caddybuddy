@@ -12,7 +12,6 @@ from datetime import UTC, datetime
 from app.utils.parsing import (
     parse_expires_days,
     parse_json_object,
-    pretty_json,
     split_csv,
 )
 
@@ -41,10 +40,6 @@ class ParsingUtilsTests(unittest.TestCase):
     def test_parse_json_object_rejects_invalid_json(self) -> None:
         with self.assertRaisesRegex(ValueError, "payload must be valid JSON"):
             parse_json_object("{", "payload")
-
-    def test_pretty_json_wraps_non_json_compatible_values(self) -> None:
-        with self.assertRaisesRegex(ValueError, "JSON-compatible"):
-            pretty_json({"expires_at": datetime.now(UTC)})
 
     def test_parse_expires_days_returns_none_for_blank_input(self) -> None:
         self.assertIsNone(parse_expires_days("  "))

@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import socket
 import ssl
 import unittest
@@ -16,18 +15,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from app.config.settings import get_settings
+from tests.env_overrides import ModuleEnv
 
-_ENV_OVERRIDES = {
-    "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
-}
-_ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}
-
-for key, value in _ENV_OVERRIDES.items():
-    os.environ[key] = value
-
-get_settings.cache_clear()
+_ENV = ModuleEnv(
+    {
+        "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
+        "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
+    }
+)
 
 import app.services.certificates as certs_module
 import app.services.dashboard as dashboard_module
@@ -841,9 +836,4 @@ if __name__ == "__main__":
 
 
 def tearDownModule() -> None:
-    for key, original_value in _ORIGINAL_ENV.items():
-        if original_value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = original_value
-    get_settings.cache_clear()
+    _ENV.restore()

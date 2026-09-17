@@ -7,8 +7,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "caddybuddy"
-version = "1.6.0"
-description = "Focused web control plane for one Caddy installation"
+version = "1.6.1"
+description = "Your friendly control center for running Caddy"
 readme = "README.md"
 requires-python = ">=3.13"
 license = "MIT"

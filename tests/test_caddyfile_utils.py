@@ -9,7 +9,6 @@ from __future__ import annotations
 import unittest
 
 from app.utils.caddyfile import (
-    DomainDirectiveFormState,
     build_domain_directives,
     build_domain_site_preview,
     build_generated_site_block,
@@ -18,7 +17,6 @@ from app.utils.caddyfile import (
     directives_have_security_header_block,
     extract_site_handler_from_directives,
     extract_upstream_from_directives,
-    parse_domain_directive_form_state,
     prepare_domain_directives,
     snippet_is_defined,
 )
@@ -78,13 +76,6 @@ class CaddyfileUtilsTests(unittest.TestCase):
         )
 
         self.assertIn("Custom directive 'import' is not allowed.", result.errors)
-
-    def test_parse_domain_directive_form_state_keeps_multi_upstream_block_custom(self) -> None:
-        state = parse_domain_directive_form_state(
-            "reverse_proxy app1:8000 app2:8000 {\n    lb_policy round_robin\n}"
-        )
-
-        self.assertEqual(state, DomainDirectiveFormState(custom_directives="reverse_proxy app1:8000 app2:8000 {\n    lb_policy round_robin\n}"))
 
     def test_extract_upstream_from_directives_ignores_multi_upstream_block(self) -> None:
         self.assertIsNone(

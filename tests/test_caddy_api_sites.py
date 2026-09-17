@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import os
 import unittest
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -14,14 +13,14 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException, Response
 
-_ENV_OVERRIDES = {
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CADDYBUDDY_ADMIN_PASSWORD": "unit-test-password",
-}
-_ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}
+from tests.env_overrides import ModuleEnv
 
-for key, value in _ENV_OVERRIDES.items():
-    os.environ[key] = value
+_ENV = ModuleEnv(
+    {
+        "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
+        "CADDYBUDDY_ADMIN_PASSWORD": "unit-test-password",
+    }
+)
 
 from app.repositories.sites import DuplicateSiteError
 from app.routers.caddy_api import create_site, update_site
@@ -29,11 +28,7 @@ from app.schemas.caddy import SiteCreateRequest, SiteResponse, SiteUpdateRequest
 
 
 def tearDownModule() -> None:
-    for key, original_value in _ORIGINAL_ENV.items():
-        if original_value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = original_value
+    _ENV.restore()
 
 
 class CaddyApiSiteMutationTests(unittest.IsolatedAsyncioTestCase):

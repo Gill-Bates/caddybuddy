@@ -56,7 +56,6 @@ _CHANGELOG_ALLOWED_ATTRS = {
 # Update-check result is cached for one hour to avoid hammering the GitHub API.
 _UPDATE_CHECK_TTL_SECONDS = 3600
 _UPDATE_CHECK_TIMEOUT_SECONDS = 10.0
-_MAX_RELEASE_NOTES = 20_000
 _update_check_cache: UpdateInfo | None = None
 _update_check_time: float = 0.0
 _update_check_lock = threading.Lock()

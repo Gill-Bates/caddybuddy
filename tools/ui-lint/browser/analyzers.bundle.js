@@ -62,6 +62,11 @@
         return rect;
     }
 
+    // Collapses whitespace and truncates text for finding details.
+    function compactText(value, maxLength = 80) {
+        return String(value || '').trim().replace(/\s+/g, ' ').slice(0, maxLength);
+    }
+
     function roundTo(value, digits) {
         if (!Number.isFinite(value)) return value;
         const factor = 10 ** digits;
@@ -85,11 +90,6 @@
         return candidates.filter((candidate) =>
             !candidates.some((other) => other !== candidate && other.contains(candidate))
         );
-    }
-
-    function getOpenModalOverlay() {
-        return Array.from(document.querySelectorAll(OPEN_MODAL_OVERLAY_SELECTOR))
-            .find(isModalActive) || null;
     }
 
     // Normalizes open modal candidates to actual dialog elements, covering both
@@ -481,15 +481,24 @@
         const denseTableMinSize = numberConstant(constants.DENSE_TABLE_CLICK_TARGET_MIN_SIZE_PX, minSize);
         const tolerance = Number(constants.OVERFLOW_TOLERANCE_PX || 0);
         const isDesktopViewport = window.innerWidth >= Number(constants.LG_BREAKPOINT_PX ?? 992);
-        const isDenseSitesTableTarget = (el) => (
-            scope === 'sites'
+        const hasFinePointer = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+        const isDenseManagementTableTarget = (el) => (
+            isDesktopViewport
+            && hasFinePointer
+            && el.matches('.btn-sm.btn--icon-only, select.form-select-sm')
+            && Boolean(el.closest('table.table--management'))
+        );
+        const isDenseManagementToolbarTarget = (el) => (
+            scope === 'ssllabs'
             && isDesktopViewport
-            && el.matches('.btn-sm.btn--icon-only')
-            && Boolean(el.closest('.sites-list-scroll'))
+            && hasFinePointer
+            && Boolean(el.closest('.ssllabs-filterbar'))
         );
         const chipRemoveMinSize = numberConstant(constants.CHIP_REMOVE_CLICK_TARGET_MIN_SIZE_PX, minSize);
         const requiredTargetSize = (el) => {
-            if (isDenseSitesTableTarget(el)) return denseTableMinSize;
+            if (isDenseManagementTableTarget(el) || isDenseManagementToolbarTarget(el)) {
+                return denseTableMinSize;
+            }
             if (el.matches('.tag-input__remove')) return chipRemoveMinSize;
             return minSize;
         };
@@ -518,7 +527,7 @@
             .map(({ el, size, minimum }) => ({
                 tag: el.tagName,
                 className: el.className || '',
-                text: (el.textContent || el.getAttribute('aria-label') || '').trim().replace(/\s+/g, ' ').slice(0, 80),
+                text: compactText(el.textContent || el.getAttribute('aria-label')),
                 width: roundTo(size.width, 2),
                 height: roundTo(size.height, 2),
                 minimum,
@@ -623,7 +632,7 @@
                         return null;
                     }
 
-                    const host = (summary.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+                    const host = compactText(summary.textContent);
                     return {
                         host,
                         panelWidth: roundTo(panelRect.width, 2),
@@ -650,9 +659,9 @@
         })();
 
         const ssllabsInlineSchedulerIssues = (() => {
-            const schedulers = Array.from(document.querySelectorAll('.ssllabs-domain-card__inline-scheduler'));
+            const schedulers = Array.from(document.querySelectorAll('.ssllabs-schedule-form__controls'));
             if (schedulers.length === 0) return null;
-            const minWidth = Number(constants.SSLLABS_INLINE_SCHEDULER_MIN_WIDTH_PX ?? 120);
+            const minWidth = Number(constants.SSLLABS_INLINE_SCHEDULER_MIN_WIDTH_PX ?? 220);
             const issues = schedulers
                 .filter((el) => isVisible(el) && !isVisuallyHidden(el))
                 .map((el) => {
@@ -665,15 +674,15 @@
         })();
 
         const ssllabsInlineSchedulerLayout = (() => {
-            const schedulers = Array.from(document.querySelectorAll('.ssllabs-domain-card__inline-scheduler'))
+            const schedulers = Array.from(document.querySelectorAll('.ssllabs-schedule-form__controls'))
                 .filter((el) => isVisible(el) && !isVisuallyHidden(el));
             const isDesktopViewport = window.innerWidth >= Number(constants.LG_BREAKPOINT_PX ?? 992);
             if (!isDesktopViewport || schedulers.length === 0) {
                 return null;
             }
 
-            const minWidth = Number(constants.SSLLABS_INLINE_SCHEDULER_MIN_WIDTH_PX ?? 120);
-            const maxWidth = Number(constants.SSLLABS_INLINE_SCHEDULER_MAX_WIDTH_PX ?? 180);
+            const minWidth = Number(constants.SSLLABS_INLINE_SCHEDULER_MIN_WIDTH_PX ?? 220);
+            const maxWidth = Number(constants.SSLLABS_INLINE_SCHEDULER_MAX_WIDTH_PX ?? 340);
             const alignmentTolerance = Number(constants.SSLLABS_INLINE_SCHEDULER_ALIGNMENT_TOLERANCE_PX ?? 2);
             const samples = schedulers.map((el) => {
                 const rect = rectOf(el);
@@ -1019,7 +1028,7 @@
                     if (deviations.length === 0) return null;
                     return {
                         className: el.className || '',
-                        text: (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40),
+                        text: compactText(el.textContent, 40),
                         deviations,
                     };
                 })
@@ -1183,7 +1192,7 @@
         const modals = getOpenModalElements();
         const multipleModals = modals.length > 1;
 
-        const toastContainer = document.querySelector('#toast-container');
+        const toastContainer = document.querySelector('.app-toast-stack');
         const toasts = toastContainer
             ? Array.from(toastContainer.children)
                 .filter((toast) => isVisible(toast) && !isVisuallyHidden(toast))
@@ -1369,7 +1378,8 @@
         const headerContentAlignmentTolerance = Number(constants.APP_PAGE_HEADER_CONTENT_ALIGNMENT_TOLERANCE_PX ?? 2);
         const alignmentTolerance = Number(constants.MOBILE_TOGGLE_CONTENT_ALIGNMENT_TOLERANCE_PX ?? 2);
         const panelHeightTolerance = Number(constants.DESKTOP_PRIMARY_PANEL_HEIGHT_TOLERANCE_PX ?? 3);
-        const viewportPanelFooterGapMaximum = Number(constants.DESKTOP_VIEWPORT_PANEL_FOOTER_GAP_MAX_PX ?? 36);
+        const viewportPanelFooterGapExpected = Number(constants.DESKTOP_VIEWPORT_PANEL_FOOTER_GAP_EXPECTED_PX ?? 24);
+        const viewportPanelFooterGapTolerance = Number(constants.DESKTOP_VIEWPORT_PANEL_FOOTER_GAP_TOLERANCE_PX ?? 4);
         const mobileToggleAlignmentFallback = {
             present: false,
             toggleLeft: null,
@@ -1388,8 +1398,9 @@
         const viewportPanelFooterGapFallback = {
             present: false,
             gapPx: null,
-            maximum: viewportPanelFooterGapMaximum,
-            passesMaximum: true,
+            expected: viewportPanelFooterGapExpected,
+            tolerance: viewportPanelFooterGapTolerance,
+            passesTolerance: true,
         };
         if (!(page instanceof Element) || !isVisible(page) || isVisuallyHidden(page)) {
             return {
@@ -1505,24 +1516,25 @@
         let desktopPrimaryPanelHeightAlignment = primaryPanelHeightFallback;
         const pageGrid = page.querySelector(':scope > .row.app-grid');
         if (isDesktopTwoColumnViewport && pageGrid instanceof Element) {
-            const panels = Array.from(pageGrid.children)
+            const isShown = (el) => el instanceof Element && isVisible(el) && !isVisuallyHidden(el);
+            const columnSpans = Array.from(pageGrid.children)
                 .filter((child) => child instanceof Element)
                 .map((column) => {
-                    const directPanel = column.querySelector(':scope > .panel-card');
-                    if (directPanel instanceof Element && isVisible(directPanel) && !isVisuallyHidden(directPanel)) {
-                        return directPanel;
+                    const directPanels = Array.from(column.querySelectorAll(':scope > .panel-card')).filter(isShown);
+                    // A column stacking several cards (About's Updates + Documentation)
+                    // aligns as one block: first card's top to last card's bottom.
+                    if (directPanels.length > 1) {
+                        const first = rectOf(directPanels[0]);
+                        const last = rectOf(directPanels[directPanels.length - 1]);
+                        return last.bottom - first.top;
                     }
-
-                    return Array.from(column.children).find((child) => (
-                        child instanceof Element
-                        && isVisible(child)
-                        && !isVisuallyHidden(child)
-                    )) || null;
+                    const panel = directPanels[0] || Array.from(column.children).find(isShown);
+                    return panel ? rectOf(panel).height : null;
                 })
-                .filter((panel) => panel instanceof Element && isVisible(panel) && !isVisuallyHidden(panel));
+                .filter((height) => height !== null);
 
-            if (panels.length >= 2) {
-                const heights = panels.slice(0, 2).map((panel) => roundTo(rectOf(panel).height, 2));
+            if (columnSpans.length >= 2) {
+                const heights = columnSpans.slice(0, 2).map((height) => roundTo(height, 2));
                 const delta = Math.abs(heights[0] - heights[1]);
                 desktopPrimaryPanelHeightAlignment = {
                     present: true,
@@ -1547,8 +1559,9 @@
             desktopViewportPanelFooterGap = {
                 present: true,
                 gapPx: roundTo(gapPx, 2),
-                maximum: viewportPanelFooterGapMaximum,
-                passesMaximum: gapPx <= viewportPanelFooterGapMaximum,
+                expected: viewportPanelFooterGapExpected,
+                tolerance: viewportPanelFooterGapTolerance,
+                passesTolerance: Math.abs(gapPx - viewportPanelFooterGapExpected) <= viewportPanelFooterGapTolerance,
             };
         }
 
@@ -1910,80 +1923,177 @@
         };
     }
 
-    function sitesTableDensityAnalyzer(constants = {}, scope = '') {
-        const maximumRowHeight = Number(constants.SITES_TABLE_ROW_MAX_HEIGHT_PX ?? 72);
-        const targetRowHeight = Number(constants.SITES_TABLE_DENSE_ROW_TARGET_PX ?? 52);
+    // Sites and SSL Labs share one row rhythm: ordinary single-line rows of
+    // roughly 44-48px. The median is held to the target so a handful of
+    // legitimately taller rows (errors, differing endpoint grades, wrapped
+    // domains) do not fail the page; single rows past the maximum only warn.
+    // Card layouts are content-driven and therefore skipped.
+    function managementTableDensityAnalyzer(constants = {}, scope = '') {
+        const maximumRowHeight = Number(constants.MANAGEMENT_TABLE_ROW_MAX_HEIGHT_PX ?? 72);
+        const targetRowHeight = Number(constants.MANAGEMENT_TABLE_ROW_TARGET_PX ?? 48);
+        const tolerance = Number(constants.MANAGEMENT_TABLE_ROW_TOLERANCE_PX ?? 2);
         const isDesktopViewport = window.innerWidth >= Number(constants.LG_BREAKPOINT_PX ?? 992);
+        const hasFinePointer = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
         const fallback = {
             present: false,
             maximumRowHeight,
             targetRowHeight,
+            tolerance,
             rowCount: 0,
             medianRowHeightPx: null,
             maxRowHeightPx: null,
+            passesTarget: true,
             oversizedRows: [],
         };
 
-        if (scope !== 'sites' || !isDesktopViewport) {
-            return { sitesTableDensity: fallback };
+        if (!['sites', 'ssllabs'].includes(scope) || !isDesktopViewport || !hasFinePointer) {
+            return { managementTableDensity: fallback };
         }
 
-        const table = document.querySelector('.sites-list-panel table, .sites-list-scroll table');
+        const table = document.querySelector('table.table--management');
         if (!(table instanceof Element) || !isVisible(table) || isVisuallyHidden(table)) {
-            return { sitesTableDensity: fallback };
+            return { managementTableDensity: fallback };
         }
 
         const rows = Array.from(table.querySelectorAll('tbody tr'))
             .filter((row) => row instanceof Element && isVisible(row) && !isVisuallyHidden(row))
+            .filter((row) => styleOf(row)?.display === 'table-row')
             // Placeholder rows (the "no sites configured" empty state) span every
             // column and are intentionally roomy: they carry no row density.
-            .filter((row) => !row.querySelector('td[colspan], th[colspan]'));
+            .filter((row) => !row.querySelector('td[colspan]:not([rowspan]), th[colspan]'));
         if (!rows.length) {
-            return { sitesTableDensity: { ...fallback, present: true } };
+            return { managementTableDensity: { ...fallback, present: true } };
         }
 
-        const rowHeights = rows
-            .map((row) => {
-                const rowRect = rectOf(row);
-                return rowRect.height;
-            })
-            .filter((height) => Number.isFinite(height) && height > 0)
-            .sort((a, b) => a - b);
-        if (!rowHeights.length) {
-            return { sitesTableDensity: { ...fallback, present: true } };
+        const measured = rows
+            .map((row, index) => ({
+                index,
+                text: compactText(row.textContent),
+                height: rectOf(row).height,
+            }))
+            .filter((row) => Number.isFinite(row.height) && row.height > 0);
+        if (!measured.length) {
+            return { managementTableDensity: { ...fallback, present: true } };
         }
 
+        const rowHeights = measured.map((row) => row.height).sort((a, b) => a - b);
         const middle = Math.floor(rowHeights.length / 2);
         const medianRowHeightPx = rowHeights.length % 2 === 0
             ? (rowHeights[middle - 1] + rowHeights[middle]) / 2
             : rowHeights[middle];
-        const maxRowHeightPx = rowHeights[rowHeights.length - 1];
-        const oversizedRows = rows
-            .map((row, index) => {
-                const rowRect = rectOf(row);
-                return {
-                    index,
-                    text: (row.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80),
-                    height: rowRect.height,
-                };
-            })
+        const oversizedRows = measured
             .filter((row) => row.height > maximumRowHeight)
             .slice(0, 20)
-            .map((row) => ({
-                index: row.index,
-                text: row.text,
-                height: roundTo(row.height, 2),
-            }));
+            .map((row) => ({ index: row.index, text: row.text, height: roundTo(row.height, 2) }));
 
         return {
-            sitesTableDensity: {
+            managementTableDensity: {
                 present: true,
                 maximumRowHeight,
                 targetRowHeight,
-                rowCount: rows.length,
+                tolerance,
+                rowCount: measured.length,
                 medianRowHeightPx: roundTo(medianRowHeightPx, 2),
-                maxRowHeightPx: roundTo(maxRowHeightPx, 2),
+                maxRowHeightPx: roundTo(rowHeights[rowHeights.length - 1], 2),
+                passesTarget: medianRowHeightPx <= targetRowHeight + tolerance,
                 oversizedRows,
+            },
+        };
+    }
+
+    // Shared table sizing contract: row controls and toolbar controls are
+    // compact (32px / 34px) with a precise pointer on wide screens and 44px on
+    // narrow or touch contexts; action spacing is 6px / 8px; read-only About
+    // rows reuse the 6px block cell padding. The touch query mirrors app.css so
+    // the expectation switches exactly where the stylesheet does.
+    function tableRhythmAnalyzer(constants = {}, scope = '') {
+        const fallback = {
+            present: false,
+            touchSized: false,
+            controlSizeMismatches: [],
+            toolbarHeightMismatches: [],
+            actionGapMismatches: [],
+            cellPaddingMismatches: [],
+        };
+        if (!['sites', 'ssllabs', 'about'].includes(scope)) {
+            return { tableRhythm: fallback };
+        }
+
+        const tolerance = Number(constants.TABLE_RHYTHM_TOLERANCE_PX ?? 1);
+        const touchSized = window.matchMedia(String(constants.TABLE_TOUCH_SIZING_MEDIA_QUERY || '(max-width: 1199.98px), (hover: none), (pointer: coarse)')).matches;
+        const touchSize = Number(constants.CLICK_TARGET_MIN_SIZE_PX ?? 44);
+        const controlSize = Number(constants.TABLE_CONTROL_SIZE_PX ?? 32);
+        const toolbarSize = Number(constants.TABLE_TOOLBAR_SIZE_PX ?? 34);
+        const actionGap = touchSized
+            ? Number(constants.TABLE_ACTION_GAP_TOUCH_PX ?? 8)
+            : Number(constants.TABLE_ACTION_GAP_PX ?? 6);
+        const cellPaddingBlock = Number(constants.TABLE_CELL_PADDING_BLOCK_PX ?? 6);
+        const visible = (selector) => Array.from(document.querySelectorAll(selector))
+            .filter((el) => el instanceof Element && isVisible(el) && !isVisuallyHidden(el));
+        const describe = (el) => ({
+            tag: el.tagName,
+            className: typeof el.className === 'string' ? el.className.slice(0, 120) : '',
+            text: compactText(el.textContent || el.getAttribute('aria-label')),
+        });
+        const off = (actual, expected) => Math.abs(actual - expected) > tolerance;
+
+        const controlSizeMismatches = visible('table.table--management .btn-sm.btn--icon-only, table.table--management select.form-select-sm')
+            .map((el) => ({ el, rect: rectOf(el) }))
+            .filter(({ rect }) => (touchSized
+                ? rect.height < touchSize - tolerance
+                : off(rect.height, controlSize)))
+            .slice(0, 20)
+            .map(({ el, rect }) => ({
+                ...describe(el),
+                height: roundTo(rect.height, 2),
+                expected: touchSized ? touchSize : controlSize,
+            }));
+
+        const toolbarHeightMismatches = visible([
+            '.sites-search__input',
+            '.ssllabs-filterbar .form-control',
+            '.ssllabs-filterbar .form-select',
+            '.ssllabs-filterbar [data-ssllabs-clear-filters]',
+            '.ssllabs-filterbar__quick-filters',
+        ].join(', '))
+            .map((el) => ({ el, rect: rectOf(el) }))
+            .filter(({ rect }) => off(rect.height, touchSized ? touchSize : toolbarSize))
+            .slice(0, 20)
+            .map(({ el, rect }) => ({
+                ...describe(el),
+                height: roundTo(rect.height, 2),
+                expected: touchSized ? touchSize : toolbarSize,
+            }));
+
+        const actionGapMismatches = visible('table.table--management .cell-actions, table.table--management .ssllabs-domain-card__quick-actions')
+            .filter((el) => el.children.length > 1)
+            .map((el) => ({ el, gap: parseFloat(styleOf(el)?.columnGap) }))
+            .filter(({ gap }) => Number.isFinite(gap) && off(gap, actionGap))
+            .slice(0, 20)
+            .map(({ el, gap }) => ({ ...describe(el), gap: roundTo(gap, 2), expected: actionGap }));
+
+        const cellPaddingMismatches = visible('.about-deps-table tbody td, .about-meta-table td')
+            .map((el) => {
+                const style = styleOf(el);
+                return { el, top: parseFloat(style?.paddingTop), bottom: parseFloat(style?.paddingBottom) };
+            })
+            .filter(({ top, bottom }) => off(top, cellPaddingBlock) || off(bottom, cellPaddingBlock))
+            .slice(0, 20)
+            .map(({ el, top, bottom }) => ({
+                ...describe(el),
+                paddingTop: roundTo(top, 2),
+                paddingBottom: roundTo(bottom, 2),
+                expected: cellPaddingBlock,
+            }));
+
+        return {
+            tableRhythm: {
+                present: true,
+                touchSized,
+                controlSizeMismatches,
+                toolbarHeightMismatches,
+                actionGapMismatches,
+                cellPaddingMismatches,
             },
         };
     }
@@ -2032,8 +2142,8 @@
             .map((row, index) => {
                 const style = styleOf(row);
                 const reasons = [];
-                if (style.display !== 'block') {
-                    reasons.push('notBlock');
+                if (style.display !== 'block' && style.display !== 'grid') {
+                    reasons.push('notBlockOrGrid');
                 }
                 if ((parseFloat(style.borderTopLeftRadius) || 0) < minBorderRadius) {
                     reasons.push('noCardRadius');
@@ -2044,7 +2154,7 @@
                 if (reasons.length === 0) {
                     return null;
                 }
-                const host = (row.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+                const host = compactText(row.textContent);
                 return { index, host, reasons };
             })
             .filter(Boolean)
@@ -2202,7 +2312,8 @@
         const primaryPanelPadding = primaryPanelPaddingAnalyzer(constants);
         const pageStructure = pageStructureAnalyzer();
         const sitesFormControlHeights = sitesFormControlHeightAnalyzer(constants, scope);
-        const sitesTableDensity = sitesTableDensityAnalyzer(constants, scope);
+        const managementTableDensity = managementTableDensityAnalyzer(constants, scope);
+        const tableRhythm = tableRhythmAnalyzer(constants, scope);
         const ssllabsMobileCardLayout = ssllabsMobileCardLayoutAnalyzer(constants, scope);
         const mobileSpacing = mobileSpacingAnalyzer(constants);
         const state = stateAnalyzer();
@@ -2232,7 +2343,8 @@
             ...primaryPanelPadding,
             ...pageStructure,
             ...sitesFormControlHeights,
-            ...sitesTableDensity,
+            ...managementTableDensity,
+            ...tableRhythm,
             ...ssllabsMobileCardLayout,
             ...modalTheme,
             ...mobileSpacing,
@@ -2249,5 +2361,83 @@
         };
     }
 
-    window.__uiLint = { runAll };
+    // ---------------- Preference probes ----------------
+    // Not part of runAll(): audits run under prefers-reduced-motion: reduce, so
+    // collectPreferenceProbes (lib/browser-utils.mjs) switches the media feature
+    // each probe needs, calls it, and restores the audit state afterwards.
+
+    // A toast at rest (not .is-entered) must sit entirely outside the viewport,
+    // or its slide starts and ends with a visible sliver. Probes a throwaway
+    // stack so it does not depend on a flash message being on screen.
+    function toastExitProbe(constants = {}) {
+        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+            return { present: false, offenders: [] };
+        }
+        const count = Math.max(1, numberConstant(constants.TOAST_EXIT_PROBE_COUNT, 3));
+        const stack = document.createElement('div');
+        // Keep in sync with templates/partials/flashes.html.
+        stack.className = 'toast-container app-toast-stack position-fixed bottom-0 end-0 p-3';
+        stack.setAttribute('aria-hidden', 'true');
+        const toasts = Array.from({ length: count }, (_, index) => {
+            const toast = document.createElement('div');
+            toast.className = 'toast toast-slide show';
+            toast.style.transition = 'none';
+            const body = document.createElement('div');
+            body.className = 'toast-body';
+            body.textContent = `UI lint toast probe ${index + 1}`;
+            toast.append(body);
+            stack.append(toast);
+            return toast;
+        });
+        document.body.append(stack);
+        try {
+            const setExitOffset = window.CaddyBuddyApp?.setToastExitOffset;
+            if (typeof setExitOffset === 'function') {
+                toasts.forEach((toast) => setExitOffset(toast));
+            }
+            const offenders = toasts
+                .map((toast, index) => {
+                    const rect = toast.getBoundingClientRect();
+                    const visibleWidth = Math.min(rect.right, window.innerWidth) - Math.max(rect.left, 0);
+                    const visibleHeight = Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 0);
+                    return { index, rect, visibleWidth, visibleHeight };
+                })
+                .filter(({ visibleWidth, visibleHeight }) => visibleWidth > 0 && visibleHeight > 0)
+                .map(({ index, rect, visibleWidth, visibleHeight }) => ({
+                    index,
+                    stackSize: count,
+                    visibleWidth: roundTo(visibleWidth, 2),
+                    visibleHeight: roundTo(visibleHeight, 2),
+                    left: roundTo(rect.left, 2),
+                    top: roundTo(rect.top, 2),
+                    viewportWidth: window.innerWidth,
+                    viewportHeight: window.innerHeight,
+                }));
+            return { present: true, usesExitOffsetHook: typeof setExitOffset === 'function', offenders };
+        } finally {
+            stack.remove();
+        }
+    }
+
+    // Under prefers-reduced-transparency: reduce no element may keep a
+    // backdrop-filter. Hidden elements count too: an overlay such as
+    // .sidebar-backdrop is invisible at audit time but blurs once opened.
+    function reducedTransparencyProbe() {
+        if (!window.matchMedia('(prefers-reduced-transparency: reduce)').matches) {
+            return { present: false, offenders: [] };
+        }
+        const offenders = Array.from(document.querySelectorAll('body *'))
+            .map((el) => ({ el, backdropFilter: styleOf(el)?.backdropFilter || 'none' }))
+            .filter(({ backdropFilter }) => backdropFilter !== 'none')
+            .slice(0, 20)
+            .map(({ el, backdropFilter }) => ({
+                tag: el.tagName,
+                id: el.id || '',
+                className: typeof el.className === 'string' ? el.className : '',
+                backdropFilter,
+            }));
+        return { present: true, offenders };
+    }
+
+    window.__uiLint = { runAll, toastExitProbe, reducedTransparencyProbe };
 })();

@@ -96,7 +96,7 @@
                 </div>
                 <div class="ssllabs-scrollbox">
                     <div class="table-responsive ssllabs-table-wrap">
-                        <table class="table align-middle mb-0 ssllabs-table">
+                        <table class="table table--management align-middle mb-0 ssllabs-table">
                             <caption class="visually-hidden">SSL Labs scan results grouped by configured site and domain.</caption>
                             <colgroup>
                                 <col class="ssllabs-table__site-col">
@@ -121,6 +121,7 @@
                                 {% set scan_status = (row.scan.status or 'unknown') | replace('_', ' ') | title %}
                                 {% endif %}
                                 {% set schedule_select_id = "ssllabs-schedule-" ~ row.target.id %}
+                                {% set schedule_next_run_id = "ssllabs-schedule-next-run-" ~ row.target.id %}
                                 {% set endpoint_display = namespace(has_difference=false) %}
                                 {% if row.scan and row.scan.grade %}
                                 {% for ep in row.endpoints %}
@@ -186,28 +187,28 @@
                                         </div>
                                     </td>
                                     <td data-label="Schedule">
-                                        <form
-                                                            action="{{ request.app.url_path_for('update_ssllabs_schedule', target_id=row.target.id) }}"
-                                                            method="post"
-                                                            class="ssllabs-schedule-form"
-                                                            data-require-csrf
-                                                            data-ssllabs-inline-scheduler>
-                                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                                            <label class="visually-hidden" for="{{ schedule_select_id }}">
-                                                                SSL Labs scan schedule for {{ row.target.host }}
-                                                            </label>
-                                                            <select id="{{ schedule_select_id }}" class="form-select form-select-sm"
-                                                                name="schedule_frequency"
-                                                                aria-label="SSL Labs scan schedule"
-                                                                data-ssllabs-autosave
-                                                                {% if row.host_error %}disabled{% endif %}>
-                                                                <option value="" {% if not row.target.schedule_frequency %}selected{% endif %}>Off</option>
-                                                                <option value="weekly" {% if row.target.schedule_frequency == "weekly" %}selected{% endif %}>Weekly</option>
-                                                                <option value="monthly" {% if row.target.schedule_frequency == "monthly" %}selected{% endif %}>Monthly</option>
-                                                                {% if row.target.next_scheduled_at %}
-                                                                <option disabled data-ui-lint-dynamic>Next run {{ row.target.next_scheduled_at|datetimeformat }}</option>
-                                                                {% endif %}
-                                                            </select>
+                                        <form action="{{ request.app.url_path_for('update_ssllabs_schedule', target_id=row.target.id) }}"
+                                            method="post" class="ssllabs-schedule-form" data-require-csrf
+                                            data-ssllabs-inline-scheduler>
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                            <label class="visually-hidden" for="{{ schedule_select_id }}">
+                                                SSL Labs scan schedule for {{ row.target.host }}
+                                            </label>
+                                            <div class="ssllabs-schedule-form__controls">
+                                                <select id="{{ schedule_select_id }}" class="form-select form-select-sm"
+                                                    name="schedule_frequency" data-ssllabs-autosave
+                                                    {% if row.target.next_scheduled_at %}aria-describedby="{{ schedule_next_run_id }}"{% endif %}
+                                                    {% if row.host_error %}disabled{% endif %}>
+                                                    <option value="" {% if not row.target.schedule_frequency %}selected{% endif %}>Off</option>
+                                                    <option value="weekly" {% if row.target.schedule_frequency == "weekly" %}selected{% endif %}>Weekly</option>
+                                                    <option value="monthly" {% if row.target.schedule_frequency == "monthly" %}selected{% endif %}>Monthly</option>
+                                                </select>
+                                                {% if row.target.next_scheduled_at %}
+                                                <time id="{{ schedule_next_run_id }}" class="ssllabs-schedule-form__next-run"
+                                                    datetime="{{ row.target.next_scheduled_at.isoformat() }}" data-ui-lint-dynamic>Next run {{
+                                                    row.target.next_scheduled_at|datetimeformat }}</time>
+                                                {% endif %}
+                                            </div>
                                         </form>
                                     </td>
                                     <td data-label="Actions" class="ssllabs-actions-cell">
@@ -215,35 +216,52 @@
                                             {% if row.scan_report_available %}
                                             <a href="https://www.ssllabs.com/ssltest/analyze.html?d={{ row.target.host | urlencode }}"
                                                 target="_blank" rel="noopener"
-                                                class="btn btn-sm btn-outline-secondary"
+                                                class="btn btn-sm btn-outline-secondary btn--icon-only"
                                                 title="Open the latest SSL Labs report for {{ row.target.host }}"
-                                                aria-label="Open the latest SSL Labs report for {{ row.target.host }}"
-                                                data-ui-lint-ignore-click-target>Report</a>
+                                                aria-label="Open the latest SSL Labs report for {{ row.target.host }}">
+                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                                                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                                                    <path d="M15 3h6v6"></path>
+                                                    <path d="M10 14 21 3"></path>
+                                                </svg>
+                                            </a>
                                             {% else %}
                                             <button type="button"
-                                                class="btn btn-sm btn-outline-secondary"
+                                                class="btn btn-sm btn-outline-secondary btn--icon-only"
                                                 title="No SSL Labs report available yet for {{ row.target.host }}"
-                                                aria-label="No SSL Labs report available yet for {{ row.target.host }}"
-                                                data-ui-lint-ignore-click-target disabled>Report</button>
+                                                aria-label="No SSL Labs report available yet for {{ row.target.host }}" disabled>
+                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                                                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                                                    <path d="M15 3h6v6"></path>
+                                                    <path d="M10 14 21 3"></path>
+                                                </svg>
+                                            </button>
                                             {% endif %}
                                             <form
                                                             action="{{ request.app.url_path_for('start_ssllabs_scan', target_id=row.target.id) }}"
                                                             method="post"
                                                             class="d-inline-flex"
-                                                            data-loading-submit-form
-                                                            data-ui-lint-ignore-click-target>
+                                                            data-loading-submit-form>
                                                             <input type="hidden" name="csrf_token"
                                                                 value="{{ csrf_token }}">
                                                             <button type="submit" name="mode" value="fresh"
-                                                                class="btn btn-sm btn-outline-secondary ssllabs-scan-action js-confirm"
+                                                                class="btn btn-sm btn-outline-secondary btn--icon-only ssllabs-scan-action js-confirm"
                                                                 data-loading-submit-button
                                                                 data-loading-label="Starting..."
                                                                 data-confirm-title="Start fresh SSL Labs scan"
                                                                 data-confirm="Start a new external SSL Labs assessment for {{ row.target.host }} now?"
                                                                 data-confirm-accept="Start scan"
-                                                                title="Start a new SSL Labs scan for {{ row.target.host }}"
+                                                                title="{% if not row.scan %}Run first SSL Labs scan for {{ row.target.host }}{% else %}Start a new SSL Labs scan for {{ row.target.host }}{% endif %}"
+                                                                aria-label="{% if not row.scan %}Run first SSL Labs scan for {{ row.target.host }}{% else %}Start a new SSL Labs scan for {{ row.target.host }}{% endif %}"
                                                                 data-confirm-btn-class="btn-primary"
-                                                                data-ui-lint-ignore-click-target {% if row.host_error or row.scan_active %}disabled{% endif %}>{% if not row.scan %}Scan now{% else %}Scan{% endif %}</button>
+                                                                {% if row.host_error or row.scan_active %}disabled{% endif %}>
+                                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                                                                    <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                                                                    <path d="M3 3v5h5"></path>
+                                                                    <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path>
+                                                                    <path d="M16 16h5v5"></path>
+                                                                </svg>
+                                                            </button>
                                             </form>
                                         </div>
                                     </td>

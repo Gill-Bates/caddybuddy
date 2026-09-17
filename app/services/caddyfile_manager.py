@@ -585,43 +585,6 @@ async def build_full_caddyfile(session: AsyncSession) -> str:
     return "\n\n".join(parts)
 
 
-async def validate_rendered_caddy_configuration(session: AsyncSession) -> CaddySyncResult:
-    async with _acquire_operation_guard():
-        rendered_config = await build_full_caddyfile(session)
-        rendered_config_sha256 = _sha256_text(rendered_config)
-
-        if not rendered_config.strip():
-            return CaddySyncResult(
-                status="no_change",
-                config_sha256=rendered_config_sha256,
-                synced=False,
-            )
-
-        config = await get_caddy_config(session)
-        settings = get_settings()
-        try:
-            await caddy_service.adapt_caddyfile_to_json(
-                rendered_config,
-                admin_url=config.admin_url,
-                timeout_seconds=settings.caddy_admin_timeout_seconds,
-            )
-        except CaddyServiceError as exc:
-            logger.warning("Rendered Caddy configuration validation failed: %s", exc)
-            return CaddySyncResult(
-                status="validation_failed",
-                config_sha256=rendered_config_sha256,
-                synced=False,
-                error=_error_message("caddy_config_invalid"),
-                error_code="caddy_config_invalid",
-            )
-
-        return CaddySyncResult(
-            status="validated",
-            config_sha256=rendered_config_sha256,
-            synced=False,
-        )
-
-
 async def _auto_reformat_baseline(session: AsyncSession) -> None:
     """Reformat the stored baseline in-place when Caddy reports a format warning."""
     baseline = await get_baseline_caddyfile(session)
@@ -958,20 +921,6 @@ async def onboard_caddy(session: AsyncSession) -> CaddyOnboardingResult:
             snapshot_sha256=snapshot_sha256,
             synced=sync_result.synced,
         )
-
-
-async def import_mounted_caddyfile_if_needed(session: AsyncSession) -> bool:
-    """Onboard a mounted Caddyfile, managing the transaction symmetrically.
-
-    On success the transaction is committed; on failure it is rolled back, so
-    callers do not need to manage commit/rollback themselves.
-    """
-    result = await onboard_caddy(session)
-    if onboarding_succeeded(result.status):
-        await session.commit()
-        return True
-    await session.rollback()
-    return False
 
 
 async def validate_and_deploy_full_caddyfile(session: AsyncSession) -> tuple[bool, str]:

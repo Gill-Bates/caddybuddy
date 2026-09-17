@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+    TABLE_VIEW_EXTRA_DEVICES,
     TWO_FACTOR_CHALLENGE_VIEWS,
     TWO_FACTOR_RECOVERY_VIEWS,
     TWO_FACTOR_SETUP_VIEWS,
@@ -29,4 +30,30 @@ test('two-factor pages stay out of the regular authenticated matrix', () => {
     for (const view of [...TWO_FACTOR_CHALLENGE_VIEWS, ...TWO_FACTOR_SETUP_VIEWS, ...TWO_FACTOR_RECOVERY_VIEWS]) {
         assert.equal(regularUrls.has(view.url), false, view.name);
     }
+});
+
+test('table pages add the laptop, small phone and 200% zoom acceptance contexts', () => {
+    for (const url of ['/sites', '/ssl-labs', '/about']) {
+        const devices = new Set(VIEWS.filter((view) => view.url === url).map((view) => view.device));
+        for (const device of TABLE_VIEW_EXTRA_DEVICES) {
+            assert.ok(devices.has(device), `${url} ${device}`);
+        }
+    }
+    const dashboardDevices = new Set(VIEWS.filter((view) => view.url === '/').map((view) => view.device));
+    assert.deepEqual(dashboardDevices, new Set(['desktop', 'large-desktop', 'tablet', 'mobile']));
+    assert.ok(VIEWS.every((view) => !('extraDevices' in view)));
+});
+
+test('modal views open every app modal on their own reduced device matrix', () => {
+    const modalViews = VIEWS.filter((view) => view.modal);
+    assert.deepEqual(
+        new Set(modalViews.map((view) => view.modal)),
+        new Set(['#confirmActionModal', '#addPasskeyModal', '#site-form-modal']),
+    );
+    const devicesFor = (modal) => new Set(modalViews.filter((view) => view.modal === modal).map((view) => view.device));
+    assert.deepEqual(devicesFor('#confirmActionModal'), new Set(['desktop', 'mobile']));
+    assert.deepEqual(devicesFor('#addPasskeyModal'), new Set(['desktop', 'mobile']));
+    assert.deepEqual(devicesFor('#site-form-modal'), new Set(['mobile', 'mobile-small']));
+    assert.ok(VIEWS.every((view) => !('devices' in view)));
+    assert.equal(VIEWS.find((view) => view.modal === '#addPasskeyModal').tab, '#settingsPasskeyTab');
 });

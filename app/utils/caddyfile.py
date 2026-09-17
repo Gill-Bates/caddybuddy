@@ -77,49 +77,6 @@ _SECURITY_HEADER_NAMES = frozenset(
     }
 )
 
-CADDY_DIRECTIVES_EXAMPLE = """reverse_proxy 10.30.0.140:8000 {
-    transport http {
-        keepalive 30s
-    }
-
-    header_up Host {host}
-    header_up Authorization {http.request.header.Authorization}
-}
-
-encode gzip
-
-header {
-    Strict-Transport-Security \"max-age=31536000; includeSubDomains; preload\"
-    X-Content-Type-Options \"nosniff\"
-    X-Frame-Options \"DENY\"
-    Referrer-Policy \"strict-origin-when-cross-origin\"
-    -Server
-    -X-Powered-By
-}
-
-request_body {
-    max_size 100MB
-}
-
-log {
-    output file /var/log/caddy/access.log {
-        roll_size 10mb
-    }
-}"""
-
-
-@dataclass(slots=True)
-class DomainDirectiveFormState:
-    upstream: str | None = None
-    reverse_proxy_options: str = ""
-    encode_directives: str = ""
-    header_directives: str = ""
-    request_body_directives: str = ""
-    log_directives: str = ""
-    tls_directives: str = ""
-    basic_auth_directives: str = ""
-    custom_directives: str = ""
-
 
 @dataclass(slots=True, frozen=True)
 class DomainDirectiveBuildResult:
@@ -339,86 +296,6 @@ def _split_block_header_and_body(chunk: str) -> tuple[str, str | None]:
     return first_line, _normalize_block_body("\n".join(lines[1:]))
 
 
-def parse_domain_directive_form_state(
-    directives: str | None,
-    *,
-    upstream_fallback: str | None = None,
-) -> DomainDirectiveFormState:
-    """Split stored directives into managed blocks and additional custom directives."""
-    normalized_directives = normalize_caddy_directives(directives or "")
-    if normalized_directives is None:
-        return DomainDirectiveFormState(upstream=upstream_fallback)
-
-    state = DomainDirectiveFormState(upstream=upstream_fallback)
-    custom_chunks: list[str] = []
-
-    try:
-        chunks = _split_top_level_directives(normalized_directives)
-    except ValueError:
-        return DomainDirectiveFormState(
-            upstream=upstream_fallback,
-            custom_directives=normalized_directives,
-        )
-
-    for chunk in chunks:
-        header, body = _split_block_header_and_body(chunk)
-        if header.startswith("reverse_proxy "):
-            args = header.removeprefix("reverse_proxy ").split()
-            if len(args) == 1 and state.upstream is None:
-                state.upstream = args[0]
-                state.reverse_proxy_options = body or ""
-                continue
-            custom_chunks.append(chunk)
-            continue
-
-        if header.startswith("encode ") and body is None:
-            if not state.encode_directives:
-                state.encode_directives = header.removeprefix("encode ").strip()
-            else:
-                custom_chunks.append(chunk)
-            continue
-
-        if header == "header":
-            if not state.header_directives:
-                state.header_directives = body or ""
-            else:
-                custom_chunks.append(chunk)
-            continue
-
-        if header == "request_body":
-            if not state.request_body_directives:
-                state.request_body_directives = body or ""
-            else:
-                custom_chunks.append(chunk)
-            continue
-
-        if header == "log":
-            if not state.log_directives:
-                state.log_directives = body or ""
-            else:
-                custom_chunks.append(chunk)
-            continue
-
-        if header == "tls":
-            if not state.tls_directives:
-                state.tls_directives = body or ""
-            else:
-                custom_chunks.append(chunk)
-            continue
-
-        if header in {"basic_auth", "basicauth"}:
-            if not state.basic_auth_directives:
-                state.basic_auth_directives = body or ""
-            else:
-                custom_chunks.append(chunk)
-            continue
-
-        custom_chunks.append(chunk)
-
-    state.custom_directives = "\n\n".join(custom_chunks)
-    return state
-
-
 def build_domain_directives(
     *,
     upstream: str | None,
@@ -636,14 +513,6 @@ SNIPPET_SECURITY_HEADERS = """\
         Referrer-Policy "strict-origin-when-cross-origin"
         -Server
         -X-Powered-By
-    }
-}"""
-
-SNIPPET_DEFAULT_LOG = """\
-(default_log) {
-    log {
-        output stdout
-        format json
     }
 }"""
 

@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import hmac
-import os
 import unittest
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -18,39 +17,22 @@ import bcrypt
 from pydantic import SecretStr
 
 from app.config.settings import get_settings
+from tests.env_overrides import ModuleEnv
 
-_ENV_OVERRIDES = {
-    "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CB_ADMIN_PASSWORD": "UnitTestPassword-123A",
-    "CADDYBUDDY_ADMIN_PASSWORD": "UnitTestPassword-123A",
-}
-_ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}
-
-for key, value in _ENV_OVERRIDES.items():
-    os.environ[key] = value
-
-get_settings.cache_clear()
+_ENV = ModuleEnv()
 
 import app.services.auth as auth_module
 from app.services.auth import AuthService, WeakPasswordError
 
 
 def tearDownModule() -> None:
-    for key, original_value in _ORIGINAL_ENV.items():
-        if original_value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = original_value
-    get_settings.cache_clear()
+    _ENV.restore()
     auth_module._password_pepper_bytes.cache_clear()
 
 
 class AuthServiceTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        for key, value in _ENV_OVERRIDES.items():
-            os.environ[key] = value
-        get_settings.cache_clear()
+        _ENV.apply()
         auth_module._password_pepper_bytes.cache_clear()
         auth_module._otp_fernet.cache_clear()
         auth_module._recovery_code_key.cache_clear()

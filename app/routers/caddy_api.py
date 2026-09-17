@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.limiter import limiter
 from app.database.session import get_db_session
-from app.dependencies.web import get_session_user
+from app.dependencies.web import require_admin_api_user
 from app.models.entities import User
 from app.repositories.sites import DuplicateSiteError, site_repository
 from app.schemas.caddy import (
@@ -76,24 +76,12 @@ async def _publish_site_event(action: str, site_id: int) -> None:
         logger.exception("Failed to publish site event", extra={"action": action, "site_id": site_id})
 
 
-async def _require_admin_api_user(
-    request: Request,
-    session: AsyncSession = Depends(get_db_session),
-) -> User:
-    current_user = await get_session_user(request, session)
-    if current_user is None:
-        raise HTTPException(status_code=401, detail="Authentication required.")
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Administrator access is required.")
-    return current_user
-
-
 @router.get("/caddy/status", response_model=CaddyStatusResponse)
 @limiter.limit("30/minute")
 async def caddy_status(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
-    _current_user: User = Depends(_require_admin_api_user),
+    _current_user: User = Depends(require_admin_api_user),
 ) -> CaddyStatusResponse:
     # SlowAPI requires the Request parameter in the endpoint signature.
     del request
@@ -115,7 +103,7 @@ async def caddy_onboard(
     request: Request,
     response: Response,
     session: AsyncSession = Depends(get_db_session),
-    _current_user: User = Depends(_require_admin_api_user),
+    _current_user: User = Depends(require_admin_api_user),
 ) -> CaddyOnboardResponse:
     # SlowAPI requires the Request parameter in the endpoint signature.
     del request
@@ -142,7 +130,7 @@ async def caddy_sync(
     request: Request,
     response: Response,
     session: AsyncSession = Depends(get_db_session),
-    _current_user: User = Depends(_require_admin_api_user),
+    _current_user: User = Depends(require_admin_api_user),
 ) -> CaddySyncResponse:
     # SlowAPI requires the Request parameter in the endpoint signature.
     del request
@@ -168,7 +156,7 @@ async def caddy_sync(
 async def list_sites(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
-    _current_user: User = Depends(_require_admin_api_user),
+    _current_user: User = Depends(require_admin_api_user),
 ) -> list[SiteResponse]:
     del request
     sites = await site_repository.list_all(session)
@@ -182,7 +170,7 @@ async def create_site(
     request: Request,
     response: Response,
     session: AsyncSession = Depends(get_db_session),
-    _current_user: User = Depends(_require_admin_api_user),
+    _current_user: User = Depends(require_admin_api_user),
 ) -> SiteMutationResponse:
     # SlowAPI requires the Request parameter in the endpoint signature.
     del request
@@ -222,7 +210,7 @@ async def update_site(
     request: Request,
     response: Response,
     session: AsyncSession = Depends(get_db_session),
-    _current_user: User = Depends(_require_admin_api_user),
+    _current_user: User = Depends(require_admin_api_user),
 ) -> SiteMutationResponse:
     # SlowAPI requires the Request parameter in the endpoint signature.
     del request
@@ -268,7 +256,7 @@ async def delete_site(
     request: Request,
     response: Response,
     session: AsyncSession = Depends(get_db_session),
-    _current_user: User = Depends(_require_admin_api_user),
+    _current_user: User = Depends(require_admin_api_user),
 ) -> SiteDeleteResponse:
     # SlowAPI requires the Request parameter in the endpoint signature.
     del request

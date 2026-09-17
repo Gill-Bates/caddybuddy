@@ -9,20 +9,9 @@ from __future__ import annotations
 import errno
 import os
 
-_ENV_OVERRIDES = {
-    "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CB_ADMIN_PASSWORD": "UnitTestPassword-123A",
-    "CADDYBUDDY_ADMIN_PASSWORD": "UnitTestPassword-123A",
-}
-_ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}
+from tests.env_overrides import ModuleEnv
 
-for key, value in _ENV_OVERRIDES.items():
-    os.environ[key] = value
-
-from app.config.settings import get_settings
-
-get_settings.cache_clear()
+_ENV = ModuleEnv()
 
 import asyncio
 import tempfile
@@ -40,12 +29,7 @@ from app.services import caddyfile_manager
 
 
 def tearDownModule() -> None:
-    for key, original_value in _ORIGINAL_ENV.items():
-        if original_value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = original_value
-    get_settings.cache_clear()
+    _ENV.restore()
 from app.models.base import Base
 from app.models.entities import CaddyBuddyState, CaddyfileSnapshot, Site
 from app.services.caddy import CaddyServiceError
@@ -611,19 +595,6 @@ example.com {
         self.assertEqual(result.status, "error")
         self.assertEqual(result.error_code, "caddy_admin_unavailable")
 
-    async def test_import_mounted_caddyfile_if_needed_rolls_back_on_failure(self) -> None:
-        session = SimpleNamespace(rollback=AsyncMock())
-
-        with patch.object(
-            caddyfile_manager,
-            "onboard_caddy",
-            new=AsyncMock(return_value=SimpleNamespace(status="error")),
-        ):
-            result = await caddyfile_manager.import_mounted_caddyfile_if_needed(session)
-
-        self.assertFalse(result)
-        session.rollback.assert_awaited_once()
-
     async def test_sync_reports_admin_api_timeout(self) -> None:
         caddyfile_path = self.temp_path / "Caddyfile"
         caddyfile_path.write_text('example.com {\n    respond "ok" 200\n}\n', encoding="utf-8")
@@ -723,36 +694,6 @@ example.com {
         self.assertEqual(result.error_code, "caddy_admin_unavailable")
         # The raw Admin API detail is logged, not surfaced; the result stays generic.
         self.assertEqual(result.error, "Caddy Admin API unavailable.")
-
-    async def test_validate_rendered_config_uses_runtime_admin_url(self) -> None:
-        caddyfile_path = self.temp_path / "Caddyfile"
-        caddyfile_path.write_text(caddyfile_manager.MANAGED_CADDYFILE_MARKER + "\n", encoding="utf-8")
-        self.current_caddyfile_path = caddyfile_path
-        caddy_settings = SimpleNamespace(caddy_api_url="http://caddy:2019", caddy_admin_timeout_seconds=4.0)
-
-        async with self.session_factory() as session:
-            with (
-                patch.object(caddyfile_manager, "get_settings", return_value=self._settings(caddyfile_path)),
-                patch("app.services.caddy.get_settings", return_value=caddy_settings),
-                patch.object(
-                    caddyfile_manager,
-                    "get_caddy_config",
-                    new=AsyncMock(return_value=SimpleNamespace(
-                        admin_url="http://caddy:2019",
-                        caddyfile_path=caddyfile_path,
-                        caddyfile_path_str=str(caddyfile_path),
-                    )),
-                ),
-                patch.object(
-                    caddyfile_manager.CaddyAdminClient,
-                    "adapt_caddyfile",
-                    new=AsyncMock(return_value=({"apps": {}}, [])),
-                ) as adapt_mock,
-            ):
-                result = await caddyfile_manager.validate_rendered_caddy_configuration(session)
-
-        self.assertEqual(result.status, "validated")
-        adapt_mock.assert_awaited_once()
 
     async def test_sync_adapts_via_admin_client_and_calls_load_config_force(self) -> None:
         caddyfile_path = self.temp_path / "Caddyfile"

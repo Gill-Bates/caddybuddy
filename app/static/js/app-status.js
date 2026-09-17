@@ -698,9 +698,14 @@
             const summaryClass = isValid ? "site-cert__summary--valid" : "site-cert__summary--expired";
             const statusText = isValid ? "Valid" : "Expired";
             const issuedAt = formatDate(cert.issued_at);
-            const daysMarkup = Number.isInteger(cert.days_remaining) && cert.days_remaining > 0
-                ? `<span class="site-cert__days">${escapeHtml(`${cert.days_remaining}d remaining`)}</span>`
-                : "";
+            const daysRemaining = Number.isInteger(cert.days_remaining) && cert.days_remaining > 0
+                ? cert.days_remaining
+                : null;
+            // Keep in sync with sites.html: the pill reads "68d" visually and
+            // "68 days remaining" to screen readers.
+            const daysMarkup = daysRemaining === null
+                ? ""
+                : `<span class="site-cert__days"><span aria-hidden="true">${escapeHtml(`${daysRemaining}d`)}</span><span class="visually-hidden">${escapeHtml(`${daysRemaining} days remaining`)}</span></span>`;
             const issuedMarkup = issuedAt
                 ? `<div class="site-cert__issued">Issued ${escapeHtml(issuedAt)}</div>`
                 : "";
@@ -710,18 +715,20 @@
             const sourceMarkup = source === "remote"
                 ? `<div class="site-cert__issued">Source remote</div>`
                 : "";
+            // .site-cert__meta is a gapless flex row, so the entries need an
+            // explicit separator or they run together ("Issued …via …").
+            const metaEntries = [issuedMarkup, wildcardMarkup, sourceMarkup].filter(Boolean);
+            const metaMarkup = metaEntries.length > 0
+                ? `<div class="site-cert__meta">${metaEntries.join('<span aria-hidden="true">&nbsp;·&nbsp;</span>')}</div>`
+                : "";
 
             cell.innerHTML = `
                 <div class="site-cert__summary ${summaryClass}">
                     <span class="status-dot ${statusClass}" aria-hidden="true"></span>
-                    <span class="site-cert__status">${statusText}</span>
+                    <span class="site-cert__status">${escapeHtml(statusText)}</span>
                     ${daysMarkup}
                 </div>
-                <div class="site-cert__meta">
-                    ${issuedMarkup}
-                    ${wildcardMarkup}
-                    ${sourceMarkup}
-                </div>
+                ${metaMarkup}
             `;
         };
 

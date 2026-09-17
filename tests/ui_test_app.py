@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Literal
@@ -21,6 +22,13 @@ type StubRouteMethod = Literal["GET", "POST"]
 type StubRoute = tuple[StubRouteMethod, str, str]
 
 _STATIC_DIR = Path(__file__).resolve().parents[1] / "app" / "static"
+
+
+def extract_csrf_token(html: str) -> str:
+    match = re.search(r'name="csrf_token" value="([^"]+)"', html)
+    if match is None:
+        raise AssertionError("csrf_token input not found in page")
+    return match.group(1)
 
 
 def _add_stub_route(app: FastAPI, method: StubRouteMethod, path: str, name: str) -> None:

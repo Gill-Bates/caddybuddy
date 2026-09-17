@@ -85,10 +85,16 @@ ssllabs_retention_values else 0 %}
                                 <form action="{{ request.app.url_path_for('restart_onboarding_wizard') }}" method="post"
                                     class="d-inline">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                    <button type="submit" class="btn btn-outline-warning js-confirm"
+                                    <button type="submit" class="btn btn-primary js-confirm"
                                         data-confirm-title="Restart onboarding wizard"
                                         data-confirm="This will reset the onboarding wizard and reopen step 1."
-                                        data-confirm-accept="Restart wizard" data-confirm-btn-class="btn-warning">
+                                        data-confirm-accept="Restart wizard" data-confirm-btn-class="btn-primary">
+                                        <!-- Material Symbols "autorenew" (wght100, outlined) -->
+                                        <svg class="restart-onboarding__icon" viewBox="0 -960 960 960"
+                                            fill="currentColor" aria-hidden="true" focusable="false">
+                                            <path
+                                                d="M211-362q-12-27-18.5-56.5T186-478q0-123 86-209.5T480-774h70l-90-90 20-20 124 124-124 124-20-20 90-90h-70q-111 0-188.5 78T214-478q0 23 4.5 47.5T232-383l-21 21ZM480-76 356-200l124-124 20 20-90 90h70q111 0 188.5-78T746-482q0-23-4.5-47.5T728-577l21-21q12 27 18.5 56.5T774-482q0 123-86 209.5T480-186h-70l90 90-20 20Z" />
+                                        </svg>
                                         Restart onboarding wizard
                                     </button>
                                 </form>
@@ -216,16 +222,15 @@ ssllabs_retention_values else 0 %}
             </div>
 </section>
 
+{% set passkey_start_url = optional_url_path_for(request, 'start_passkey_registration') %}
+{% set passkey_finish_url = optional_url_path_for(request, 'finish_passkey_registration') %}
 <section class="tab-pane fade" id="settingsPasskeyPanel" role="tabpanel" aria-labelledby="settingsPasskeyTab"
-    tabindex="0">
+    tabindex="0" {% if passkey_start_url and passkey_finish_url %}data-passkey-settings
+    data-passkey-start-url="{{ passkey_start_url }}" data-passkey-finish-url="{{ passkey_finish_url }}"
+    data-passkey-reload-url="{{ request.app.url_path_for('settings_page') }}" {% endif %}>
     <div class="row g-4">
-        {% set passkey_start_url = optional_url_path_for(request, 'start_passkey_registration') %}
-        {% set passkey_finish_url = optional_url_path_for(request, 'finish_passkey_registration') %}
         <div class="col-12">
-            <div class="panel-card settings-panel" id="passkey-settings" {% if passkey_start_url and
-                passkey_finish_url %}data-passkey-settings data-passkey-start-url="{{ passkey_start_url }}"
-                data-passkey-finish-url="{{ passkey_finish_url }}"
-                data-passkey-reload-url="{{ request.app.url_path_for('settings_page') }}" {% endif %}>
+            <div class="panel-card settings-panel" id="passkey-settings">
                 <div class="panel-card__header">
                     <h2 class="h5 mb-0">
                         <svg class="settings-panel__icon" viewBox="0 -960 960 960" fill="currentColor"
@@ -249,12 +254,30 @@ ssllabs_retention_values else 0 %}
                         This browser does not support passkeys.
                     </div>
 
-                    <div class="passkey-management">
-                        <section class="passkey-management__list" aria-labelledby="registered-passkeys-title">
-                            <h3 id="registered-passkeys-title" class="passkey-management__section-title">Registered
-                                passkeys</h3>
+                    {% set passkey_limit_reached = passkeys | length >= passkey_limit %}
+                    <div class="passkey-management__actions">
+                        <button type="button" class="btn btn-primary btn-sm" data-passkey-add-button
+                            {% if passkey_limit_reached %}disabled aria-describedby="passkey-limit-hint"
+                            {% else %}data-bs-toggle="modal" data-bs-target="#addPasskeyModal"{% endif %}>
+                            <svg class="passkey-management__actions-icon" viewBox="0 -960 960 960" fill="currentColor"
+                                aria-hidden="true" focusable="false">
+                                <path
+                                    d="M453-280h60v-166h167v-60H513v-174h-60v174H280v60h173v166Zm27.27 200q-82.74 0-155.5-31.5Q252-143 197.5-197.5t-86-127.34Q80-397.68 80-480.5t31.5-155.66Q143-709 197.5-763t127.34-85.5Q397.68-880 480.5-880t155.66 31.5Q709-817 763-763t85.5 127Q880-563 880-480.27q0 82.74-31.5 155.5Q817-252 763-197.68q-54 54.31-127 86Q563-80 480.27-80Z" />
+                            </svg>
+                            Add passkey
+                        </button>
+                        {% if passkey_limit_reached %}
+                        <p class="form-text mb-0" id="passkey-limit-hint">
+                            The maximum of {{ passkey_limit }} passkeys is registered. Remove one to add another.
+                        </p>
+                        {% endif %}
+                    </div>
 
-                            {% if passkeys %}
+                    <section class="passkey-management__list" aria-labelledby="registered-passkeys-title">
+                        <h3 id="registered-passkeys-title" class="passkey-management__section-title">Registered
+                            passkeys</h3>
+
+                        {% if passkeys %}
                             <ul class="passkey-list" aria-label="Registered passkeys">
                                 {% for passkey in passkeys %}
                                 <li class="passkey-list__item">
@@ -306,33 +329,37 @@ ssllabs_retention_values else 0 %}
                             {% endif %}
                         </section>
 
-                        <section class="passkey-management__add" aria-labelledby="add-passkey-title">
-                            <h3 id="add-passkey-title" class="passkey-management__section-title">Add a passkey</h3>
+                </div>
+            </div>
+        </div>
+    </div>
 
-                            {% if passkeys | length < passkey_limit %} <label for="passkey-device-name"
-                                class="form-label">Device name (optional)</label>
-                                <input type="text" class="form-control" id="passkey-device-name" maxlength="100"
-                                    placeholder="e.g. MacBook Touch ID" autocomplete="off" spellcheck="false"
-                                    data-passkey-device-name>
-                                <div class="form-text">Helps you recognize this passkey later.</div>
-                                <label for="passkey-current-password" class="form-label mt-3">Current
-                                    password</label>
-                                <input type="password" class="form-control" id="passkey-current-password"
-                                    placeholder="Current password" required autocomplete="current-password"
-                                    data-passkey-current-password>
-                                <button type="button" class="btn btn-primary mt-3" data-passkey-register-button>
-                                    <span class="spinner-border spinner-border-sm me-2 d-none" role="status"
-                                        data-passkey-spinner></span>
-                                    <span data-passkey-label>Add passkey</span>
-                                </button>
-                                {% else %}
-                                <p class="form-text mb-0">
-                                    The maximum of {{ passkey_limit }} passkeys is registered. Remove one to add
-                                    another.
-                                </p>
-                                {% endif %}
-                        </section>
-                    </div>
+    <div class="modal fade" id="addPasskeyModal" tabindex="-1" aria-labelledby="addPasskeyModalLabel"
+        aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 class="modal-title h5" id="addPasskeyModalLabel">Add a passkey</h2>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <label for="passkey-device-name" class="form-label">Device name (optional)</label>
+                    <input type="text" class="form-control" id="passkey-device-name" maxlength="100"
+                        placeholder="e.g. MacBook Touch ID" autocomplete="off" spellcheck="false"
+                        data-passkey-device-name>
+                    <div class="form-text">Helps you recognize this passkey later.</div>
+                    <label for="passkey-current-password" class="form-label mt-3">Current password</label>
+                    <input type="password" class="form-control" id="passkey-current-password"
+                        placeholder="Current password" required autocomplete="current-password"
+                        data-passkey-current-password>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" data-passkey-register-button>
+                        <span class="spinner-border spinner-border-sm me-2 d-none" role="status"
+                            data-passkey-spinner></span>
+                        <span data-passkey-label>Add passkey</span>
+                    </button>
                 </div>
             </div>
         </div>

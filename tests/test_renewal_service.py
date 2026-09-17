@@ -5,7 +5,6 @@
 #
 
 import asyncio
-import os
 import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
@@ -13,14 +12,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-_ENV_OVERRIDES = {
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CADDYBUDDY_ADMIN_PASSWORD": "unit-test-password",
-}
-_ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}
+from tests.env_overrides import ModuleEnv
 
-for key, value in _ENV_OVERRIDES.items():
-    os.environ[key] = value
+_ENV = ModuleEnv(
+    {
+        "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
+        "CADDYBUDDY_ADMIN_PASSWORD": "unit-test-password",
+    }
+)
 
 from app.models.entities import Site
 from app.services.caddy import CaddyServiceError
@@ -34,11 +33,7 @@ from app.services.renewal import CertificateRenewalService, renewal_file_lock
 
 
 def tearDownModule() -> None:
-    for key, original_value in _ORIGINAL_ENV.items():
-        if original_value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = original_value
+    _ENV.restore()
 
 class RenewalServiceTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:

@@ -141,21 +141,66 @@ class EventBusTests(unittest.IsolatedAsyncioTestCase):
             async with asyncio.timeout(1):
                 await wait_task
 
-    async def test_cancelled_iteration_releases_active_subscriber(self) -> None:
+    async def test_cancelled_iteration_keeps_subscriber_registered(self) -> None:
+        """The SSE heartbeat cancels a pending read via asyncio.wait_for on every
+        idle tick; that must not end the stream or drop later events."""
+        bus = EventBus()
+        events = bus.subscribe()
+
+        with self.assertRaises(TimeoutError):
+            await asyncio.wait_for(anext(events), timeout=0.01)
+
+        self.assertEqual(bus.subscriber_count, 1)
+
+        next_event = asyncio.create_task(anext(events))
+        await asyncio.sleep(0)
+        await bus.publish(ResourceEvent(resource_type="site", action="updated", resource_id="1"))
+        async with asyncio.timeout(1):
+            received = await next_event
+        self.assertEqual(received.action, "updated")
+
+        await events.aclose()
+        self.assertEqual(bus.subscriber_count, 0)
+
+    async def test_close_from_bus_releases_active_subscriber_and_wakes_reader(self) -> None:
         bus = EventBus()
         events = bus.subscribe()
 
         wait_task = asyncio.create_task(anext(events))
         await self._wait_for_subscriber_count(bus, 1)
 
-        self.assertEqual(bus.subscriber_count, 1)
+        events.close_from_bus()
 
+        self.assertEqual(bus.subscriber_count, 0)
+        with self.assertRaises(StopAsyncIteration):
+            async with asyncio.timeout(1):
+                await wait_task
+
+    async def test_aclose_on_pending_subscriber_prevents_activation(self) -> None:
+        bus = EventBus()
+        events = bus.subscribe()
+
+        await events.aclose()
+
+        self.assertEqual(bus.subscriber_count, 0)
+        with self.assertRaises(StopAsyncIteration):
+            await anext(events)
+        self.assertEqual(bus.subscriber_count, 0)
+
+    async def test_close_from_bus_after_aclose_is_a_no_op(self) -> None:
+        bus = EventBus()
+        events = bus.subscribe()
+
+        wait_task = asyncio.create_task(anext(events))
+        await self._wait_for_subscriber_count(bus, 1)
         wait_task.cancel()
         with suppress(asyncio.CancelledError):
             await wait_task
 
-        self.assertEqual(bus.subscriber_count, 0)
+        await events.aclose()
+        events.close_from_bus()
 
+        self.assertEqual(bus.subscriber_count, 0)
         with self.assertRaises(StopAsyncIteration):
             await anext(events)
 

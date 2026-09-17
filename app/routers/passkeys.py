@@ -28,9 +28,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.limiter import limiter
 from app.database.session import get_db_session
 from app.dependencies.web import (
-    get_session_user,
     initialize_pending_otp_session,
     initialize_user_session,
+    require_api_user,
     safe_redirect_path,
 )
 from app.models.entities import User
@@ -58,16 +58,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/passkeys", tags=["passkeys"])
 
 
-async def _require_api_user(
-    request: Request,
-    session: AsyncSession = Depends(get_db_session),
-) -> User:
-    current_user = await get_session_user(request, session)
-    if current_user is None:
-        raise HTTPException(status_code=401, detail="Authentication required.")
-    return current_user
-
-
 def _ceremony_http_error(exc: PasskeyError, *, unauthenticated: bool) -> HTTPException:
     """Map a ceremony failure onto a status code without leaking internals."""
     if isinstance(exc, PasskeyConfigurationError):
@@ -88,7 +78,7 @@ def _ceremony_http_error(exc: PasskeyError, *, unauthenticated: bool) -> HTTPExc
 async def start_passkey_registration(
     request: Request,
     payload: PasskeyRegistrationStartRequest,
-    current_user: User = Depends(_require_api_user),
+    current_user: User = Depends(require_api_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> PasskeyOptionsResponse:
     if not await auth_service.verify_password(payload.current_password, current_user.password_hash):
@@ -107,7 +97,7 @@ async def start_passkey_registration(
 async def finish_passkey_registration(
     request: Request,
     payload: PasskeyRegistrationFinishRequest,
-    current_user: User = Depends(_require_api_user),
+    current_user: User = Depends(require_api_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> PasskeyRegistrationFinishResponse:
     try:

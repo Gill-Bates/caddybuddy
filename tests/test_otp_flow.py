@@ -11,7 +11,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import os
 import re
 import tempfile
 import time
@@ -25,19 +24,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.config.limiter import limiter
 from app.config.settings import get_settings
 from app.utils.hidden_captcha import CaptchaOutcome
+from tests.env_overrides import ModuleEnv
 
-_ENV_OVERRIDES = {
-    "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CB_ADMIN_PASSWORD": "UnitTestPassword-123A",
-    "CADDYBUDDY_ADMIN_PASSWORD": "UnitTestPassword-123A",
-}
-_ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}
-
-for key, value in _ENV_OVERRIDES.items():
-    os.environ[key] = value
-
-get_settings.cache_clear()
+_ENV = ModuleEnv()
 
 from fastapi.testclient import TestClient
 
@@ -54,12 +43,7 @@ _PASSWORD = "Password123!"
 
 
 def tearDownModule() -> None:
-    for key, original_value in _ORIGINAL_ENV.items():
-        if original_value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = original_value
-    get_settings.cache_clear()
+    _ENV.restore()
     _clear_key_caches()
 
 
@@ -90,9 +74,7 @@ class _OtpDatabaseTestCase(unittest.IsolatedAsyncioTestCase):
     """Temporary SQLite database with one admin account and a controllable TOTP clock."""
 
     async def asyncSetUp(self) -> None:
-        for key, value in _ENV_OVERRIDES.items():
-            os.environ[key] = value
-        get_settings.cache_clear()
+        _ENV.apply()
         _clear_key_caches()
 
         self._temp_dir = tempfile.TemporaryDirectory()

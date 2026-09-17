@@ -14,13 +14,14 @@ from functools import cache
 from hashlib import sha256, sha384
 from urllib.parse import unquote
 
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.routing import NoMatchFound
 
 from app.config.settings import get_settings
+from app.database.session import get_db_session
 from app.models.entities import User
 from app.repositories.users import user_repository
 from app.services.build_info import get_build_info
@@ -235,6 +236,35 @@ async def get_session_user(request: Request, session: AsyncSession) -> User | No
     return user
 
 
+async def require_api_user(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+) -> User:
+    """Resolve the session user for JSON API routes, raising 401 when anonymous.
+
+    UI routes use ``app.routers.ui._common.require_user`` instead, which returns
+    ``None`` so the page can render a flash/redirect rather than an error body.
+    """
+    current_user = await get_session_user(request, session)
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    return current_user
+
+
+async def require_admin_api_user(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+) -> User:
+    """Resolve the session user for admin-only JSON API routes.
+
+    Raises 401 when anonymous and 403 when the user is not an administrator.
+    """
+    current_user = await require_api_user(request, session)
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Administrator access is required.")
+    return current_user
+
+
 def ensure_csrf_token(request: Request) -> str:
     """Return the session-bound CSRF token in signed form for form rendering."""
     token = request.session.get("csrf_token")
@@ -348,11 +378,6 @@ def initialize_user_session(request: Request, user: User) -> None:
         "session_last_activity": now,
         "user_fingerprint": user_session_fingerprint(user),
     })
-
-
-def refresh_session_timestamps(request: Request) -> None:
-    """Refresh session activity without resetting the absolute session age."""
-    request.session["session_last_activity"] = time.time()
 
 
 def render_template(

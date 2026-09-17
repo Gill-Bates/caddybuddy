@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -15,25 +14,22 @@ from unittest.mock import AsyncMock, patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-_ENV_OVERRIDES = {
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CADDYBUDDY_ADMIN_PASSWORD": "unit-test-password",
-}
-_ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}
+from tests.env_overrides import ModuleEnv
 
-for key, value in _ENV_OVERRIDES.items():
-    os.environ[key] = value
+_ENV = ModuleEnv(
+    {
+        "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
+        "CADDYBUDDY_ADMIN_PASSWORD": "unit-test-password",
+    }
+)
 
+import app.dependencies.web as web_dependencies
 import app.routers.api as system_api
 from app.database.session import get_db_session
 
 
 def tearDownModule() -> None:
-    for key, original_value in _ORIGINAL_ENV.items():
-        if original_value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = original_value
+    _ENV.restore()
 
 
 def _build_app(session: object) -> FastAPI:
@@ -53,7 +49,7 @@ class ApiRouterTests(unittest.TestCase):
 
         with (
             TestClient(app) as client,
-            patch.object(system_api, "get_session_user", new=AsyncMock(return_value=None)),
+            patch.object(web_dependencies, "get_session_user", new=AsyncMock(return_value=None)),
         ):
             response = client.get("/api/v1/events")
 
@@ -69,7 +65,7 @@ class ApiRouterTests(unittest.TestCase):
 
         with (
             TestClient(app) as client,
-            patch.object(system_api, "get_session_user", new=AsyncMock(return_value=SimpleNamespace(id=1))),
+            patch.object(web_dependencies, "get_session_user", new=AsyncMock(return_value=SimpleNamespace(id=1))),
             patch.object(system_api.event_bus, "subscribe", return_value=_empty_events()),
         ):
             response = client.get("/api/v1/events")
@@ -156,7 +152,7 @@ class ApiRouterTests(unittest.TestCase):
 
         with (
             TestClient(app) as client,
-            patch.object(system_api, "get_session_user", new=AsyncMock(return_value=SimpleNamespace(id=1))),
+            patch.object(web_dependencies, "get_session_user", new=AsyncMock(return_value=SimpleNamespace(id=1))),
             patch.object(
                 system_api,
                 "get_dashboard_metrics",
@@ -206,7 +202,7 @@ class ApiRouterTests(unittest.TestCase):
 
         with (
             TestClient(app) as client,
-            patch.object(system_api, "get_session_user", new=AsyncMock(return_value=SimpleNamespace(id=1))),
+            patch.object(web_dependencies, "get_session_user", new=AsyncMock(return_value=SimpleNamespace(id=1))),
             patch.object(system_api, "build_rank_history", new=AsyncMock(return_value=history)) as builder,
         ):
             response = client.get("/api/v1/dashboard/ssllabs-history?range_key=90d")
@@ -225,7 +221,7 @@ class ApiRouterTests(unittest.TestCase):
 
         with (
             TestClient(app) as client,
-            patch.object(system_api, "get_session_user", new=AsyncMock(return_value=None)),
+            patch.object(web_dependencies, "get_session_user", new=AsyncMock(return_value=None)),
         ):
             response = client.get("/api/v1/dashboard/ssllabs-history")
 
@@ -237,7 +233,7 @@ class ApiRouterTests(unittest.TestCase):
 
         with (
             TestClient(app) as client,
-            patch.object(system_api, "get_session_user", new=AsyncMock(return_value=SimpleNamespace(id=1, is_admin=True))),
+            patch.object(web_dependencies, "get_session_user", new=AsyncMock(return_value=SimpleNamespace(id=1, is_admin=True))),
             patch.object(system_api, "get_settings", return_value=SimpleNamespace(ssllabs_api_base_url="https://api.ssllabs.com/api/v4")),
             patch.object(system_api, "get_ssllabs_email", new=AsyncMock(return_value="team@example.com")),
             patch.object(system_api, "check_email_registration_status", new=check_status),
@@ -258,7 +254,7 @@ class ApiRouterTests(unittest.TestCase):
 
         with (
             TestClient(app) as client,
-            patch.object(system_api, "get_session_user", new=AsyncMock(return_value=SimpleNamespace(id=1, is_admin=True))),
+            patch.object(web_dependencies, "get_session_user", new=AsyncMock(return_value=SimpleNamespace(id=1, is_admin=True))),
             patch.object(system_api, "get_settings", return_value=SimpleNamespace(ssllabs_api_base_url="https://api.ssllabs.com/api/v4")),
             patch.object(system_api, "get_ssllabs_email", new=AsyncMock(return_value=None)),
         ):
@@ -272,7 +268,7 @@ class ApiRouterTests(unittest.TestCase):
 
         with (
             TestClient(app) as client,
-            patch.object(system_api, "get_session_user", new=AsyncMock(return_value=SimpleNamespace(id=1, is_admin=True))),
+            patch.object(web_dependencies, "get_session_user", new=AsyncMock(return_value=SimpleNamespace(id=1, is_admin=True))),
             patch.object(system_api, "get_settings", return_value=SimpleNamespace(ssllabs_api_base_url="https://api.ssllabs.com/api/v4")),
             patch.object(system_api, "get_ssllabs_email", new=AsyncMock(return_value="team@example.com")),
             patch.object(

@@ -30,4 +30,3 @@ SSLLABS_FAILED_SCAN_STATUSES = ("error", "failed")
 
 type SslLabsScheduleFrequency = Literal[*SSLLABS_SCHEDULE_FREQUENCIES]
 type SslLabsScanStatus = Literal[*SSLLABS_SCAN_STATUSES]
-type SslLabsStartMode = Literal["cache", "fresh"]

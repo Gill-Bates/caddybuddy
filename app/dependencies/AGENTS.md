@@ -9,7 +9,7 @@ FastAPI dependency-injection helpers (`Depends(...)`) shared across the server-r
 ## Key Files
 | File | Description |
 |------|-------------|
-| `web.py` | All of the above. Key functions include `get_session_user` (resolve the logged-in `User` from the session cookie), `ensure_csrf_token`/`validate_csrf_token`, `ensure_csp_nonce`, `push_flash`/`pop_flashes`, `asset_integrity`/`_asset_integrity_cached` (SRI hashes for static assets, mtime/size-cached), `safe_redirect_path`/`redirect_to`, `initialize_user_session`/`refresh_session_timestamps`, and `render_template`. |
+| `web.py` | All of the above. Key functions include `get_session_user` (resolve the logged-in `User` from the session cookie), `require_api_user`/`require_admin_api_user` (the shared `Depends(...)` auth gates for JSON API routes — 401 anonymous, 403 non-admin), `ensure_csrf_token`/`validate_csrf_token`, `ensure_csp_nonce`, `push_flash`/`pop_flashes`, `asset_integrity`/`_asset_integrity_cached` (SRI hashes for static assets, mtime/size-cached), `safe_redirect_path`/`redirect_to`, `initialize_user_session`, and `render_template`. |
 | `__init__.py` | Package marker (`"""Dependency helpers for web routes."""`). |
 
 ## For AI Agents

@@ -190,24 +190,6 @@ class SiteRepositoryIntegrationTests(unittest.IsolatedAsyncioTestCase):
         await self.engine.dispose()
         self._temp_dir.cleanup()
 
-    async def test_get_by_domain_finds_normalized_domain(self) -> None:
-        repository = SiteRepository()
-
-        async with self.session_factory() as session:
-            await repository.create(
-                session,
-                site_name="Example",
-                domain="Example.COM.",
-                caddy_directives="reverse_proxy backend.example.test:443",
-            )
-            await session.commit()
-
-        async with self.session_factory() as session:
-            site = await repository.get_by_domain(session, " example.com ")
-
-        self.assertIsNotNone(site)
-        self.assertEqual(site.domain, "example.com")
-
     async def test_domain_exists_ignores_overlap_for_excluded_row(self) -> None:
         repository = SiteRepository()
 

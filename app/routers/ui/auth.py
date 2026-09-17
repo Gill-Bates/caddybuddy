@@ -43,7 +43,7 @@ from app.utils.hidden_captcha import (
 )
 from app.utils.security_logging import log_authentication_failure
 
-from ._common import commit_and_flash, logger, safe_next, validated_form
+from ._common import commit_and_flash, logger, safe_next, validated_csrf_form
 
 router = APIRouter()
 
@@ -162,7 +162,7 @@ async def setup_action(request: Request, session: AsyncSession = Depends(get_db_
     if await user_repository.exists_any(session):
         return redirect_to("/login")
 
-    form = await validated_form(request)
+    form = await validated_csrf_form(request)
     password = str(form.get("password", ""))
     confirm = str(form.get("confirm_password", ""))
 
@@ -224,7 +224,7 @@ async def setup_action(request: Request, session: AsyncSession = Depends(get_db_
 @router.post("/login")
 @limiter.limit("5/minute;20/hour")
 async def login_action(request: Request, session: AsyncSession = Depends(get_db_session)) -> Response:
-    form = await validated_form(request)
+    form = await validated_csrf_form(request)
     username = str(form.get("username", "")).strip()
     password = str(form.get("password", ""))
     next_path = str(form.get("next", "/")) or "/"
@@ -313,7 +313,7 @@ async def otp_login_action(request: Request, session: AsyncSession = Depends(get
     if challenge is None:
         return redirect_to("/login")
     user_id, next_path, challenge_fingerprint = challenge
-    form = await validated_form(request)
+    form = await validated_csrf_form(request)
     code = str(form.get("code", ""))
     if len(code) > _MAX_OTP_CODE_LENGTH:
         code = ""

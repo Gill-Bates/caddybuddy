@@ -12,25 +12,18 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from app.config.settings import get_settings
-
-_ENV_OVERRIDES = {
-    "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CB_ADMIN_PASSWORD": "UnitTestPassword-123A",
-    "CADDYBUDDY_ADMIN_PASSWORD": "UnitTestPassword-123A",
-}
-
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 from fastapi.testclient import TestClient
 
+from app.config.settings import get_settings
 from app.middleware.session import RequestAwareSessionMiddleware
+from tests.env_overrides import TEST_ENV
 
 
 class _SecurityTestEnvMixin:
     def setUp(self) -> None:
-        self._env_patch = patch.dict(os.environ, _ENV_OVERRIDES, clear=False)
+        self._env_patch = patch.dict(os.environ, TEST_ENV, clear=False)
         self._env_patch.start()
         get_settings.cache_clear()
         from app.dependencies.web import ensure_csrf_token

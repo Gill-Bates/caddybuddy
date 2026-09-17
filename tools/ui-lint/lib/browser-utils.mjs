@@ -118,12 +118,6 @@ export function sanitize(name) {
     return normalizePathSegment(name);
 }
 
-export function ensureDir(dirPath) {
-    const resolved = path.resolve(dirPath);
-    fs.mkdirSync(resolved, { recursive: true, mode: 0o700 });
-    return resolved;
-}
-
 export async function installLayoutShiftObserver(context) {
     await context.addInitScript(() => {
         window.__uiLintLayoutShift = { value: 0, count: 0 };
@@ -163,6 +157,55 @@ export async function disableMotion(page, motionResetCss, viewName = 'unknown') 
         }, { styleId: MOTION_RESET_STYLE_ID, css: motionResetCss });
     } catch (err) {
         throw new Error(`[${viewName}] Failed to disable motion: ${err.message}`, { cause: err });
+    }
+}
+
+// Runs the analyzers that need a media feature other than the audit default
+// (prefers-reduced-motion: reduce, see disableMotion) and restores that default.
+// A probe the browser engine cannot emulate yields null, not a finding.
+export async function collectPreferenceProbes(page) {
+    let toastExit;
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    try {
+        toastExit = await page.evaluate(
+            () => window.__uiLint.toastExitProbe(window.__uiLintRuntimeConfig?.constants || {}),
+        );
+    } finally {
+        await page.emulateMedia({ reducedMotion: 'reduce' });
+    }
+
+    return {
+        toastExit,
+        reducedTransparencyBackdrop: await probeReducedTransparency(page),
+    };
+}
+
+async function probeReducedTransparency(page) {
+    // Playwright has no option for prefers-reduced-transparency; only Chromium
+    // can emulate it, through CDP.
+    let session;
+    try {
+        session = await page.context().newCDPSession(page);
+    } catch {
+        return null;
+    }
+    try {
+        // Reduced motion is switched off on purpose: app.css also drops blurs
+        // under prefers-reduced-motion, which would hide a missing
+        // reduced-transparency override behind the audit default.
+        await session.send('Emulation.setEmulatedMedia', {
+            features: [
+                { name: 'prefers-reduced-transparency', value: 'reduce' },
+                { name: 'prefers-reduced-motion', value: 'no-preference' },
+            ],
+        });
+        return await page.evaluate(() => window.__uiLint.reducedTransparencyProbe());
+    } finally {
+        await session.send('Emulation.setEmulatedMedia', { features: [] }).catch(() => { });
+        await session.detach().catch(() => { });
+        // Re-send Playwright's own media state (colour scheme, reduced motion),
+        // which the raw CDP override above discarded.
+        await page.emulateMedia({ reducedMotion: 'reduce' });
     }
 }
 
@@ -635,30 +678,4 @@ export async function captureKpiCards(page, viewName, screenshotDir) {
     }
 
     return paths;
-}
-
-export async function diffKpiSets(nameA, setA, nameB, setB) {
-    const minSetLength = Math.min(setA.length, setB.length);
-
-    const comparisons = await Promise.all(
-        Array.from({ length: minSetLength }, (_, i) => comparePngPair(setA[i], setB[i]))
-    );
-
-    const compared = comparisons.map((comparison, index) => ({
-        index,
-        ratio: comparison.totalPixels > 0 ? comparison.mismatchedPixels / comparison.totalPixels : 0,
-        sizeMismatch: comparison.sizeMismatch,
-        dimensions: comparison.dimensions,
-    }));
-
-    const missing = Array.from(
-        { length: Math.abs(setA.length - setB.length) },
-        (_, offset) => ({
-            index: minSetLength + offset,
-            ratio: 1,
-            missingFrom: setA.length < setB.length ? nameA : nameB,
-        }),
-    );
-
-    return [...compared, ...missing];
 }

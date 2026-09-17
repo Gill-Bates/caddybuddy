@@ -6,8 +6,6 @@
 
 from __future__ import annotations
 
-import os
-import re
 import unittest
 from contextlib import ExitStack
 from pathlib import Path
@@ -15,41 +13,24 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app.config.settings import get_settings
+from tests.env_overrides import ModuleEnv
 
-_ENV_OVERRIDES = {
-    "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CB_ADMIN_PASSWORD": "UnitTestPassword-123A",
-    "CADDYBUDDY_ADMIN_PASSWORD": "UnitTestPassword-123A",
-}
-_ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}
-
-for key, value in _ENV_OVERRIDES.items():
-    os.environ[key] = value
-
-get_settings.cache_clear()
+_ENV = ModuleEnv()
 
 from fastapi.testclient import TestClient
 
 from app.routers.ui.onboarding import router as onboarding_router
 from app.services.caddy_onboarding import OnboardingWizardState
-from tests.ui_test_app import build_ui_test_app
+from tests.ui_test_app import build_ui_test_app, extract_csrf_token
 
 
 def tearDownModule() -> None:
-    for key, original_value in _ORIGINAL_ENV.items():
-        if original_value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = original_value
-    get_settings.cache_clear()
+    _ENV.restore()
 
 
 class UIOnboardingTests(unittest.TestCase):
     def setUp(self) -> None:
-        for key, value in _ENV_OVERRIDES.items():
-            os.environ[key] = value
-        get_settings.cache_clear()
+        _ENV.apply()
 
     def tearDown(self) -> None:
         get_settings.cache_clear()
@@ -69,13 +50,6 @@ class UIOnboardingTests(unittest.TestCase):
                 ("POST", "/logout", "logout_action"),
             ],
         )
-
-    @staticmethod
-    def _extract_csrf_token(html: str) -> str:
-        match = re.search(r'name="csrf_token" value="([^"]+)"', html)
-        if not match:
-            raise AssertionError("csrf_token input not found in onboarding page")
-        return match.group(1)
 
     def _enter_csrf_token_patches(self, stack: ExitStack) -> None:
         """Patch what's needed to render the onboarding page so a real CSRF token can be extracted."""
@@ -474,7 +448,7 @@ class UIOnboardingTests(unittest.TestCase):
         service = AsyncMock()
         with (
             patch("app.routers.ui.onboarding.require_admin", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.onboarding.validated_form", new=AsyncMock(return_value={})),
+            patch("app.routers.ui.onboarding.validated_csrf_form", new=AsyncMock(return_value={})),
             patch("app.routers.ui.onboarding.enable_admin_api_and_reprobe", new=service),
             patch("app.routers.ui.onboarding.push_flash") as push_flash,
             ExitStack() as stack,
@@ -482,7 +456,7 @@ class UIOnboardingTests(unittest.TestCase):
         ):
             self._enter_csrf_token_patches(stack)
             page = client.get("/onboarding")
-            csrf_token = self._extract_csrf_token(page.text)
+            csrf_token = extract_csrf_token(page.text)
             response = client.post(
                 "/onboarding/enable-admin-api",
                 data={"csrf_token": csrf_token},
@@ -500,7 +474,7 @@ class UIOnboardingTests(unittest.TestCase):
         result_state = SimpleNamespace(preflight_passed=True, error_message=None)
         with (
             patch("app.routers.ui.onboarding.require_admin", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.onboarding.validated_form",
+            patch("app.routers.ui.onboarding.validated_csrf_form",
                   new=AsyncMock(return_value={"confirm_admin_api_enablement": "yes"})),
             patch("app.routers.ui.onboarding.enable_admin_api_and_reprobe",
                   new=AsyncMock(return_value=result_state)),
@@ -510,7 +484,7 @@ class UIOnboardingTests(unittest.TestCase):
         ):
             self._enter_csrf_token_patches(stack)
             page = client.get("/onboarding")
-            csrf_token = self._extract_csrf_token(page.text)
+            csrf_token = extract_csrf_token(page.text)
             response = client.post(
                 "/onboarding/enable-admin-api",
                 data={"csrf_token": csrf_token, "confirm_admin_api_enablement": "yes"},
@@ -526,7 +500,7 @@ class UIOnboardingTests(unittest.TestCase):
         current_user = SimpleNamespace(username="admin", role="admin")
         with (
             patch("app.routers.ui.onboarding.require_admin", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.onboarding.validated_form",
+            patch("app.routers.ui.onboarding.validated_csrf_form",
                   new=AsyncMock(return_value={"confirm_admin_api_enablement": "yes"})),
             patch("app.routers.ui.onboarding.enable_admin_api_and_reprobe",
                   new=AsyncMock(side_effect=ValueError("Caddy restart capability is not configured."))),
@@ -536,7 +510,7 @@ class UIOnboardingTests(unittest.TestCase):
         ):
             self._enter_csrf_token_patches(stack)
             page = client.get("/onboarding")
-            csrf_token = self._extract_csrf_token(page.text)
+            csrf_token = extract_csrf_token(page.text)
             response = client.post(
                 "/onboarding/enable-admin-api",
                 data={"csrf_token": csrf_token, "confirm_admin_api_enablement": "yes"},

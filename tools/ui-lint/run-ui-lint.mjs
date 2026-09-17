@@ -33,6 +33,7 @@ import {
     installLayoutShiftObserver,
     login,
     applyTheme,
+    collectPreferenceProbes,
     resetLayoutShiftMetric,
     waitForLoginCaptchaMinAge,
 } from './lib/browser-utils.mjs';
@@ -51,7 +52,7 @@ import {
     ensureVisualRegressionDirs,
     getVisualRegressionConfig,
     sanitizeVisualSnapshotName,
-} from './visual-regression.mjs';
+} from './visual/visual-regression.mjs';
 
 const ERROR_PHASE = Object.freeze({
     PAGE_SETUP: 'page-setup',
@@ -335,6 +336,28 @@ async function setGlobalRateLimitEnabled(browserType, enabled) {
     });
 }
 
+// auditLoginRateLimit floods POST /login ("5/minute;20/hour" per IP), so the
+// restore login can hit HTTP 429. Waiting clears the per-minute window only;
+// if the hourly budget is exhausted, the retries still fail.
+async function setGlobalRateLimitEnabledWithRetry(browserType, enabled, { attempts = 6, delayMs = 20000 } = {}) {
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        try {
+            return await setGlobalRateLimitEnabled(browserType, enabled);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            const isLoginRateLimited = /HTTP 429/.test(message);
+            if (!isLoginRateLimited || attempt === attempts) {
+                throw error;
+            }
+            console.warn(
+                `Restore login was rate limited (attempt ${attempt}/${attempts}); waiting ${Math.round(delayMs / 1000)}s `
+                + 'for the login rate limit window opened by the dedicated rate-limit audit to clear...',
+            );
+            await delay(delayMs);
+        }
+    }
+}
+
 // Centralized selector registry (reduces duplication & fragility)
 const SELECTORS = {
     interactive: 'button, [role="button"], a[href], input:not([type="hidden"]), select, textarea',
@@ -419,6 +442,12 @@ const DEVICE_CONTEXT_OPTIONS = new Map([
     ['large-desktop', { viewport: { width: 1600, height: 1100 } }],
     ['tablet', { ...devices['iPad Pro 11'] }],
     ['mobile', { ...devices['iPhone 13'] }],
+    // Extra contexts for the table pages only (see TABLE_VIEW_EXTRA_DEVICES).
+    ['laptop', { viewport: { width: 1280, height: 800 } }],
+    ['mobile-se', { ...devices['iPhone SE (3rd gen)'] }],
+    ['mobile-small', { ...devices['iPhone SE'] }],
+    // 200% browser zoom on a 1440px window lays the page out at 720 CSS px.
+    ['zoom-200', { viewport: { width: 720, height: 550 }, deviceScaleFactor: 2 }],
 ]);
 
 async function installUiLintInitScript(context) {
@@ -826,7 +855,7 @@ async function runBaselineGc(config, expectedSnapshotNames) {
 async function collectPageMetrics(page, scope) {
     await injectAnalyzers(page);
 
-    return page.evaluate(async (currentScope) => {
+    const metrics = await page.evaluate(async (currentScope) => {
         const runtimeConfig = window.__uiLintRuntimeConfig || {};
         return window.__uiLint.runAll({
             scope: currentScope,
@@ -834,6 +863,11 @@ async function collectPageMetrics(page, scope) {
             selectors: runtimeConfig.selectors || {},
         });
     }, scope);
+    if (!metrics) {
+        return metrics;
+    }
+
+    return { ...metrics, ...(await collectPreferenceProbes(page)) };
 }
 
 function mergeMetricsPatch(metrics, patch) {
@@ -1024,6 +1058,18 @@ async function collectAuditArtifacts(page, view, metricsPatch = null) {
     };
 }
 
+async function openModal(page, selector) {
+    await page.evaluate((modalSelector) => {
+        const element = document.querySelector(modalSelector);
+        if (!(element instanceof HTMLElement) || !window.bootstrap?.Modal) {
+            throw new Error(`Modal not found or Bootstrap unavailable: ${modalSelector}`);
+        }
+        window.bootstrap.Modal.getOrCreateInstance(element).show();
+    }, selector);
+    await page.locator(`${selector}.show`).waitFor({ state: 'visible', timeout: 5000 });
+    await page.waitForTimeout(TAB_SWITCH_SETTLE_MS);
+}
+
 async function auditPageFlow(page, view, {
     load,
     afterLoad,
@@ -1043,6 +1089,9 @@ async function auditPageFlow(page, view, {
         if (view.tab) {
             await page.locator(view.tab).first().click();
             await page.waitForTimeout(TAB_SWITCH_SETTLE_MS);
+        }
+        if (view.modal) {
+            await openModal(page, view.modal);
         }
         const artifacts = await collectAuditArtifacts(page, view, prepared.metricsPatch || null);
         network = detachNetwork();
@@ -1773,7 +1822,7 @@ async function main() {
         restoreDone = true;
         console.warn(`\nReceived ${signal}; restoring UI rate limiting before exit...`);
         try {
-            await setGlobalRateLimitEnabled(settingsBrowserType, originalRateLimitEnabled);
+            await setGlobalRateLimitEnabledWithRetry(settingsBrowserType, originalRateLimitEnabled);
             console.log(`Restored UI rate limiting to ${originalRateLimitEnabled ? 'enabled' : 'disabled'}.`);
         } catch (error) {
             console.warn(`Failed to restore UI rate limiting: ${error instanceof Error ? error.message : String(error)}`);
@@ -1987,7 +2036,7 @@ async function main() {
         if (!restoreDone && originalRateLimitEnabled !== null) {
             restoreDone = true;
             try {
-                await setGlobalRateLimitEnabled(settingsBrowserType, originalRateLimitEnabled);
+                await setGlobalRateLimitEnabledWithRetry(settingsBrowserType, originalRateLimitEnabled);
                 console.log(`Restored UI rate limiting to ${originalRateLimitEnabled ? 'enabled' : 'disabled'}.`);
             } catch (error) {
                 console.warn(`Failed to restore UI rate limiting: ${error instanceof Error ? error.message : String(error)}`);

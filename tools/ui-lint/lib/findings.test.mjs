@@ -9,18 +9,20 @@ import assert from 'node:assert/strict';
 import { summarizeFindings } from './findings.mjs';
 import { serializeResultForOutput } from './result-serializer.mjs';
 
-test('summarizeFindings keeps generic click target failures hard and sites density as a warning', () => {
+test('summarizeFindings keeps click target failures hard and single tall table rows as a warning', () => {
     const result = summarizeFindings({
         name: 'desktop-sites',
         metrics: {
             clickTargetsTooSmall: [{ tag: 'BUTTON', width: 32, height: 32 }],
-            sitesTableDensity: {
+            managementTableDensity: {
                 present: true,
                 maximumRowHeight: 64,
-                targetRowHeight: 52,
+                targetRowHeight: 48,
+                tolerance: 2,
                 rowCount: 6,
-                medianRowHeightPx: 58,
+                medianRowHeightPx: 47,
                 maxRowHeightPx: 72,
+                passesTarget: true,
                 oversizedRows: [
                     { index: 3, text: 'Example row', height: 72 },
                 ],
@@ -31,9 +33,63 @@ test('summarizeFindings keeps generic click target failures hard and sites densi
     });
 
     assert.ok(result.hardFindings.includes('clickTargetsTooSmall=1'));
-    assert.ok(result.warnings.includes('sitesTableRowsTooTall=1/72/64'));
-    assert.ok(result.findings.includes('clickTargetsTooSmall=1'));
-    assert.ok(result.findings.includes('sitesTableRowsTooTall=1/72/64'));
+    assert.ok(result.warnings.includes('tableRowsTooTall=1/72/64'));
+    assert.ok(!result.findings.some((finding) => finding.startsWith('tableRowMedianTooTall=')));
+    assert.ok(result.findings.includes('tableRowsTooTall=1/72/64'));
+});
+
+test('summarizeFindings fails a management table whose ordinary rows miss the density target', () => {
+    const result = summarizeFindings({
+        name: 'desktop-ssllabs-light',
+        metrics: {
+            managementTableDensity: {
+                present: true,
+                maximumRowHeight: 72,
+                targetRowHeight: 48,
+                tolerance: 2,
+                rowCount: 4,
+                medianRowHeightPx: 64,
+                maxRowHeightPx: 66,
+                passesTarget: false,
+                oversizedRows: [],
+            },
+        },
+        diff: { ratio: 0, sizeMismatch: false },
+        network: {},
+    });
+
+    assert.ok(result.hardFindings.includes('tableRowMedianTooTall=64/48'));
+});
+
+test('summarizeFindings reports shared table rhythm drift as hard findings and serializes details', () => {
+    const toolbar = { tag: 'DIV', className: 'ssllabs-filterbar__quick-filters', text: 'All 4', height: 36, expected: 34 };
+    const tableRhythm = {
+        present: true,
+        touchSized: false,
+        controlSizeMismatches: [{ tag: 'BUTTON', className: 'btn btn-sm btn--icon-only', text: 'Edit', height: 44, expected: 32 }],
+        toolbarHeightMismatches: [toolbar],
+        actionGapMismatches: [{ tag: 'DIV', className: 'cell-actions', text: '', gap: 6.4, expected: 6 }],
+        cellPaddingMismatches: [{ tag: 'TD', className: '', text: 'fastapi', paddingTop: 12.8, paddingBottom: 12.8, expected: 6 }],
+    };
+    const result = summarizeFindings({
+        name: 'desktop-ssllabs-light',
+        metrics: { tableRhythm },
+        diff: { ratio: 0, sizeMismatch: false },
+        network: {},
+    });
+
+    for (const finding of ['tableControlSizes=1', 'tableToolbarHeights=1', 'tableActionGaps=1', 'tableCellPadding=1']) {
+        assert.ok(result.hardFindings.includes(finding), finding);
+    }
+
+    const output = serializeResultForOutput({
+        ...result,
+        metrics: { horizontalOverflow: { offenders: [] }, spacing: {}, layoutShift: { value: 0 }, tableRhythm },
+    }, { summaryPath: '/tmp/ui-lint-summary.json', visualRegressionEnabled: false });
+
+    assert.equal(output.tableToolbarHeights, 1);
+    assert.deepEqual(output.tableToolbarHeightDetails, [toolbar]);
+    assert.equal(output.tableCellPadding, 1);
 });
 
 test('summarizeFindings treats About page value font-size drift as a hard finding', () => {
@@ -86,6 +142,49 @@ test('summarizeFindings flags a body background that hides the root page gradien
 
     const visible = summarize({ present: true, htmlHasGradient: true, bodyBackgroundColor: 'rgba(0, 0, 0, 0)', bodyHasImage: false, passesBackdrop: true });
     assert.ok(!visible.findings.some((finding) => finding.startsWith('pageBackdropHidden')));
+});
+
+test('summarizeFindings reports toasts left on screen at rest and serializes details', () => {
+    const offender = { index: 0, stackSize: 3, visibleWidth: 350, visibleHeight: 49, left: 28, top: 645, viewportWidth: 390, viewportHeight: 844 };
+    const toastExit = { present: true, usesExitOffsetHook: true, offenders: [offender] };
+    const result = summarizeFindings({
+        name: 'mobile-dashboard-light',
+        metrics: { toastExit },
+        diff: { ratio: 0, sizeMismatch: false },
+        network: {},
+    });
+
+    assert.ok(result.hardFindings.includes('toastExitVisible=1'));
+
+    const output = serializeResultForOutput({
+        ...result,
+        metrics: { horizontalOverflow: { offenders: [] }, spacing: {}, layoutShift: { value: 0 }, toastExit },
+    }, { summaryPath: '/tmp/ui-lint-summary.json', visualRegressionEnabled: false });
+
+    assert.equal(output.toastExitVisible, 1);
+    assert.deepEqual(output.toastExitDetails, [offender]);
+});
+
+test('summarizeFindings reports backdrop filters kept under reduced transparency', () => {
+    const offender = { tag: 'DIV', id: 'sidebarBackdrop', className: 'sidebar-backdrop', backdropFilter: 'blur(4px)' };
+    const summarize = (reducedTransparencyBackdrop) => summarizeFindings({
+        name: 'mobile-dashboard-light',
+        metrics: { reducedTransparencyBackdrop },
+        diff: { ratio: 0, sizeMismatch: false },
+        network: {},
+    });
+
+    assert.ok(summarize({ present: true, offenders: [offender] }).hardFindings.includes('reducedTransparencyBackdrop=1'));
+    for (const quiet of [{ present: true, offenders: [] }, null]) {
+        assert.ok(!summarize(quiet).findings.some((finding) => finding.startsWith('reducedTransparencyBackdrop')));
+    }
+
+    const skipped = serializeResultForOutput({
+        ...summarize(null),
+        metrics: { horizontalOverflow: { offenders: [] }, spacing: {}, layoutShift: { value: 0 }, reducedTransparencyBackdrop: null },
+    }, { summaryPath: '/tmp/ui-lint-summary.json', visualRegressionEnabled: false });
+    // null = not measured (non-Chromium engine), distinct from 0 = measured and clean.
+    assert.equal(skipped.reducedTransparencyBackdrops, null);
 });
 
 test('summarizeFindings stays quiet without input zoom risks', () => {
@@ -516,7 +615,7 @@ test('serializeResultForOutput exposes sites density summary fields', () => {
         url: '/sites',
         findings: ['clickTargetsTooSmall=1'],
         hardFindings: ['clickTargetsTooSmall=1'],
-        warnings: ['sitesTableRowsTooTall=1/72/64'],
+        warnings: ['tableRowsTooTall=1/72/64'],
         diff: { ratio: 0, sizeMismatch: false },
         metrics: {
             horizontalOverflow: { offenders: [] },
@@ -527,7 +626,7 @@ test('serializeResultForOutput exposes sites density summary fields', () => {
                 leftInset: 16,
                 rightInset: 22,
             },
-            sitesTableDensity: {
+            managementTableDensity: {
                 rowCount: 6,
                 medianRowHeightPx: 58,
                 maxRowHeightPx: 72,
@@ -540,10 +639,10 @@ test('serializeResultForOutput exposes sites density summary fields', () => {
         visualRegressionEnabled: false,
     });
 
-    assert.equal(output.sitesTableRowCount, 6);
-    assert.equal(output.sitesTableMedianRowHeight, 58);
-    assert.equal(output.sitesTableMaxRowHeight, 72);
-    assert.equal(output.sitesTableRowsTooTall, 2);
+    assert.equal(output.tableRowCount, 6);
+    assert.equal(output.tableMedianRowHeight, 58);
+    assert.equal(output.tableMaxRowHeight, 72);
+    assert.equal(output.tableRowsTooTall, 2);
     assert.equal(output.dashboardHeroMetricInsetVariance, 6);
     assert.equal(output.dashboardHeroMetricInsetLeft, 16);
     assert.equal(output.dashboardHeroMetricInsetRight, 22);

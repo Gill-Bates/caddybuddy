@@ -7,8 +7,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import re
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -16,41 +14,24 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app.config.settings import get_settings
+from tests.env_overrides import ModuleEnv
 
-_ENV_OVERRIDES = {
-    "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CB_ADMIN_PASSWORD": "UnitTestPassword-123A",
-    "CADDYBUDDY_ADMIN_PASSWORD": "UnitTestPassword-123A",
-}
-_ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}
-
-for key, value in _ENV_OVERRIDES.items():
-    os.environ[key] = value
-
-get_settings.cache_clear()
+_ENV = ModuleEnv()
 
 from fastapi.testclient import TestClient
 
 from app.dependencies.web import redirect_to
 from app.routers.ui.ssllabs import router as ssllabs_router
-from tests.ui_test_app import build_ui_test_app
+from tests.ui_test_app import build_ui_test_app, extract_csrf_token
 
 
 def tearDownModule() -> None:
-    for key, original_value in _ORIGINAL_ENV.items():
-        if original_value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = original_value
-    get_settings.cache_clear()
+    _ENV.restore()
 
 
 class UISslLabsTests(unittest.TestCase):
     def setUp(self) -> None:
-        for key, value in _ENV_OVERRIDES.items():
-            os.environ[key] = value
-        get_settings.cache_clear()
+        _ENV.apply()
         self.onboarding_patcher = patch(
             "app.routers.ui._common.get_onboarding_state",
             new=AsyncMock(return_value=SimpleNamespace(status="completed")),
@@ -76,13 +57,6 @@ class UISslLabsTests(unittest.TestCase):
                 ("POST", "/logout", "logout_action"),
             ],
         )
-
-    @staticmethod
-    def _extract_csrf_token(html: str) -> str:
-        match = re.search(r'name="csrf_token" value="([^"]+)"', html)
-        if match is None:
-            raise AssertionError("csrf_token input not found in SSL Labs page")
-        return match.group(1)
 
     def test_ssllabs_page_renders_rows_and_external_notice(self) -> None:
         app = self._build_app()
@@ -158,19 +132,21 @@ class UISslLabsTests(unittest.TestCase):
         self.assertIn("A+", response.text)
         self.assertIn("Weekly", response.text)
         self.assertIn("Monthly", response.text)
-        self.assertIn('>Report</a>', response.text)
-        self.assertIn('>Report</button>', response.text)
-        self.assertIn('>Scan</button>', response.text)
-        self.assertLess(response.text.index('>Report</a>'), response.text.index('>Scan</button>'))
+        self.assertNotIn('<span class="visually-hidden">Open report</span>', response.text)
+        self.assertRegex(response.text, r'<a[^>]*aria-label="Open the latest SSL Labs report for example\.com"')
+        self.assertRegex(response.text, r'<button[^>]*aria-label="Start a new SSL Labs scan for example\.com"')
+        report_link_index = response.text.index('aria-label="Open the latest SSL Labs report for example.com"')
+        scan_button_index = response.text.index('aria-label="Start a new SSL Labs scan for example.com"')
+        self.assertLess(report_link_index, scan_button_index)
         self.assertIn('aria-label="No SSL Labs report available yet for www.example.com"', response.text)
         self.assertRegex(
             response.text,
-            r'<button[^>]*aria-label="No SSL Labs report available yet for www\.example\.com"[^>]*disabled[^>]*>Report</button>',
+            r'<button[^>]*aria-label="No SSL Labs report available yet for www\.example\.com"[^>]*disabled[^>]*>',
         )
         self.assertNotIn("View report", response.text)
         self.assertNotIn("Check SSL Labs", response.text)
         self.assertIn("Start SSL Labs checks here", response.text)
-        self.assertIn('class="table align-middle mb-0 ssllabs-table"', response.text)
+        self.assertIn('class="table table--management align-middle mb-0 ssllabs-table"', response.text)
         self.assertIn('class="ssllabs-table__site-col"', response.text)
         self.assertIn('class="ssllabs-table__result-col"', response.text)
         self.assertIn('class="ssllabs-table__scheduler-col"', response.text)
@@ -191,10 +167,16 @@ class UISslLabsTests(unittest.TestCase):
         self.assertIn("data-loading-submit-button", response.text)
         self.assertNotIn(">Save</button>", response.text)
         self.assertIn("data-ssllabs-autosave", response.text)
+        self.assertIn('class="ssllabs-schedule-form__controls"', response.text)
+        self.assertIn('class="ssllabs-schedule-form__next-run"', response.text)
+        self.assertIn('aria-describedby="ssllabs-schedule-next-run-1"', response.text)
+        self.assertIn('datetime="2026-05-28T12:00:00+00:00"', response.text)
+        self.assertNotIn('<option disabled data-ui-lint-dynamic>Next run', response.text)
         self.assertIn('class="badge bg-success ssllabs-result__grade"', response.text)
         self.assertNotIn('ssllabs-result__status-badge--compact', response.text)
         self.assertNotIn('>Ready</span>', response.text)
-        self.assertIn('data-ui-lint-ignore-click-target', response.text)
+        # Row actions stay in the ui-lint click-target audit (32px desktop / 44px touch).
+        self.assertNotRegex(response.text, r'btn--icon-only[^>]*data-ui-lint-ignore-click-target')
         self.assertIn('data-ui-lint-dynamic', response.text)
         self.assertIn('class="ssllabs-result__endpoints"', response.text)
         self.assertIn("IPv4", response.text)
@@ -217,31 +199,16 @@ class UISslLabsTests(unittest.TestCase):
             css,
         )
         self.assertIn(
-            '.ssllabs-table td[data-label="Schedule"] {\n        grid-column: 1;',
+            '.ssllabs-table td[data-label="Schedule"] {\n        grid-column: 1 / -1;',
             css,
         )
         self.assertIn(
-            '.ssllabs-table td[data-label="Actions"] {\n        grid-column: 2;',
+            '.ssllabs-table td[data-label="Actions"] {\n        grid-column: 1 / -1;\n        justify-self: end;',
             css,
         )
         self.assertNotIn(
             '.ssllabs-table td[data-label="Domains"]::before',
             css,
-        )
-
-    def test_ssllabs_filter_clear_button_matches_input_height(self) -> None:
-        css_path = Path(__file__).resolve().parents[1] / "app/static/css/app.css"
-        css = css_path.read_text(encoding="utf-8")
-
-        self.assertIn(
-            ".ssllabs-filterbar [data-ssllabs-clear-filters] {\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    min-block-size: 2.75rem;\n    height: 2.75rem;",
-            css,
-            "SSL Labs filter clear button must match the 44px touch target height of the filter inputs.",
-        )
-        self.assertIn(
-            ".ssllabs-filterbar [data-ssllabs-clear-filters] {\n        min-block-size: 2.1rem;\n    }",
-            css,
-            "Mobile override must scale the clear button down to match compact filter inputs.",
         )
 
     def test_ssllabs_page_marks_mixed_filter_grade_for_mixed_endpoints(self) -> None:
@@ -306,13 +273,12 @@ class UISslLabsTests(unittest.TestCase):
             response = client.get("/ssl-labs")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn('>Report</button>', response.text)
-        self.assertNotIn('>Report</a>', response.text)
-        self.assertIn("public hostname", response.text)
         self.assertIn('aria-label="No SSL Labs report available yet for service.internal"', response.text)
+        self.assertNotRegex(response.text, r'<a[^>]*aria-label="Open the latest SSL Labs report for service\.internal"')
+        self.assertIn("public hostname", response.text)
         self.assertRegex(
             response.text,
-            r'<button[^>]*aria-label="No SSL Labs report available yet for service\.internal"[^>]*disabled[^>]*>Report</button>',
+            r'<button[^>]*aria-label="No SSL Labs report available yet for service\.internal"[^>]*disabled[^>]*>',
         )
         self.assertRegex(response.text, r'name="schedule_frequency"[^>]*disabled')
         self.assertRegex(response.text, r'name="mode"[^>]*value="fresh"[^>]*disabled')
@@ -354,7 +320,7 @@ class UISslLabsTests(unittest.TestCase):
             TestClient(app) as client,
         ):
             page = client.get("/ssl-labs")
-            csrf_token = self._extract_csrf_token(page.text)
+            csrf_token = extract_csrf_token(page.text)
             response = client.post(
                 "/ssl-labs/1/schedule",
                 data={"csrf_token": csrf_token, "schedule_frequency": "on"},
@@ -397,7 +363,7 @@ class UISslLabsTests(unittest.TestCase):
             TestClient(app) as client,
         ):
             page = client.get("/ssl-labs")
-            csrf_token = self._extract_csrf_token(page.text)
+            csrf_token = extract_csrf_token(page.text)
             response = client.post(
                 "/ssl-labs/1/schedule",
                 data={"csrf_token": csrf_token, "schedule_frequency": "on"},
@@ -425,7 +391,7 @@ class UISslLabsTests(unittest.TestCase):
             TestClient(app) as client,
         ):
             page = client.get("/ssl-labs")
-            csrf_token = self._extract_csrf_token(page.text)
+            csrf_token = extract_csrf_token(page.text)
             response = client.post(
                 "/ssl-labs/1/scan",
                 data={"csrf_token": csrf_token, "mode": "frseh"},
@@ -444,7 +410,7 @@ class UISslLabsTests(unittest.TestCase):
         with (
             patch("app.routers.ui.ssllabs.require_admin", new=AsyncMock(return_value=current_user)),
             patch("app.routers.ui.ssllabs.require_onboarding_completed", new=AsyncMock(return_value=redirect_to("/onboarding"))),
-            patch("app.routers.ui.ssllabs.validated_form", new=AsyncMock(return_value={"csrf_token": "token", "mode": "fresh"})),
+            patch("app.routers.ui.ssllabs.validated_csrf_form", new=AsyncMock(return_value={"csrf_token": "token", "mode": "fresh"})),
             patch("app.routers.ui.ssllabs.ssllabs_service.request_scan", new=AsyncMock()) as request_scan,
         ):
             from app.routers.ui.ssllabs import start_ssllabs_scan

@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.limiter import limiter
 from app.config.settings import get_settings
 from app.database.session import get_db_session
-from app.dependencies.web import get_session_user
+from app.dependencies.web import require_admin_api_user, require_api_user
 from app.models.entities import User
 from app.schemas.system import (
     BuildInfoResponse,
@@ -47,28 +47,6 @@ from app.utils.ssllabs import GRADE_RANKS, mask_email
 router = APIRouter(prefix="/api/v1", tags=["system"])
 _SSE_HEARTBEAT_SECONDS = 25
 logger = logging.getLogger(__name__)
-
-
-async def _require_api_user(
-    request: Request,
-    session: AsyncSession = Depends(get_db_session),
-) -> User:
-    current_user = await get_session_user(request, session)
-    if current_user is None:
-        raise HTTPException(status_code=401, detail="Authentication required.")
-    return current_user
-
-
-async def _require_admin_api_user(
-    request: Request,
-    session: AsyncSession = Depends(get_db_session),
-) -> User:
-    current_user = await get_session_user(request, session)
-    if current_user is None:
-        raise HTTPException(status_code=401, detail="Authentication required.")
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Administrator access is required.")
-    return current_user
 
 
 def _format_sse_data(payload: str) -> str:
@@ -124,7 +102,7 @@ async def build_info() -> BuildInfoResponse:
 @limiter.limit("30/minute")
 async def caddy_status(
     request: Request,
-    _current_user: User = Depends(_require_api_user),
+    _current_user: User = Depends(require_api_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> CaddyStatusResponse:
     """Get current Caddy service status for dashboard badge refresh."""
@@ -142,7 +120,7 @@ async def caddy_status(
 @limiter.limit("10/minute")
 async def dashboard_metrics(
     request: Request,
-    _current_user: User = Depends(_require_api_user),
+    _current_user: User = Depends(require_api_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> DashboardMetricsResponse:
     del request
@@ -164,7 +142,7 @@ async def dashboard_metrics(
 async def dashboard_ssllabs_history(
     request: Request,
     range_key: str | None = None,
-    _current_user: User = Depends(_require_api_user),
+    _current_user: User = Depends(require_api_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> SslLabsRankHistoryResponse:
     """Return the per-host weekly SSL Labs rank timeseries for the dashboard chart."""
@@ -214,7 +192,7 @@ async def _event_stream(events: AsyncIterator[ResourceEvent]) -> AsyncIterator[s
 @limiter.limit("20/minute")
 async def subscribe_events(
     request: Request,
-    _current_user: User = Depends(_require_api_user),
+    _current_user: User = Depends(require_api_user),
 ) -> StreamingResponse:
     """
     Server-Sent Events endpoint for real-time resource updates.
@@ -259,7 +237,7 @@ class SslLabsRegisterResponse(BaseModel):
 @limiter.limit("30/minute")
 async def ssllabs_registration_status(
     request: Request,
-    _current_user: User = Depends(_require_admin_api_user),
+    _current_user: User = Depends(require_admin_api_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> SslLabsRegistrationStatusResponse:
     del request
@@ -297,7 +275,7 @@ async def ssllabs_registration_status(
 @limiter.limit("3/hour")
 async def ssllabs_register(
     request: Request,
-    _current_user: User = Depends(_require_admin_api_user),
+    _current_user: User = Depends(require_admin_api_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> SslLabsRegisterResponse:
     """Register the configured email with SSL Labs API."""
@@ -361,7 +339,7 @@ async def ssllabs_register(
 @limiter.limit("10/minute")
 async def ssllabs_refresh_status(
     request: Request,
-    _current_user: User = Depends(_require_admin_api_user),
+    _current_user: User = Depends(require_admin_api_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> SslLabsRegistrationStatusResponse:
     """Force refresh the SSL Labs registration status (bypasses cache)."""

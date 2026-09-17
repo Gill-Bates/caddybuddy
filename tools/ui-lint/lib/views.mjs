@@ -7,10 +7,15 @@ import { THEMES } from './constants.mjs';
 
 
 const ALL_VIEW_DEVICES = ['desktop', 'large-desktop', 'tablet', 'mobile'];
+// Acceptance contexts for the shared tables: 1200-1599px laptops (where the
+// Sites list sits beside the form), 375px and 320px phones, and 200% browser
+// zoom. Only the table pages pay for these extra contexts.
+export const TABLE_VIEW_EXTRA_DEVICES = ['laptop', 'mobile-se', 'mobile-small', 'zoom-200'];
 const LOGIN_FAILURE_DEVICES = ['desktop', 'mobile'];
 // Two-factor pages need account state (a pending challenge or enrollment), so
 // they run in a dedicated sequential phase on a reduced device matrix.
 const TWO_FACTOR_DEVICES = ['desktop', 'mobile'];
+const MODAL_VIEW_DEVICES = ['desktop', 'mobile'];
 
 
 function assertUniqueNames(views, label) {
@@ -48,21 +53,34 @@ export const TWO_FACTOR_RECOVERY_VIEW_DEFS = [
 export const VIEW_DEFS = [
     { name: 'dashboard', url: '/', scope: 'dashboard' },
     { name: 'caddyfile', url: '/caddyfile', scope: 'caddyfile' },
-    { name: 'sites', url: '/sites', scope: 'sites' },
-    { name: 'ssllabs', url: '/ssl-labs', scope: 'ssllabs' },
+    { name: 'sites', url: '/sites', scope: 'sites', extraDevices: TABLE_VIEW_EXTRA_DEVICES },
+    { name: 'ssllabs', url: '/ssl-labs', scope: 'ssllabs', extraDevices: TABLE_VIEW_EXTRA_DEVICES },
     { name: 'settings', url: '/settings', scope: 'settings' },
     { name: 'settings-security', url: '/settings', scope: 'settings', tab: '#settingsSecurityTab' },
     { name: 'settings-passkey', url: '/settings', scope: 'settings', tab: '#settingsPasskeyTab' },
     { name: 'settings-ssllabs', url: '/settings', scope: 'settings', tab: '#settingsSslLabsTab' },
-    { name: 'about', url: '/about', scope: 'about' },
+    { name: 'about', url: '/about', scope: 'about', extraDevices: TABLE_VIEW_EXTRA_DEVICES },
+    // `modal` opens that Bootstrap modal (after any `tab` switch) before the
+    // analyzers run. `devices` replaces the default device matrix.
+    { name: 'confirm-action-modal', url: '/', scope: 'dashboard', modal: '#confirmActionModal', devices: MODAL_VIEW_DEVICES },
+    {
+        name: 'settings-passkey-modal',
+        url: '/settings',
+        scope: 'settings',
+        tab: '#settingsPasskeyTab',
+        modal: '#addPasskeyModal',
+        devices: MODAL_VIEW_DEVICES,
+    },
+    // The site form only moves into its modal below 768px.
+    { name: 'sites-form-modal', url: '/sites', scope: 'sites', modal: '#site-form-modal', devices: ['mobile', 'mobile-small'] },
 ];
 
 /**
  * Expand view definitions across the provided devices and all configured themes.
  */
 export function expandViewDefinitions(viewDefs, devices = ALL_VIEW_DEVICES) {
-    return viewDefs.flatMap((def) =>
-        devices.flatMap((device) =>
+    return viewDefs.flatMap(({ extraDevices = [], devices: ownDevices, ...def }) =>
+        [...(ownDevices || devices), ...extraDevices].flatMap((device) =>
             THEMES.map((theme) => ({
                 ...def,
                 name: `${device}-${def.name}-${theme}`,

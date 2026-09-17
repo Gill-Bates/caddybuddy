@@ -1,5 +1,5 @@
 site_name: CaddyBuddy Documentation
-site_description: Manage one Caddy installation from a focused web control plane
+site_description: Your friendly control center for running Caddy
 site_author: Gill-Bates
 site_url: https://gill-bates.github.io/caddybuddy/
 

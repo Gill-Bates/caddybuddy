@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import re
 import unittest
 from datetime import UTC, datetime
@@ -16,19 +15,9 @@ from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, patch
 
 from app.config.settings import get_settings
+from tests.env_overrides import ModuleEnv
 
-_ENV_OVERRIDES = {
-    "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CB_ADMIN_PASSWORD": "UnitTestPassword-123A",
-    "CADDYBUDDY_ADMIN_PASSWORD": "UnitTestPassword-123A",
-}
-_ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}
-
-for key, value in _ENV_OVERRIDES.items():
-    os.environ[key] = value
-
-get_settings.cache_clear()
+_ENV = ModuleEnv()
 
 from fastapi.testclient import TestClient
 
@@ -42,19 +31,12 @@ from tests.ui_test_app import build_ui_test_app
 
 
 def tearDownModule() -> None:
-    for key, original_value in _ORIGINAL_ENV.items():
-        if original_value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = original_value
-    get_settings.cache_clear()
+    _ENV.restore()
 
 
 class UISitesTests(unittest.TestCase):
     def setUp(self) -> None:
-        for key, value in _ENV_OVERRIDES.items():
-            os.environ[key] = value
-        get_settings.cache_clear()
+        _ENV.apply()
         self.csrf_patcher = patch("app.middleware.csrf.validate_csrf_token")
         self.mock_validate_csrf = self.csrf_patcher.start()
         self.onboarding_patcher = patch(
@@ -170,6 +152,7 @@ class UISitesTests(unittest.TestCase):
         self.assertIn('class="site-domain-badges"', response.text)
         self.assertIn('class="badge site-domain-badge">example.com</span>', response.text)
         self.assertIn('class="panel-card panel-card--table sites-list-panel"', response.text)
+        self.assertIn('class="table table--management sites-table align-middle mb-0"', response.text)
         self.assertIn('class="sites-list-scroll"', response.text)
         self.assertIn('class="app-page app-page--sites"', response.text)
         self._assert_response_has_csp_nonce(response)
@@ -249,7 +232,9 @@ class UISitesTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('class="site-cert__summary site-cert__summary--expired"', response.text)
-        self.assertIn('class="site-cert__issued">Issued 2026-05-11</div>', response.text)
+        self.assertIn('<span class="site-cert__status">Expired</span>', response.text)
+        self.assertRegex(response.text, r'<div class="site-cert__issued">Issued\s+2026-05-11</div>')
+        self.assertNotRegex(response.text, r'<span class="site-cert__status[^>]*aria-label=')
 
     def test_sites_page_includes_safe_save_metadata_for_site_name_only_changes(self) -> None:
         app = self._build_app()
@@ -477,8 +462,11 @@ class UISitesTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('class="site-cert__summary site-cert__summary--valid"', response.text)
-        self.assertIn('class="site-cert__days">74d</span>', response.text)
-        self.assertIn('class="site-cert__issued">Issued 2026-05-28</div>', response.text)
+        self.assertRegex(response.text, r'<div class="site-cert__issued">Issued\s+2026-05-28</div>')
+        # A hover-only hint is unreachable on touch devices, so the date must not
+        # hide in a title or tooltip.
+        self.assertNotIn('title="Issued', response.text)
+        self.assertNotIn("has-tooltip", response.text)
 
     def test_sites_page_renders_issued_date_from_local_certificate_storage(self) -> None:
         app = self._build_app()
@@ -511,7 +499,9 @@ class UISitesTests(unittest.TestCase):
             response = client.get("/sites")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn('class="site-cert__issued">Issued 2026-05-11</div>', response.text)
+        self.assertRegex(response.text, r'<div class="site-cert__issued">Issued\s+2026-05-11</div>')
+        self.assertRegex(response.text, r'class="visually-hidden">68 days\s+remaining</span>')
+        self.assertNotRegex(response.text, r'<span class="site-cert__days[^>]*aria-label=')
 
     def test_sites_page_renders_certificate_fetch_error_message(self) -> None:
         app = self._build_app()
@@ -569,7 +559,7 @@ class UISitesTests(unittest.TestCase):
 
         with (
             patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.sites.validated_form", new=AsyncMock(return_value=form_data)),
+            patch("app.routers.ui.sites.validated_csrf_form", new=AsyncMock(return_value=form_data)),
             patch(
                 "app.routers.ui.sites.build_site_validation_caddyfile",
                 new=AsyncMock(return_value=rendered_caddyfile),
@@ -608,7 +598,7 @@ class UISitesTests(unittest.TestCase):
 
         with (
             patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.sites.validated_form", new=AsyncMock(return_value={})),
+            patch("app.routers.ui.sites.validated_csrf_form", new=AsyncMock(return_value={})),
             TestClient(app) as client,
         ):
             response = client.post("/sites/validate")
@@ -678,7 +668,7 @@ class UISitesTests(unittest.TestCase):
 
         with (
             patch("app.routers.ui.sites.require_admin", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.sites.validated_form", new=AsyncMock(return_value={})),
+            patch("app.routers.ui.sites.validated_csrf_form", new=AsyncMock(return_value={})),
             patch("app.routers.ui.sites.site_repository.get_by_id", new=AsyncMock(return_value=site)),
             patch("app.routers.ui.sites.sync_caddy_configuration", new=AsyncMock(return_value=SimpleNamespace(status="synced", error=None))),
             patch("app.routers.ui.sites.CertificateRenewalService.build_plan", new=AsyncMock(return_value=plan)) as build_mock,
@@ -718,7 +708,7 @@ class UISitesTests(unittest.TestCase):
 
         with (
             patch("app.routers.ui.sites.require_admin", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.sites.validated_form", new=AsyncMock(return_value={})),
+            patch("app.routers.ui.sites.validated_csrf_form", new=AsyncMock(return_value={})),
             patch("app.routers.ui.sites.site_repository.get_by_id", new=AsyncMock(return_value=site)),
             patch("app.routers.ui.sites.CertificateRenewalService.build_plan", new=AsyncMock(return_value=plan)) as build_mock,
             patch("app.routers.ui.sites.push_flash") as push_flash_mock,
@@ -757,7 +747,7 @@ class UISitesTests(unittest.TestCase):
 
         with (
             patch("app.routers.ui.sites.require_admin", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.sites.validated_form", new=AsyncMock(return_value={})),
+            patch("app.routers.ui.sites.validated_csrf_form", new=AsyncMock(return_value={})),
             patch("app.routers.ui.sites.site_repository.get_by_id", new=AsyncMock(return_value=site)),
             patch("app.routers.ui.sites.CertificateRenewalService.build_plan", new=AsyncMock(return_value=plan)),
             patch("app.routers.ui.sites.CertificateRenewalService.execute", new=AsyncMock()) as execute_mock,
@@ -794,7 +784,7 @@ class UISitesTests(unittest.TestCase):
 
         with (
             patch("app.routers.ui.sites.require_admin", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.sites.validated_form", new=AsyncMock(return_value=form_data)),
+            patch("app.routers.ui.sites.validated_csrf_form", new=AsyncMock(return_value=form_data)),
             patch("app.routers.ui.sites.site_repository.domain_exists", new=AsyncMock(return_value=False)),
             patch("app.routers.ui.sites.site_repository.create", new=AsyncMock(return_value=site)),
             patch("app.routers.ui.sites.validate_and_deploy_full_caddyfile", new=AsyncMock(return_value=(True, "ok"))),
@@ -834,7 +824,7 @@ class UISitesTests(unittest.TestCase):
 
         with (
             patch("app.routers.ui.sites.require_admin", new=AsyncMock(return_value=current_user)),
-            patch("app.routers.ui.sites.validated_form", new=AsyncMock(return_value={})),
+            patch("app.routers.ui.sites.validated_csrf_form", new=AsyncMock(return_value={})),
             patch("app.routers.ui.sites.site_repository.get_by_id", new=AsyncMock(return_value=site)),
             patch("app.routers.ui.sites.sync_caddy_configuration", new=AsyncMock(return_value=SimpleNamespace(status="synced", error=None))),
             patch("app.routers.ui.sites.CertificateRenewalService.build_plan", new=AsyncMock(return_value=plan)) as build_mock,

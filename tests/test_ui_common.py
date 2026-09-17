@@ -6,37 +6,21 @@
 
 from __future__ import annotations
 
-import os
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app.config.settings import get_settings
+from tests.env_overrides import ModuleEnv
 
-_ENV_OVERRIDES = {
-    "CB_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CADDYBUDDY_SECRET_KEY": "unit-test-secret-key-for-testing",
-    "CB_ADMIN_PASSWORD": "UnitTestPassword-123A",
-    "CADDYBUDDY_ADMIN_PASSWORD": "UnitTestPassword-123A",
-}
-_ORIGINAL_ENV = {key: os.environ.get(key) for key in _ENV_OVERRIDES}
-
-for key, value in _ENV_OVERRIDES.items():
-    os.environ[key] = value
-
-get_settings.cache_clear()
+_ENV = ModuleEnv()
 
 from app.routers.ui._common import require_onboarding_completed
 
 
 def tearDownModule() -> None:
-    for key, original_value in _ORIGINAL_ENV.items():
-        if original_value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = original_value
-    get_settings.cache_clear()
+    _ENV.restore()
 
 
 class UICommonTests(unittest.IsolatedAsyncioTestCase):
@@ -80,6 +64,16 @@ class UICommonTests(unittest.IsolatedAsyncioTestCase):
         logo_index = template.index('class="brand-mark__logo-wrap"')
         kicker_index = template.index('class="brand-mark__kicker"')
         self.assertLess(logo_index, kicker_index)
+
+    async def test_sidebar_backdrop_drops_its_blur_for_reduced_transparency(self) -> None:
+        css = Path("app/static/css/app.css").read_text(encoding="utf-8")
+
+        blur_index = css.index("    .sidebar-backdrop {\n        backdrop-filter: blur(4px);")
+        override_index = css.index(
+            "@media (prefers-reduced-transparency: reduce) {\n    .sidebar-backdrop {\n        backdrop-filter: none;"
+        )
+        # Same specificity: an override placed before the blur rule loses to it.
+        self.assertLess(blur_index, override_index)
 
 
 if __name__ == "__main__":
