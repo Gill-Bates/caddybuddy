@@ -49,6 +49,9 @@ def test_docs_workflow_uses_one_reproducible_build_and_root_config() -> None:
     assert "mkdocs build -f docs/mkdocs.yml --strict" not in workflow
     # No version pinning: latest is greatest, including for the scanner action.
     assert "aquasecurity/trivy-action@master" in workflow
+    # lychee v0.24+ rejects root-relative links (the site lives under /caddybuddy/) without a root dir.
+    assert '--root-dir \'${{ runner.temp }}/linkcheck-root\'' in workflow
+    assert 'ln -sfn "$GITHUB_WORKSPACE/site" "$RUNNER_TEMP/linkcheck-root/caddybuddy"' in workflow
 
     config = Path("mkdocs.yml").read_text(encoding="utf-8")
     assert "docs_dir: docs" in config

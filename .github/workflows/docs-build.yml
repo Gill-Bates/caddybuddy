@@ -71,12 +71,20 @@ jobs:
       - name: Build documentation
         run: mkdocs build --strict
 
+      # The site is served under /caddybuddy/, so lychee resolves root-relative
+      # links against a root dir where caddybuddy/ points at the built site.
+      - name: Prepare link check root
+        run: |
+          mkdir -p "$RUNNER_TEMP/linkcheck-root"
+          ln -sfn "$GITHUB_WORKSPACE/site" "$RUNNER_TEMP/linkcheck-root/caddybuddy"
+
       - name: Check links
         uses: lycheeverse/lychee-action@v2
         with:
           args: >-
             --verbose
             --no-progress
+            --root-dir '${{ runner.temp }}/linkcheck-root'
             --exclude 'fonts\.gstatic\.com'
             --exclude 'gill-bates\.github\.io/caddybuddy'
             './site/**/*.html'
