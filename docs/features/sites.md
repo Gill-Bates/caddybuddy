@@ -21,6 +21,14 @@ A site can contain multiple normalized domains. Certificate state is displayed f
 
 Editing and deploying replaces the generated site block. Disabling a site keeps its definition in CaddyBuddy but omits it from the active configuration.
 
+## Stop a site for maintenance
+
+The **Start/Stop** button in the **All Sites** list switches a site between serving and maintenance. A Play icon means the site is running normally; a Stop icon (together with a **Maintenance** badge) means it is stopped.
+
+While a site is stopped, Caddy keeps serving its domains, but every request receives HTTP 503 with the maintenance page instead of reaching the site's handlers. The site's `tls`, `log`, and `bind` directives stay in place, so certificates keep renewing. Starting the site deploys its normal site block again. The button is unavailable for disabled sites, which are not part of the Caddy configuration at all.
+
+Edit the maintenance page under **Settings → General → Maintenance Page**. The editor supports headings, paragraphs, bold/italic/underline, lists, and links (`https://`, `http://`, `mailto:`); any other markup is removed when saving. Saving the page redeploys the configuration when at least one site is stopped.
+
 ## Delete a site
 
 Deletion removes the stored site and deploys the resulting configuration. Review the confirmation dialog carefully because the active Caddy configuration changes immediately.

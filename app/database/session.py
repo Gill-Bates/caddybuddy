@@ -319,6 +319,12 @@ def _apply_known_schema_migrations(
             "ALTER TABLE caddy_sites ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1"
         )
         migrated = True
+    if site_columns is not None and "maintenance_mode" not in site_columns:
+        logger.debug("Applying known SQLite schema migration: caddy_sites.maintenance_mode")
+        sync_connection.exec_driver_sql(
+            "ALTER TABLE caddy_sites ADD COLUMN maintenance_mode INTEGER NOT NULL DEFAULT 0"
+        )
+        migrated = True
     if site_columns is not None and "site_name" not in site_columns:
         logger.debug("Applying known SQLite schema migration: caddy_sites.site_name")
         sync_connection.exec_driver_sql(

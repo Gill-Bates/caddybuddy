@@ -23,6 +23,7 @@ from app.dependencies.web import (
     redirect_to,
     render_template,
 )
+from app.repositories.sites import site_repository
 from app.repositories.users import user_repository
 from app.services.auth import (
     PASSWORD_MAX_LENGTH,
@@ -32,18 +33,22 @@ from app.services.auth import (
     auth_service,
 )
 from app.services.caddy_onboarding import reset_onboarding_state
+from app.services.caddyfile_manager import validate_and_deploy_full_caddyfile
 from app.services.passkeys import (
     MAX_PASSKEYS_PER_USER,
     parse_transports,
     passkey_service,
 )
 from app.services.runtime_settings import (
+    MAINTENANCE_PAGE_MAX_LENGTH,
     SSLLABS_RETENTION_DAY_VALUES,
     get_caddy_config,
+    get_maintenance_page_html,
     get_rate_limit_enabled,
     get_ssllabs_email,
     get_ssllabs_history_retention_days,
     set_caddy_config,
+    set_maintenance_page_html,
     set_rate_limit_enabled,
     set_ssllabs_email,
     set_ssllabs_history_retention_days,
@@ -127,6 +132,7 @@ async def settings_page(
     ssllabs_email = await get_ssllabs_email(session)
     masked_email = mask_email(ssllabs_email) if ssllabs_email else None
     ssllabs_retention_days = await get_ssllabs_history_retention_days(session)
+    maintenance_page_html = await get_maintenance_page_html(session)
     passkeys = [
         {
             "id": passkey.id,
@@ -155,6 +161,8 @@ async def settings_page(
         "caddy_api_url": caddy_config.admin_url,
         "caddyfile_path": caddy_config.caddyfile_path_str,
         "rate_limit_enabled": rate_limit_enabled,
+        "maintenance_page_html": maintenance_page_html,
+        "maintenance_page_max_length": MAINTENANCE_PAGE_MAX_LENGTH,
         "ssllabs_email": ssllabs_email,
         "ssllabs_masked_email": masked_email,
         "ssllabs_is_registered": ssllabs_is_registered,
@@ -348,6 +356,51 @@ async def update_caddy_settings(
         message="Settings updated.",
         background=BackgroundTask(update_rate_limit_enabled, rate_limit_enabled),
     )
+
+
+@router.post("/settings/maintenance-page", response_class=HTMLResponse)
+@limiter.limit("10/minute")
+async def update_maintenance_page(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+):
+    current_user = await require_admin(request, session)
+    if current_user is None:
+        if _expects_json_response(request):
+            return JSONResponse({"success": False, "message": "Authentication required."}, status_code=401)
+        return redirect_to("/login")
+
+    form = await validated_csrf_form(request)
+    try:
+        await set_maintenance_page_html(session, str(form.get("maintenance_page_html", "")))
+    except ValueError as exc:
+        return _settings_response(request, success=False, message=str(exc), status_code=400)
+
+    # Stopped sites embed the page in the Caddy config, so they must be redeployed.
+    sites = await site_repository.list_all(session, enabled_only=True)
+    if any(site.maintenance_mode for site in sites):
+        try:
+            success, deploy_message = await validate_and_deploy_full_caddyfile(session)
+        except Exception:
+            await session.rollback()
+            logger.exception("Deployment raised unexpectedly after maintenance page update")
+            return _settings_response(
+                request,
+                success=False,
+                message="Maintenance page was not saved: deployment failed unexpectedly.",
+                status_code=500,
+            )
+        if not success:
+            await session.rollback()
+            return _settings_response(
+                request,
+                success=False,
+                message=f"Maintenance page was not saved: {deploy_message}",
+                status_code=502,
+            )
+
+    await session.commit()
+    return _settings_response(request, success=True, message="Maintenance page saved.")
 
 
 @router.post("/settings/ssllabs", response_class=HTMLResponse)

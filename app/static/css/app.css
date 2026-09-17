@@ -96,10 +96,10 @@
     --cb-table-toolbar-size: 2.125rem;
     --cb-table-cell-padding-block: 0.375rem;
     --cb-table-action-gap: 0.375rem;
-    --cb-sites-table-min-width: 48rem;
+    --cb-sites-table-min-width: 51rem;
     --cb-sites-site-column-width: clamp(12rem, 24%, 15rem);
     --cb-sites-certificate-column-width: 15rem;
-    --cb-sites-actions-column-width: 9.75rem;
+    --cb-sites-actions-column-width: 12.875rem;
 
     /* ── Z-index scale ───────────────────────────────────────────────── */
     --cb-z-backdrop: 1029;
@@ -1750,6 +1750,7 @@ body.app-body--menu-open .app-sidebar {
 :where(.status-pill,
     .site-domain-badge,
     .site-handler-badge,
+    .site-maintenance-badge,
     .ssllabs-site-domain-badge,
     .site-cert__status,
     .site-cert__days,
@@ -1777,6 +1778,7 @@ body.app-body--menu-open .app-sidebar {
 .badge.cb-pill,
 .badge.site-domain-badge,
 .badge.site-handler-badge,
+.badge.site-maintenance-badge,
 .badge.ssllabs-result__grade,
 .badge.ssllabs-endpoint-chip__grade {
     display: inline-flex;
@@ -1876,6 +1878,51 @@ body.app-body--menu-open .app-sidebar {
     height: 1.25rem;
     margin-inline-end: 0.5rem;
     vertical-align: -0.2rem;
+}
+
+/* Maintenance page editor (Settings -> General) */
+.maintenance-editor__toolbar:not([hidden]) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.375rem;
+    margin-bottom: 0.5rem;
+}
+
+.maintenance-editor__tool {
+    min-inline-size: 2.25rem;
+    padding-inline: 0.5rem;
+}
+
+/* Set through Bootstrap's button variables so hover/active/focus states keep
+   the pressed colours instead of fading back to the outline variant. */
+.maintenance-editor__tool[aria-pressed="true"] {
+    --bs-btn-color: #fff;
+    --bs-btn-bg: var(--cb-accent);
+    --bs-btn-border-color: var(--cb-accent);
+    --bs-btn-hover-color: #fff;
+    --bs-btn-hover-bg: var(--cb-accent-strong);
+    --bs-btn-hover-border-color: var(--cb-accent-strong);
+    --bs-btn-active-color: #fff;
+    --bs-btn-active-bg: var(--cb-accent-strong);
+    --bs-btn-active-border-color: var(--cb-accent-strong);
+}
+
+.maintenance-editor__separator {
+    inline-size: 1px;
+    block-size: 1.5rem;
+    background: var(--cb-border);
+}
+
+.maintenance-editor__content {
+    min-height: 12rem;
+    max-height: 32rem;
+    overflow-y: auto;
+    line-height: 1.6;
+}
+
+.maintenance-editor__content > :last-child {
+    margin-bottom: 0;
 }
 
 /* Passkeys (Settings -> Passkey) */
@@ -2656,7 +2703,8 @@ body.app-body--menu-open .app-sidebar {
     min-width: 0;
 }
 
-.sites-list-scroll .sites-table .site-handler-badge {
+.sites-list-scroll .sites-table .site-handler-badge,
+.sites-list-scroll .sites-table .site-maintenance-badge {
     flex: 0 0 auto;
 }
 
@@ -2699,6 +2747,25 @@ body.app-body--menu-open .app-sidebar {
 .site-handler-badge {
     background: rgba(99, 102, 241, 0.10);
     color: #3730a3;
+}
+
+/* Bootstrap's warning yellow is below 3:1 against white; use the app's amber tokens. */
+.site-run-toggle--stopped {
+    --bs-btn-color: var(--cb-warning-strong);
+    --bs-btn-border-color: var(--cb-warning);
+    --bs-btn-hover-color: #fff;
+    --bs-btn-hover-bg: var(--cb-warning-strong);
+    --bs-btn-hover-border-color: var(--cb-warning-strong);
+    --bs-btn-active-color: #fff;
+    --bs-btn-active-bg: var(--cb-warning-strong);
+    --bs-btn-active-border-color: var(--cb-warning-strong);
+    --bs-btn-disabled-color: var(--cb-warning-strong);
+    --bs-btn-disabled-border-color: var(--cb-warning);
+}
+
+.site-maintenance-badge {
+    background: var(--cb-warning-bg);
+    color: var(--cb-warning-strong);
 }
 
 .sites-list-panel {
@@ -3976,6 +4043,20 @@ body.app-body--menu-open .app-sidebar {
 
 .form-check-input {
     margin-top: 0.2rem;
+}
+
+.form-check-input:checked {
+    background-color: var(--cb-accent);
+    border-color: var(--cb-accent);
+}
+
+.form-check-input:focus {
+    border-color: var(--cb-accent);
+    box-shadow: 0 0 0 0.25rem color-mix(in srgb, var(--cb-accent) 25%, transparent);
+}
+
+.form-check-input:checked:focus {
+    border-color: var(--cb-accent-strong);
 }
 
 .form-check-label {

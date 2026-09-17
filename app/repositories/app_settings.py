@@ -18,6 +18,10 @@ from app.models.entities import AppSetting
 DEFAULTS: dict[str, str] = {
     "caddy_api_url": DEFAULT_CADDY_ADMIN_URL,
     "caddyfile_path": str(DEFAULT_CADDYFILE_PATH),
+    "maintenance_page_html": (
+        "<h1>This Service is currently not available</h1>"
+        "<p>Please try again later.</p>"
+    ),
     "rate_limit_enabled": "true",
     "ssllabs_email": "",
     "ssllabs_history_retention_days": "0",

@@ -803,6 +803,130 @@ class UISitesTests(unittest.TestCase):
         self.assertIn("created and deployed", push_flash_mock.call_args_list[1].args[2])
         self.assertEqual(event_mock.await_count, 1)
 
+    def _render_sites_list(self, *sites):
+        app = self._build_app()
+        current_user = SimpleNamespace(username="admin", role="admin")
+        with (
+            patch("app.routers.ui.sites.require_user", new=AsyncMock(return_value=current_user)),
+            patch("app.routers.ui.sites.site_repository.list_all", new=AsyncMock(return_value=list(sites))),
+            patch("app.routers.ui.sites.get_cached_certificate_info_for_domains", new=AsyncMock(return_value={})),
+            TestClient(app) as client,
+        ):
+            return client.get("/sites")
+
+    def test_sites_page_renders_play_button_for_running_site(self) -> None:
+        site = SimpleNamespace(
+            id=3, site_name="Shop", domain="shop.example.com", upstream_url="http://shop:80",
+            enabled=True, maintenance_mode=False, caddy_directives="reverse_proxy shop:80",
+        )
+
+        response = self._render_sites_list(site)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('action="/sites/3/maintenance"', response.text)
+        self.assertRegex(response.text, r'<input type="hidden" name="action"\s+value="stop">')
+        self.assertIn('data-site-run-toggle="running"', response.text)
+        self.assertIn('aria-label="Stop Shop"', response.text)
+        self.assertIn('data-confirm-accept="Stop site"', response.text)
+        self.assertNotIn("site-maintenance-badge", response.text)
+
+    def test_sites_page_renders_stop_button_and_badge_for_stopped_site(self) -> None:
+        site = SimpleNamespace(
+            id=4, site_name="Blog", domain="blog.example.com", upstream_url="http://blog:80",
+            enabled=True, maintenance_mode=True, caddy_directives="reverse_proxy blog:80",
+        )
+
+        response = self._render_sites_list(site)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('data-site-run-toggle="stopped"', response.text)
+        self.assertRegex(response.text, r'<input type="hidden" name="action"\s+value="start">')
+        self.assertIn('aria-label="Start Blog"', response.text)
+        self.assertIn('class="badge site-maintenance-badge">Maintenance</span>', response.text)
+        self.assertRegex(response.text, r'<button[^>]*data-site-run-toggle="stopped"[^>]*>')
+        self.assertNotRegex(response.text, r'<button[^>]*data-site-run-toggle="stopped"[^>]*js-confirm')
+
+    def test_sites_page_disables_run_toggle_for_disabled_site(self) -> None:
+        site = SimpleNamespace(
+            id=5, site_name="Old", domain="old.example.com", upstream_url="http://old:80",
+            enabled=False, maintenance_mode=True, caddy_directives="reverse_proxy old:80",
+        )
+
+        response = self._render_sites_list(site)
+
+        self.assertRegex(response.text, r'<button[^>]*data-site-run-toggle="stopped"[^>]*disabled\s+aria-disabled="true"')
+        self.assertNotIn("site-maintenance-badge", response.text)
+
+    def _post_maintenance(self, site, form_data, *, deploy_result=(True, "ok")):
+        app = self._build_app()
+        current_user = SimpleNamespace(username="admin", role="admin")
+        session = AsyncMock()
+
+        async def session_override():
+            yield session
+
+        from app.database.session import get_db_session
+
+        app.dependency_overrides[get_db_session] = session_override
+        with (
+            patch("app.routers.ui.sites.require_admin", new=AsyncMock(return_value=current_user)),
+            patch("app.routers.ui.sites.validated_csrf_form", new=AsyncMock(return_value=form_data)),
+            patch("app.routers.ui.sites.site_repository.get_by_id", new=AsyncMock(return_value=site)),
+            patch("app.routers.ui.sites.site_repository.set_maintenance_mode", new=AsyncMock()) as set_mode,
+            patch(
+                "app.routers.ui.sites.validate_and_deploy_full_caddyfile",
+                new=AsyncMock(return_value=deploy_result),
+            ) as deploy,
+            patch("app.routers.ui.sites.push_flash") as push_flash_mock,
+            patch("app.routers.ui.sites.publish_resource_event", new=AsyncMock()) as event_mock,
+            TestClient(app) as client,
+        ):
+            response = client.post(f"/sites/{site.id}/maintenance", follow_redirects=False)
+        return response, session, set_mode, deploy, push_flash_mock, event_mock
+
+    def test_stop_site_enables_maintenance_mode_and_deploys(self) -> None:
+        site = SimpleNamespace(id=7, site_name="Shop", maintenance_mode=False)
+
+        response, session, set_mode, deploy, push_flash_mock, event_mock = self._post_maintenance(
+            site, {"action": "stop"},
+        )
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/sites")
+        set_mode.assert_awaited_once_with(ANY, site, True)
+        deploy.assert_awaited_once()
+        session.commit.assert_awaited_once()
+        session.rollback.assert_not_awaited()
+        self.assertIn("stopped", push_flash_mock.call_args.args[2])
+        event_mock.assert_awaited_once_with("site", "updated", "7")
+
+    def test_start_site_rolls_back_when_deploy_fails(self) -> None:
+        site = SimpleNamespace(id=8, site_name="Blog", maintenance_mode=True)
+
+        response, session, set_mode, _deploy, push_flash_mock, event_mock = self._post_maintenance(
+            site, {"action": "start"}, deploy_result=(False, "Caddy Admin API unavailable."),
+        )
+
+        self.assertEqual(response.status_code, 303)
+        set_mode.assert_awaited_once_with(ANY, site, False)
+        session.rollback.assert_awaited_once()
+        session.commit.assert_not_awaited()
+        self.assertEqual(push_flash_mock.call_args.args[1], "danger")
+        self.assertIn("was not started: Caddy Admin API unavailable.", push_flash_mock.call_args.args[2])
+        event_mock.assert_not_awaited()
+
+    def test_maintenance_toggle_is_idempotent_and_rejects_unknown_actions(self) -> None:
+        site = SimpleNamespace(id=9, site_name="Shop", maintenance_mode=True)
+
+        _response, _session, set_mode, deploy, _flash, _event = self._post_maintenance(site, {"action": "stop"})
+        set_mode.assert_not_awaited()
+        deploy.assert_not_awaited()
+
+        _response, _session, set_mode, deploy, flash, _event = self._post_maintenance(site, {"action": "toggle"})
+        set_mode.assert_not_awaited()
+        deploy.assert_not_awaited()
+        self.assertEqual(flash.call_args.args[1:], ("danger", "Invalid site action."))
+
     def test_renew_certificate_purges_artifacts_and_forces_sync(self) -> None:
         app = self._build_app()
         current_user = SimpleNamespace(username="admin", role="admin")

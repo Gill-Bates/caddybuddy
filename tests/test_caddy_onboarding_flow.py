@@ -25,7 +25,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.services import caddyfile_manager
+from app.services import caddyfile_manager, runtime_settings
 
 
 def tearDownModule() -> None:
@@ -254,6 +254,42 @@ example.com {
         self.assertNotIn("(default_log)", rendered)
         self.assertNotIn("import default_log", rendered)
         self.assertIn("app.example.com {", rendered)
+
+    async def test_build_full_caddyfile_renders_maintenance_page_for_stopped_sites(self) -> None:
+        caddyfile_path = self.temp_path / "Caddyfile"
+        self.current_caddyfile_path = caddyfile_path
+        caddyfile_path.write_text("", encoding="utf-8")
+
+        async with self.session_factory() as session:
+            session.add_all([
+                Site(
+                    site_name="App",
+                    domain="app.example.com",
+                    upstream_url="http://backend:8080",
+                    caddy_directives="reverse_proxy backend:8080",
+                    enabled=True,
+                ),
+                Site(
+                    site_name="Shop",
+                    domain="shop.example.com",
+                    upstream_url="http://shop:8080",
+                    caddy_directives="reverse_proxy shop:8080",
+                    enabled=True,
+                    maintenance_mode=True,
+                ),
+            ])
+            await runtime_settings.set_maintenance_page_html(session, "<h1>Shop is down</h1>")
+            await session.commit()
+
+            rendered = await caddyfile_manager.build_full_caddyfile(session)
+
+        app_block = rendered[rendered.index("app.example.com {"):rendered.index("shop.example.com {")]
+        shop_block = rendered[rendered.index("shop.example.com {"):]
+        self.assertIn("reverse_proxy backend:8080", app_block)
+        self.assertNotIn("respond", app_block)
+        self.assertNotIn("reverse_proxy", shop_block)
+        self.assertIn("import security_headers", shop_block)
+        self.assertRegex(shop_block, r"respond `<!DOCTYPE html>.*<h1>Shop is down</h1>.*` 503")
 
     async def test_onboard_imports_snapshot_replaces_marker_and_syncs(self) -> None:
         caddyfile_path = self.temp_path / "Caddyfile"

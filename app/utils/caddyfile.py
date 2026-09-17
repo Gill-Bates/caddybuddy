@@ -612,6 +612,71 @@ def build_generated_site_block(
     return header_line + "\n" + "\n".join(imports) + "\n" + body
 
 
+# Directives that configure certificates, listeners, or logging rather than request
+# handling. A site in maintenance mode keeps them so TLS issuance keeps working.
+_MAINTENANCE_PRESERVED_DIRECTIVES = frozenset({"bind", "log", "tls"})
+# The page is embedded in a backtick-quoted Caddyfile token. Braces are encoded
+# because Caddy expands {$ENV} while parsing and {placeholders} while responding;
+# the numeric references decode identically in HTML text and attribute values.
+_MAINTENANCE_RESPONSE_ESCAPES = str.maketrans({
+    "`": "&#96;",
+    "{": "&#123;",
+    "}": "&#125;",
+    "\r": " ",
+    "\n": " ",
+})
+# Inline styles only: a <style> block would need braces. System colors follow the
+# visitor's light/dark preference without a media query.
+_MAINTENANCE_PAGE_TEMPLATE = (
+    '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
+    '<meta name="viewport" content="width=device-width, initial-scale=1">'
+    '<meta name="color-scheme" content="light dark"><meta name="robots" content="noindex">'
+    "<title>Service unavailable</title></head>"
+    '<body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;'
+    "background:Canvas;color:CanvasText;font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;"
+    'line-height:1.6">'
+    '<main style="box-sizing:border-box;max-width:42rem;margin:1rem;padding:2rem 2.5rem;'
+    'border:1px solid color-mix(in srgb, CanvasText 15%, transparent);border-radius:12px">'
+    "__BODY__</main></body></html>"
+)
+
+
+def build_maintenance_site_block(
+    *,
+    name: str,
+    caddy_directives: str | None,
+    body_html: str,
+    import_security_headers: bool,
+) -> str:
+    """Build a site block that answers every request with the maintenance page (HTTP 503).
+
+    Only certificate, listener, and logging directives of the site are kept; all
+    request handlers are replaced. ``body_html`` must already be sanitized.
+    """
+    lines: list[str] = []
+    normalized_directives = normalize_caddy_directives(caddy_directives or "")
+    if normalized_directives:
+        for chunk in _split_top_level_directives(normalized_directives):
+            header, _body = _split_block_header_and_body(chunk)
+            directive = header.split(maxsplit=1)[0].lower() if header else ""
+            if directive in _MAINTENANCE_PRESERVED_DIRECTIVES:
+                lines.append(chunk)
+
+    response_body = _MAINTENANCE_PAGE_TEMPLATE.replace("__BODY__", body_html).translate(_MAINTENANCE_RESPONSE_ESCAPES)
+    lines.extend((
+        'header Content-Type "text/html; charset=utf-8"',
+        'header Cache-Control "no-store"',
+        f"respond `{response_body}` 503",
+    ))
+    return build_generated_site_block(
+        name=name,
+        upstream=None,
+        caddy_directives="\n".join(lines),
+        ssl_enabled=True,
+        import_security_headers=import_security_headers,
+    )
+
+
 @dataclass(slots=True)
 class ParsedCaddyfile:
     """Result of parsing a Caddyfile into its components."""

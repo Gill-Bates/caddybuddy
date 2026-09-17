@@ -501,6 +501,58 @@ async def delete_site(
     return redirect_to("/sites")
 
 
+@router.post("/sites/{site_id}/maintenance")
+@limiter.limit("20/minute")
+async def set_site_maintenance(
+    request: Request,
+    site_id: int,
+    session: AsyncSession = Depends(get_db_session),
+):
+    """Start (serve normally) or stop (serve the maintenance page) a site and redeploy."""
+    current_user = await require_admin(request, session)
+    if current_user is None:
+        return redirect_to("/")
+
+    form = await validated_csrf_form(request)
+    # The form carries the target state instead of a toggle so a repeated submit is idempotent.
+    action = str(form.get("action", "")).strip().lower()
+    if action not in {"start", "stop"}:
+        push_flash(request, "danger", "Invalid site action.")
+        return redirect_to("/sites")
+
+    site = await site_repository.get_by_id(session, site_id)
+    if site is None:
+        push_flash(request, "danger", "Site not found.")
+        return redirect_to("/sites")
+
+    site_name = site.site_name
+    maintenance_mode = action == "stop"
+    past_action = "stopped" if maintenance_mode else "started"
+    if site.maintenance_mode == maintenance_mode:
+        return redirect_to("/sites")
+
+    try:
+        await site_repository.set_maintenance_mode(session, site, maintenance_mode)
+        success, deploy_message = await validate_and_deploy_full_caddyfile(session)
+        if not success:
+            await session.rollback()
+            push_flash(request, "danger", f"Site '{site_name}' was not {past_action}: {deploy_message}")
+            return redirect_to("/sites")
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        logger.exception("Deployment raised unexpectedly after maintenance change id=%s", site_id)
+        push_flash(request, "danger", f"Site '{site_name}' was not {past_action}: deployment failed unexpectedly.")
+        return redirect_to("/sites")
+
+    if maintenance_mode:
+        push_flash(request, "success", f"Site '{site_name}' stopped. Visitors now see the maintenance page.")
+    else:
+        push_flash(request, "success", f"Site '{site_name}' started.")
+    await publish_resource_event("site", "updated", str(site_id))
+    return redirect_to("/sites")
+
+
 @router.post("/sites/{site_id}/renew-certificate")
 @limiter.limit("5/minute")
 async def renew_certificate(

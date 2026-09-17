@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
+import nh3
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.app_settings import DEFAULTS, app_settings_repository
@@ -22,6 +23,15 @@ _SIMPLE_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _UNSAFE_CADDY_API_URL_PATTERN = re.compile(r"[\x00-\x1f\x7f\\]")
 _MAX_EMAIL_LENGTH = 255
 _MAX_CADDY_API_URL_LENGTH = 2048
+_HTML_TAG_PATTERN = re.compile(r"<[^>]*>")
+# Browsers leave empty paragraphs behind, e.g. when a list is started inside one.
+_EMPTY_PARAGRAPH_PATTERN = re.compile(r"<p>(?:\s|&nbsp;|<br>)*</p>")
+# Editor output plus a few tags usable in the no-JS textarea; everything else is stripped.
+_MAINTENANCE_PAGE_ALLOWED_TAGS = frozenset({
+    "a", "b", "blockquote", "br", "div", "em", "h1", "h2", "h3", "hr",
+    "i", "li", "ol", "p", "s", "strong", "u", "ul",
+})
+MAINTENANCE_PAGE_MAX_LENGTH = 20_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -292,3 +302,37 @@ async def set_ssllabs_history_retention_days(session: AsyncSession, days: int) -
         allowed = ", ".join(str(value) for value in SSLLABS_RETENTION_DAY_VALUES)
         raise ValueError(f"ssllabs_history_retention_days must be one of: {allowed}.")
     await app_settings_repository.set(session, "ssllabs_history_retention_days", str(days))
+
+
+def sanitize_maintenance_page_html(raw_html: str) -> str:
+    """Return maintenance page HTML reduced to the editor's formatting allowlist."""
+    if len(raw_html) > MAINTENANCE_PAGE_MAX_LENGTH:
+        raise ValueError(
+            f"The maintenance page must not exceed {MAINTENANCE_PAGE_MAX_LENGTH} characters."
+        )
+    cleaned = nh3.clean(
+        raw_html,
+        tags=set(_MAINTENANCE_PAGE_ALLOWED_TAGS),
+        attributes={"a": {"href"}},
+        url_schemes={"http", "https", "mailto"},
+        link_rel="noopener noreferrer",
+        strip_comments=True,
+    )
+    cleaned = _EMPTY_PARAGRAPH_PATTERN.sub("", cleaned).strip()
+    visible_text = _HTML_TAG_PATTERN.sub("", cleaned).replace("&nbsp;", " ").strip()
+    if not visible_text:
+        raise ValueError("The maintenance page must not be empty.")
+    return cleaned
+
+
+async def get_maintenance_page_html(session: AsyncSession) -> str:
+    """Get the sanitized maintenance page body shown for stopped sites."""
+    value = await app_settings_repository.get(session, "maintenance_page_html")
+    return sanitize_maintenance_page_html(str(value))
+
+
+async def set_maintenance_page_html(session: AsyncSession, raw_html: str) -> str:
+    """Sanitize and persist the maintenance page body; returns the stored HTML."""
+    sanitized = sanitize_maintenance_page_html(raw_html)
+    await app_settings_repository.set(session, "maintenance_page_html", sanitized)
+    return sanitized

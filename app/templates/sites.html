@@ -158,7 +158,9 @@
                                                 class="status-dot site-status-dot {% if site.enabled %}status-dot--online{% else %}status-dot--offline{% endif %}"
                                                 aria-hidden="true"></span>
                                             <div class="fw-semibold">{{ site.site_name }}</div>
-                                            {% if site_handler %}
+                                            {% if site.enabled and site.maintenance_mode %}
+                                            <span class="badge site-maintenance-badge">Maintenance</span>
+                                            {% elif site_handler %}
                                             <span class="badge site-handler-badge">{{
                                                 site_handler
                                                 }}</span>
@@ -217,6 +219,51 @@
                                     </td>
                                     <td data-label="Actions">
                                         <div class="cell-actions">
+                                            {% set site_stopped = site.maintenance_mode %}
+                                            {# The icon shows the current state (Play = serving, Stop = maintenance page);
+                                            the label names the action a click performs. #}
+                                            <form
+                                                action="{{ request.app.url_path_for('set_site_maintenance', site_id=site.id) }}"
+                                                method="post" class="d-inline-flex" data-loading-submit-form
+                                                data-require-csrf>
+                                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}"
+                                                    data-csrf-token>
+                                                <input type="hidden" name="action"
+                                                    value="{{ 'start' if site_stopped else 'stop' }}">
+                                                {% if not site.enabled %}
+                                                {% set run_state_title = "Enable " ~ site.site_name ~ " to start or stop it" %}
+                                                {% elif site_stopped %}
+                                                {% set run_state_title = site.site_name ~ " is stopped and shows the maintenance page. Start site" %}
+                                                {% else %}
+                                                {% set run_state_title = site.site_name ~ " is running. Stop site" %}
+                                                {% endif %}
+                                                <button type="submit"
+                                                    class="btn btn-sm btn--icon-only site-run-toggle {% if site_stopped %}btn-outline-secondary site-run-toggle--stopped{% else %}btn-outline-success site-run-toggle--running{% endif %}{% if site.enabled and not site_stopped %} js-confirm{% endif %}"
+                                                    data-site-run-toggle="{{ 'stopped' if site_stopped else 'running' }}"
+                                                    data-loading-submit-button
+                                                    data-loading-label="{{ 'Starting...' if site_stopped else 'Stopping...' }}"
+                                                    {% if site.enabled and not site_stopped %}
+                                                    data-confirm-title="Stop site"
+                                                    data-confirm="Stop {{ site.site_name }}? Visitors will see the maintenance page until the site is started again."
+                                                    data-confirm-accept="Stop site" data-confirm-btn-class="btn-warning"
+                                                    {% endif %}
+                                                    aria-label="{{ ('Start ' if site_stopped else 'Stop ') ~ site.site_name }}"
+                                                    title="{{ run_state_title }}" {% if not site.enabled %}disabled
+                                                    aria-disabled="true"{% endif %}>
+                                                    {% if site_stopped %}
+                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"
+                                                        aria-hidden="true" focusable="false">
+                                                        <rect x="5" y="5" width="14" height="14" rx="2"></rect>
+                                                    </svg>
+                                                    {% else %}
+                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"
+                                                        aria-hidden="true" focusable="false">
+                                                        <path d="M7 4.5v15a1 1 0 0 0 1.53.85l12-7.5a1 1 0 0 0 0-1.7l-12-7.5A1 1 0 0 0 7 4.5z"></path>
+                                                    </svg>
+                                                    {% endif %}
+                                                    <span class="visually-hidden">{{ 'Start site' if site_stopped else 'Stop site' }}</span>
+                                                </button>
+                                            </form>
                                             <a href="{{ request.app.url_path_for('sites_page', site_id=site.id) }}#form-panel"
                                                 class="btn btn-sm btn-outline-primary btn--icon-only"
                                                 aria-label="Edit {{ site.site_name }}"

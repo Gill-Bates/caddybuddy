@@ -539,9 +539,10 @@
             if (!window.matchMedia('(hover: none) and (pointer: coarse)').matches) return [];
             const minFontSize = numberConstant(constants.TOUCH_INPUT_MIN_FONT_SIZE_PX, 16);
             const nonTextTypes = new Set(['hidden', 'checkbox', 'radio', 'range', 'color', 'file', 'button', 'submit', 'reset', 'image']);
-            return Array.from(document.querySelectorAll('input, select, textarea'))
+            // Rich-text editors (contenteditable) trigger the same zoom as native fields.
+            return Array.from(document.querySelectorAll('input, select, textarea, [contenteditable]:not([contenteditable="false"])'))
                 .filter((el) => !(el instanceof HTMLInputElement) || !nonTextTypes.has((el.type || 'text').toLowerCase()))
-                .filter((el) => !el.disabled && !el.readOnly)
+                .filter((el) => !el.disabled && !el.readOnly && (!el.isContentEditable || el.parentElement?.isContentEditable !== true))
                 .filter(isVisible)
                 .filter((el) => !isVisuallyHidden(el))
                 .map((el) => ({ el, fontSize: parseFloat(styleOf(el)?.fontSize) || 0 }))

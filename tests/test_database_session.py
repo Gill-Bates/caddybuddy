@@ -370,6 +370,7 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
                 "ALTER TABLE caddy_sites ADD COLUMN upstream_url TEXT NOT NULL DEFAULT 'http://placeholder.invalid'",
                 "ALTER TABLE caddy_sites ADD COLUMN caddy_directives TEXT",
                 "ALTER TABLE caddy_sites ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1",
+                "ALTER TABLE caddy_sites ADD COLUMN maintenance_mode INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE caddy_sites ADD COLUMN site_name TEXT NOT NULL DEFAULT ''",
                 "UPDATE caddy_sites SET site_name = trim(CASE WHEN instr(domain, ',') > 0 THEN substr(domain, 1, instr(domain, ',') - 1) ELSE domain END) WHERE site_name IS NULL OR site_name = ''",
                 "UPDATE caddy_sites SET enabled = 0 WHERE upstream_url = 'http://placeholder.invalid'",
@@ -448,6 +449,7 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
             executed_sql,
             [
                 "UPDATE caddy_sites SET upstream_url = 'http://placeholder.invalid' WHERE upstream_url = ''",
+                "ALTER TABLE caddy_sites ADD COLUMN maintenance_mode INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE caddy_sites ADD COLUMN site_name TEXT NOT NULL DEFAULT ''",
                 "UPDATE caddy_sites SET site_name = trim(CASE WHEN instr(domain, ',') > 0 THEN substr(domain, 1, instr(domain, ',') - 1) ELSE domain END) WHERE site_name IS NULL OR site_name = ''",
             ],
@@ -469,7 +471,7 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
                         "CREATE TABLE app_settings (id INTEGER NOT NULL, key VARCHAR(64) NOT NULL, "
                         "value TEXT NOT NULL, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, "
                         "CONSTRAINT ck_app_settings_key CHECK (key IN "
-                        "('caddy_api_url', 'caddyfile_path', 'rate_limit_enabled', "
+                        "('caddy_api_url', 'caddyfile_path', 'maintenance_page_html', 'rate_limit_enabled', "
                         "'ssllabs_email', 'ssllabs_history_retention_days')))"
                     ),
                 )
@@ -488,7 +490,9 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
             {
                 "caddybuddy_state": {"key", "value", "updated_at"},
                 "app_settings": {"id", "key", "value", "created_at", "updated_at"},
-                "caddy_sites": {"id", "domain", "upstream_url", "caddy_directives", "enabled", "site_name"},
+                "caddy_sites": {
+                    "id", "domain", "upstream_url", "caddy_directives", "enabled", "maintenance_mode", "site_name",
+                },
                 "caddy_sync_events": {"id"},
             },
         )
@@ -539,6 +543,7 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
                     "upstream_url",
                     "caddy_directives",
                     "enabled",
+                    "maintenance_mode",
                     "site_name",
                 },
             },
@@ -605,11 +610,26 @@ class DatabaseSessionMigrationTests(_SessionModuleStateMixin, unittest.TestCase)
                 value TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                CONSTRAINT ck_app_settings_key CHECK (key IN ('caddy_api_url', 'caddyfile_path', 'rate_limit_enabled', 'ssllabs_email', 'ssllabs_history_retention_days'))
+                CONSTRAINT ck_app_settings_key CHECK (key IN ('caddy_api_url', 'caddyfile_path', 'maintenance_page_html', 'rate_limit_enabled', 'ssllabs_email', 'ssllabs_history_retention_days'))
             )
         """
 
         self.assertTrue(session_module._app_settings_allows_current_keys(table_sql))
+
+    def test_app_settings_allows_current_keys_requires_maintenance_page_key(self) -> None:
+        # DDL predating the maintenance page key must trigger an app_settings rebuild.
+        table_sql = """
+            CREATE TABLE app_settings (
+                id INTEGER NOT NULL,
+                "key" VARCHAR(64) NOT NULL,
+                value TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                CONSTRAINT ck_app_settings_key CHECK (key IN ('caddy_api_url', 'caddyfile_path', 'rate_limit_enabled', 'ssllabs_email', 'ssllabs_history_retention_days'))
+            )
+        """
+
+        self.assertFalse(session_module._app_settings_allows_current_keys(table_sql))
 
     def test_app_settings_allows_current_keys_requires_retention_key(self) -> None:
         # DDL predating the retention key must trigger an app_settings rebuild.

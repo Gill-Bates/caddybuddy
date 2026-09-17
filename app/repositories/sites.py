@@ -263,6 +263,11 @@ class SiteRepository:
             raise
         return site
 
+    async def set_maintenance_mode(self, session: AsyncSession, site: Site, maintenance_mode: bool) -> Site:
+        site.maintenance_mode = maintenance_mode
+        await session.flush()
+        return site
+
     async def delete(self, session: AsyncSession, site: Site) -> None:
         await session.delete(site)
         await session.flush()

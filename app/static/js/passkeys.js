@@ -251,6 +251,25 @@
         }
     };
 
+    // The active tab is mirrored into the hash, so by the time the modal is open
+    // the URL is usually already /settings#settingsPasskeyPanel. Assigning that
+    // same URL would be a fragment navigation: the page would not reload, the
+    // modal would stay open and the button would stay stuck on its busy label.
+    // Force a real reload whenever the target is the current document.
+    const reloadOnPasskeyPanel = (reloadUrl) => {
+        const target = new URL(resolveUrl(reloadUrl));
+        target.hash = "settingsPasskeyPanel";
+        const isSameDocument = target.href.split("#")[0] === window.location.href.split("#")[0];
+        if (!isSameDocument) {
+            window.location.assign(target.href);
+            return;
+        }
+        if (window.location.hash !== target.hash) {
+            history.replaceState(null, "", target.hash);
+        }
+        window.location.reload();
+    };
+
     const initializeEnrollment = () => {
         const root = document.querySelector("[data-passkey-settings]");
         if (!(root instanceof HTMLElement)) {
@@ -324,7 +343,7 @@
                 }
                 // The passkey list is server-rendered; reload to show it, keeping
                 // the user on the Passkey tab instead of falling back to General.
-                window.location.assign(`${resolveUrl(root.dataset.passkeyReloadUrl || "/settings")}#settingsPasskeyPanel`);
+                reloadOnPasskeyPanel(root.dataset.passkeyReloadUrl || "/settings");
             } catch (error) {
                 if (!isUserAbort(error)) {
                     App.pushInlineFlash?.(

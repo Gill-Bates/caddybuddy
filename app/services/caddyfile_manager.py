@@ -34,10 +34,15 @@ from app.models.entities import (
 )
 from app.repositories.sites import DuplicateSiteError, site_repository
 from app.services.caddy import CaddyAdminClient, CaddyServiceError, caddy_service
-from app.services.runtime_settings import get_caddy_config, get_ssllabs_email
+from app.services.runtime_settings import (
+    get_caddy_config,
+    get_maintenance_page_html,
+    get_ssllabs_email,
+)
 from app.utils.caddyfile import (
     SNIPPET_SECURITY_HEADERS,
     build_generated_site_block,
+    build_maintenance_site_block,
     directives_have_import,
     directives_have_security_header_block,
     inject_global_options,
@@ -576,7 +581,20 @@ async def build_full_caddyfile(session: AsyncSession) -> str:
     has_security_snippet = True
 
     sites = await site_repository.list_all(session, enabled_only=True)
+    maintenance_html = (
+        await get_maintenance_page_html(session)
+        if any(site.maintenance_mode for site in sites)
+        else None
+    )
     for site in sorted(sites, key=lambda item: item.domain):
+        if site.maintenance_mode and maintenance_html is not None:
+            parts.append(build_maintenance_site_block(
+                name=site.domain,
+                caddy_directives=site.caddy_directives,
+                body_html=maintenance_html,
+                import_security_headers=has_security_snippet,
+            ))
+            continue
         parts.append(_render_generated_site_block(
             site,
             has_security_headers_snippet=has_security_snippet,

@@ -52,6 +52,11 @@ class UISettingsTests(unittest.TestCase):
             new=AsyncMock(return_value=SSLLABS_RETENTION_DEFAULT_DAYS),
         )
         self.retention_patcher.start()
+        self.maintenance_page_patcher = patch(
+            "app.routers.ui.settings.get_maintenance_page_html",
+            new=AsyncMock(return_value="<h1>This Service is currently not available</h1>"),
+        )
+        self.maintenance_page_patcher.start()
         # Saving an SSL Labs email starts the real scheduler, which would open the real database.
         self.ssllabs_startup_patcher = patch(
             "app.routers.ui.settings.ssllabs_service.startup",
@@ -63,6 +68,7 @@ class UISettingsTests(unittest.TestCase):
         self.onboarding_patcher.stop()
         self.passkey_list_patcher.stop()
         self.retention_patcher.stop()
+        self.maintenance_page_patcher.stop()
         self.ssllabs_startup_patcher.stop()
         get_settings.cache_clear()
 
@@ -398,6 +404,103 @@ class UISettingsTests(unittest.TestCase):
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/onboarding")
         reset_onboarding_state.assert_awaited_once()
+
+    def test_settings_page_renders_maintenance_page_editor(self) -> None:
+        app = self._build_app()
+        current_user = SimpleNamespace(username="admin", role="admin")
+
+        with (
+            patch("app.routers.ui.settings.require_admin", new=AsyncMock(return_value=current_user)),
+            patch(
+                "app.routers.ui.settings.get_caddy_config",
+                new=AsyncMock(return_value=SimpleNamespace(admin_url="http://localhost:2019", caddyfile_path_str="/app/Caddyfile")),
+            ),
+            patch("app.routers.ui.settings.get_rate_limit_enabled", new=AsyncMock(return_value=True)),
+            patch("app.routers.ui.settings.get_ssllabs_email", new=AsyncMock(return_value=None)),
+            TestClient(app) as client,
+        ):
+            response = client.get("/settings")
+
+        self.assertEqual(response.status_code, 200)
+        general_panel = response.text[
+            response.text.index('id="settingsGeneralPanel"'):response.text.index('id="settingsSecurityPanel"')
+        ]
+        self.assertIn('action="/settings/maintenance-page"', general_panel)
+        self.assertIn('contenteditable="true"', general_panel)
+        self.assertIn('aria-labelledby="maintenance-page-label"', general_panel)
+        # The stored HTML is passed escaped to the no-JS textarea fallback, never rendered raw.
+        self.assertIn(
+            "data-maintenance-editor-source>&lt;h1&gt;This Service is currently not available&lt;/h1&gt;</textarea>",
+            general_panel,
+        )
+        self.assertIn("/static/js/maintenance-editor.js", response.text)
+
+    def _post_maintenance_page(self, *, sites, set_side_effect=None, deploy_result=(True, "ok")):
+        app = self._build_action_app()
+        session = AsyncMock()
+
+        async def session_override():
+            yield session
+
+        app.dependency_overrides[get_db_session] = session_override
+        current_user = SimpleNamespace(username="admin", role="admin")
+        with (
+            patch("app.routers.ui.settings.require_admin", new=AsyncMock(return_value=current_user)),
+            patch(
+                "app.routers.ui.settings.validated_csrf_form",
+                new=AsyncMock(return_value={"maintenance_page_html": "<h1>Back soon</h1>"}),
+            ),
+            patch(
+                "app.routers.ui.settings.set_maintenance_page_html",
+                new=AsyncMock(side_effect=set_side_effect),
+            ) as set_page,
+            patch("app.routers.ui.settings.site_repository.list_all", new=AsyncMock(return_value=sites)),
+            patch(
+                "app.routers.ui.settings.validate_and_deploy_full_caddyfile",
+                new=AsyncMock(return_value=deploy_result),
+            ) as deploy,
+            TestClient(app) as client,
+        ):
+            response = client.post(
+                "/settings/maintenance-page",
+                headers={"Accept": "application/json"},
+            )
+        return response, session, set_page, deploy
+
+    def test_maintenance_page_save_skips_deploy_without_stopped_sites(self) -> None:
+        response, session, set_page, deploy = self._post_maintenance_page(
+            sites=[SimpleNamespace(maintenance_mode=False)],
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"success": True, "message": "Maintenance page saved."})
+        set_page.assert_awaited_once_with(ANY, "<h1>Back soon</h1>")
+        deploy.assert_not_awaited()
+        session.commit.assert_awaited_once()
+
+    def test_maintenance_page_save_redeploys_stopped_sites_and_rolls_back_on_failure(self) -> None:
+        response, session, _set_page, deploy = self._post_maintenance_page(
+            sites=[SimpleNamespace(maintenance_mode=True)],
+            deploy_result=(False, "Rendered Caddy configuration is invalid."),
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertFalse(response.json()["success"])
+        self.assertIn("Rendered Caddy configuration is invalid.", response.json()["message"])
+        deploy.assert_awaited_once()
+        session.rollback.assert_awaited_once()
+        session.commit.assert_not_awaited()
+
+    def test_maintenance_page_save_rejects_invalid_content(self) -> None:
+        response, session, _set_page, deploy = self._post_maintenance_page(
+            sites=[],
+            set_side_effect=ValueError("The maintenance page must not be empty."),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["message"], "The maintenance page must not be empty.")
+        deploy.assert_not_awaited()
+        session.commit.assert_not_awaited()
 
     def test_settings_page_updates_caddy_configuration(self) -> None:
         app = self._build_app()

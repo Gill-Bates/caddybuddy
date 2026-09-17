@@ -12,6 +12,7 @@ from app.utils.caddyfile import (
     build_domain_directives,
     build_domain_site_preview,
     build_generated_site_block,
+    build_maintenance_site_block,
     directives_have_import,
     directives_have_log_block,
     directives_have_security_header_block,
@@ -270,6 +271,38 @@ class SmartImportHelpersTests(unittest.TestCase):
         import_pos = block.index("import security_headers")
         directive_pos = block.index("reverse_proxy")
         self.assertLess(import_pos, directive_pos)
+
+    def test_build_maintenance_site_block_keeps_tls_and_log_but_replaces_handlers(self) -> None:
+        block = build_maintenance_site_block(
+            name="example.com, www.example.com",
+            caddy_directives="tls {\n    dns cloudflare token\n}\nreverse_proxy backend:8080\nlog {\n    output stdout\n}",
+            body_html="<h1>Down</h1>",
+            import_security_headers=True,
+        )
+
+        self.assertTrue(block.startswith("example.com, www.example.com {\n    import security_headers\n"))
+        self.assertIn("    tls {\n        dns cloudflare token\n    }", block)
+        self.assertIn("    log {\n        output stdout\n    }", block)
+        self.assertNotIn("reverse_proxy", block)
+        self.assertIn('header Content-Type "text/html; charset=utf-8"', block)
+        self.assertRegex(block, r"respond `<!DOCTYPE html>.*<main[^>]*><h1>Down</h1></main></body></html>` 503\n}$")
+
+    def test_build_maintenance_site_block_escapes_caddy_syntax_in_page(self) -> None:
+        block = build_maintenance_site_block(
+            name="example.com",
+            caddy_directives=None,
+            body_html='<p>{$SECRET} {env.HOME} `x`\n<a href="https://e.com/?q={v}">y</a></p>',
+            import_security_headers=False,
+        )
+        respond_line = next(line for line in block.splitlines() if line.strip().startswith("respond "))
+        page = respond_line.strip().removeprefix("respond `").removesuffix("` 503")
+
+        self.assertNotIn("{", page)
+        self.assertNotIn("}", page)
+        self.assertNotIn("`", page)
+        self.assertIn("&#123;$SECRET&#125; &#123;env.HOME&#125; &#96;x&#96;", page)
+        self.assertIn('href="https://e.com/?q=&#123;v&#125;"', page)
+        self.assertEqual(len(block.splitlines()), 5)
 
 
 if __name__ == "__main__":

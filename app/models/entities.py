@@ -413,6 +413,7 @@ class Site(TimestampMixin, Base):
     upstream_url: Mapped[str] = mapped_column(Text, nullable=False)
     caddy_directives: Mapped[str | None] = mapped_column(Text, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    maintenance_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     @validates("site_name")
     def _validate_site_name(self, _key: str, value: str) -> str:
@@ -562,6 +563,7 @@ class SslLabsRankHistory(Base):
 _APP_SETTING_KEYS = (
     "caddy_api_url",
     "caddyfile_path",
+    "maintenance_page_html",
     "rate_limit_enabled",
     "ssllabs_email",
     "ssllabs_history_retention_days",

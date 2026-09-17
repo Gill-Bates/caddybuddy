@@ -1,5 +1,7 @@
 ## [1.6.2] - 2026-xx-xx
 
+- `New` Sites can be stopped and started from the **All Sites** list. A stopped site keeps its domains and certificates in Caddy but answers every request with HTTP 503 and a maintenance page.
+- `New` The maintenance page is edited with a lightweight rich-text editor under Settings → General; the content is sanitized to headings, paragraphs, lists, links, and basic text styles.
 
 <details markdown="1">
 <summary>Previous versions...</summary>

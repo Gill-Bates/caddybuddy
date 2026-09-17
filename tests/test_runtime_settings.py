@@ -16,18 +16,22 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.models.base import Base
 from app.services import runtime_settings
 from app.services.runtime_settings import (
+    MAINTENANCE_PAGE_MAX_LENGTH,
     SSLLABS_RETENTION_DEFAULT_DAYS,
     discover_caddyfile_candidates,
     get_caddy_config,
+    get_maintenance_page_html,
     get_rate_limit_enabled,
     get_ssllabs_email,
     get_ssllabs_history_retention_days,
     normalize_caddy_api_url,
     normalize_caddyfile_path,
     normalize_ssllabs_email,
+    sanitize_maintenance_page_html,
     set_caddy_api_url,
     set_caddy_config,
     set_caddyfile_path,
+    set_maintenance_page_html,
     set_rate_limit_enabled,
     set_ssllabs_email,
     set_ssllabs_history_retention_days,
@@ -298,3 +302,42 @@ class RuntimeSettingsTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(ValueError, "must not exceed 255 characters"):
             normalize_ssllabs_email(too_long)
+
+    async def test_maintenance_page_defaults_to_service_unavailable_message(self) -> None:
+        async with self.session_factory() as session:
+            page = await get_maintenance_page_html(session)
+
+        self.assertIn("This Service is currently not available", page)
+
+    async def test_set_maintenance_page_html_persists_sanitized_markup(self) -> None:
+        async with self.session_factory() as session:
+            stored = await set_maintenance_page_html(
+                session,
+                '<h2 style="color:red" onclick="x()">Back soon</h2><script>alert(1)</script>'
+                '<p><a href="javascript:alert(1)">bad</a> <a href="https://status.example.com">status</a></p>',
+            )
+            await session.commit()
+
+        async with self.session_factory() as session:
+            page = await get_maintenance_page_html(session)
+
+        self.assertEqual(page, stored)
+        self.assertEqual(
+            page,
+            '<h2>Back soon</h2><p><a rel="noopener noreferrer">bad</a> '
+            '<a href="https://status.example.com" rel="noopener noreferrer">status</a></p>',
+        )
+
+    def test_sanitize_maintenance_page_html_repairs_lists_nested_in_paragraphs(self) -> None:
+        # contenteditable produces <p><ul>…</ul></p> when a list is started inside a paragraph.
+        self.assertEqual(
+            sanitize_maintenance_page_html("<h2>Status</h2><p><ul><li><b>Item</b></li></ul></p><p><br></p>"),
+            "<h2>Status</h2><ul><li><b>Item</b></li></ul>",
+        )
+
+    def test_sanitize_maintenance_page_html_rejects_empty_and_oversized_content(self) -> None:
+        for raw in ("", "   ", "<p><br></p>", "<p>&nbsp;</p>", "<script>alert(1)</script>"):
+            with self.subTest(raw=raw), self.assertRaisesRegex(ValueError, "must not be empty"):
+                sanitize_maintenance_page_html(raw)
+        with self.assertRaisesRegex(ValueError, "must not exceed"):
+            sanitize_maintenance_page_html("a" * (MAINTENANCE_PAGE_MAX_LENGTH + 1))
