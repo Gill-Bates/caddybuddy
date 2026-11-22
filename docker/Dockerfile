@@ -33,6 +33,7 @@ WORKDIR /build
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update \
+    && apt-get upgrade -y \
     && apt-get install --no-install-recommends -y build-essential
 
 # Create isolated virtual environment, so it can be copied into the runtime
@@ -64,6 +65,7 @@ ENV PATH="/opt/venv/bin:$PATH" \
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update \
+    && apt-get upgrade -y \
     && apt-get install --no-install-recommends -y acl ca-certificates gosu
 
 RUN groupadd --system --gid 1000 app \
